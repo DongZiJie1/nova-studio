@@ -54,7 +54,7 @@ function WelcomeView() {
         </p>
 
         {/* CTA button */}
-        <button className="rounded-xl bg-gradient-to-r from-accent-start to-accent-end px-6 py-2.5 text-sm font-medium text-white shadow-md shadow-indigo-200/50 transition-all hover:shadow-lg hover:shadow-indigo-200/60 hover:brightness-105 active:scale-[0.98]">
+        <button className="rounded-lg bg-gradient-to-r from-accent-start to-accent-end px-6 py-2.5 text-sm font-medium text-white transition-all hover:brightness-110 active:scale-[0.98]">
           Create Agent
         </button>
       </div>
