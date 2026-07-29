@@ -2,21 +2,10 @@ import { useState } from "react";
 import { Background } from "./Background";
 import { useAgentStore } from "../../stores/agent-store";
 import {
-  Search,
-  Hammer,
-  Eye,
-  Bug,
   Paperclip,
   ArrowUp,
   Settings2,
 } from "lucide-react";
-
-const suggestions = [
-  { icon: Search, label: "Explore and understand code", color: "text-blue-500" },
-  { icon: Hammer, label: "Build new features or tools", color: "text-violet-500" },
-  { icon: Eye, label: "Review code and suggest changes", color: "text-emerald-500" },
-  { icon: Bug, label: "Fix issues and failures", color: "text-orange-500" },
-];
 
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
@@ -31,10 +20,6 @@ export function AppShell() {
     // TODO: spawn agent + send prompt
     console.log("send:", input);
     setInput("");
-  };
-
-  const handleSuggestion = (label: string) => {
-    setInput(label);
   };
 
   return (
@@ -81,7 +66,7 @@ export function AppShell() {
           {/* Content area */}
           <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6">
             {!hasMessages ? (
-              /* Empty state — welcome + suggestions */
+              /* Empty state — tagline */
               <div className="text-center max-w-2xl w-full">
                 {/* Logo */}
                 <div className="flex justify-center mb-6">
@@ -102,26 +87,14 @@ export function AppShell() {
                   </div>
                 </div>
 
-                {/* Heading */}
-                <h2 className="text-3xl font-bold text-text-primary mb-8">
-                  What should Nova do next?
+                {/* Tagline */}
+                <h2 className="text-3xl font-bold text-text-primary leading-snug">
+                  Ship faster with Nova.
+                  <br />
+                  <span className="text-text-secondary font-normal text-2xl">
+                    From idea to code, from concept to creation.
+                  </span>
                 </h2>
-
-                {/* Suggestion cards */}
-                <div className="grid grid-cols-4 gap-3">
-                  {suggestions.map((s) => (
-                    <button
-                      key={s.label}
-                      onClick={() => handleSuggestion(s.label)}
-                      className="group flex flex-col items-start gap-3 rounded-xl border border-border-glass bg-white/60 p-4 text-left transition-all hover:border-indigo-200 hover:bg-white hover:shadow-sm"
-                    >
-                      <s.icon className={`w-5 h-5 ${s.color}`} />
-                      <span className="text-sm text-text-secondary group-hover:text-text-primary">
-                        {s.label}
-                      </span>
-                    </button>
-                  ))}
-                </div>
               </div>
             ) : (
               /* Messages view */
