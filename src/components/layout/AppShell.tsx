@@ -120,11 +120,11 @@ export function AppShell() {
           </div>
 
           {/* Input area */}
-          <div className="flex-shrink-0 p-4">
-            <div className="mx-auto" style={{ maxWidth: 680 }}>
+          <div style={{ flexShrink: 0, padding: "0 24px 32px", display: "flex", justifyContent: "center" }}>
+            <div style={{ width: "100%", maxWidth: 680 }}>
               {/* Project path */}
-              <div className="flex items-center gap-2 px-4 py-2 text-xs text-text-muted">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", fontSize: 12, color: "#9ca3af" }}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
                 </svg>
                 <span>~/nova-studio</span>
@@ -132,7 +132,6 @@ export function AppShell() {
 
               {/* Input card */}
               <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16, overflow: "hidden" }}>
-                {/* Text input */}
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -154,6 +153,7 @@ export function AppShell() {
                     outline: "none",
                     lineHeight: 1.6,
                     fontFamily: "inherit",
+                    border: "none",
                   }}
                 />
 
