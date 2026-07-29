@@ -120,8 +120,8 @@ export function AppShell() {
           </div>
 
           {/* Input area */}
-          <div className="p-4 pt-0">
-            <div className="max-w-3xl mx-auto">
+          <div className="flex-shrink-0 p-4">
+            <div className="mx-auto" style={{ maxWidth: 680 }}>
               {/* Project path */}
               <div className="flex items-center gap-2 px-4 py-2 text-xs text-text-muted">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -131,7 +131,7 @@ export function AppShell() {
               </div>
 
               {/* Input card */}
-              <div className="rounded-2xl border border-border-glass bg-white shadow-sm">
+              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16, overflow: "hidden" }}>
                 {/* Text input */}
                 <textarea
                   value={input}
@@ -144,28 +144,46 @@ export function AppShell() {
                   }}
                   placeholder="Ask Nova anything..."
                   rows={1}
-                  className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm text-text-primary placeholder:text-text-muted outline-none leading-relaxed"
+                  style={{
+                    width: "100%",
+                    resize: "none",
+                    background: "transparent",
+                    padding: "14px 16px 8px",
+                    fontSize: 14,
+                    color: "#1a1a2e",
+                    outline: "none",
+                    lineHeight: 1.6,
+                    fontFamily: "inherit",
+                  }}
                 />
 
                 {/* Bottom toolbar */}
-                <div className="flex items-center justify-between px-3 pb-2.5">
-                  <div className="flex items-center gap-1">
-                    <button className="p-1.5 rounded-lg text-text-muted hover:bg-gray-100 transition-colors">
-                      <Paperclip className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-text-muted hover:bg-gray-100 transition-colors">
-                      <Settings2 className="w-3.5 h-3.5" />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px 10px" }}>
+                  <button style={{ padding: 6, borderRadius: 8, color: "#9ca3af", background: "none", border: "none", cursor: "pointer" }}>
+                    <Paperclip size={16} />
+                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, fontSize: 12, color: "#9ca3af", background: "none", border: "none", cursor: "pointer" }}>
+                      <Settings2 size={14} />
                       <span>High</span>
                     </button>
                     <button
                       onClick={handleSubmit}
                       disabled={!input.trim()}
-                      className="rounded-full bg-gray-800 p-1.5 text-white transition-all hover:bg-gray-700 active:scale-[0.95] disabled:opacity-30 disabled:cursor-not-allowed"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 28,
+                        height: 28,
+                        borderRadius: "50%",
+                        background: input.trim() ? "#1f2937" : "#d1d5db",
+                        color: "#fff",
+                        border: "none",
+                        cursor: input.trim() ? "pointer" : "not-allowed",
+                      }}
                     >
-                      <ArrowUp className="w-4 h-4" />
+                      <ArrowUp size={16} />
                     </button>
                   </div>
                 </div>
