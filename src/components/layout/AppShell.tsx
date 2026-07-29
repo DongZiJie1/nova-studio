@@ -123,22 +123,15 @@ export function AppShell() {
           <div className="p-4 pt-0">
             <div className="max-w-3xl mx-auto">
               {/* Project path */}
-              <div className="flex items-center gap-2 px-4 py-2 rounded-t-xl border border-b-0 border-border-glass bg-white/60 text-xs text-text-muted">
+              <div className="flex items-center gap-2 px-4 py-2 text-xs text-text-muted">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
                 </svg>
                 <span>~/nova-studio</span>
               </div>
 
-              {/* Input box */}
-              <div className="flex items-end gap-2 border border-border-glass rounded-b-xl bg-white/60 px-4 py-3">
-                {/* Left: attach + model */}
-                <div className="flex items-center gap-1 mb-0.5">
-                  <button className="p-1.5 rounded-lg text-text-muted hover:bg-gray-100 transition-colors">
-                    <Paperclip className="w-4 h-4" />
-                  </button>
-                </div>
-
+              {/* Input card */}
+              <div className="rounded-2xl border border-border-glass bg-white shadow-sm">
                 {/* Text input */}
                 <textarea
                   value={input}
@@ -151,22 +144,30 @@ export function AppShell() {
                   }}
                   placeholder="Ask Nova anything..."
                   rows={1}
-                  className="flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none leading-relaxed"
+                  className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm text-text-primary placeholder:text-text-muted outline-none leading-relaxed"
                 />
 
-                {/* Right: model + send */}
-                <div className="flex items-center gap-1 mb-0.5">
-                  <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-text-muted hover:bg-gray-100 transition-colors">
-                    <Settings2 className="w-3.5 h-3.5" />
-                    <span>High</span>
-                  </button>
-                  <button
-                    onClick={handleSubmit}
-                    disabled={!input.trim()}
-                    className="rounded-lg bg-gray-800 p-1.5 text-white transition-all hover:bg-gray-700 active:scale-[0.95] disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ArrowUp className="w-4 h-4" />
-                  </button>
+                {/* Bottom toolbar */}
+                <div className="flex items-center justify-between px-3 pb-2.5">
+                  <div className="flex items-center gap-1">
+                    <button className="p-1.5 rounded-lg text-text-muted hover:bg-gray-100 transition-colors">
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-text-muted hover:bg-gray-100 transition-colors">
+                      <Settings2 className="w-3.5 h-3.5" />
+                      <span>High</span>
+                    </button>
+                    <button
+                      onClick={handleSubmit}
+                      disabled={!input.trim()}
+                      className="rounded-full bg-gray-800 p-1.5 text-white transition-all hover:bg-gray-700 active:scale-[0.95] disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ArrowUp className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
