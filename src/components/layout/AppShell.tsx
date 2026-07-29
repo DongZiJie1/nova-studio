@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Background } from "./Background";
 import { useAgentStore } from "../../stores/agent-store";
 import {
@@ -11,6 +11,7 @@ export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
   const [input, setInput] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeAgent = agents.find((a) => a.id === activeId);
   const hasMessages = (activeAgent?.messages.length ?? 0) > 0;
@@ -159,9 +160,24 @@ export function AppShell() {
 
                 {/* Bottom toolbar */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px 10px" }}>
-                  <button style={{ padding: 6, borderRadius: 8, color: "#9ca3af", background: "none", border: "none", cursor: "pointer" }}>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{ padding: 6, borderRadius: 8, color: "#9ca3af", background: "none", border: "none", cursor: "pointer" }}
+                  >
                     <Paperclip size={16} />
                   </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        console.log("selected files:", Array.from(files).map((f) => f.name));
+                      }
+                    }}
+                  />
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <button style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, fontSize: 12, color: "#9ca3af", background: "none", border: "none", cursor: "pointer" }}>
                       <Settings2 size={14} />
