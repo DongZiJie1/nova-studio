@@ -34,17 +34,18 @@ export function AppShell({ children }: AppShellProps) {
 
 function WelcomeView() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-12">
-      <div className="text-center max-w-lg">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-accent-start to-accent-end shadow-lg shadow-indigo-200">
+    <div className="flex-1 flex flex-col items-center justify-center p-16">
+      <div className="text-center max-w-md">
+        <div className="mx-auto mb-8 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-accent-start to-accent-end shadow-lg shadow-indigo-200">
           <Sparkles className="w-8 h-8 text-white" />
         </div>
 
-        <h2 className="text-3xl font-bold text-text-primary mb-3">
+        <h2 className="text-3xl font-bold text-text-primary mb-4">
           Welcome to <span className="gradient-text">Nova Studio</span>
         </h2>
-        <p className="text-text-secondary mb-8 leading-relaxed">
+        <p className="text-text-secondary leading-relaxed mb-14">
           Your AI-powered coding assistant with a beautiful visual interface.
+          <br />
           Create an agent to start building.
         </p>
 
