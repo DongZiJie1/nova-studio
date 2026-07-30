@@ -18,7 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // Determine the path to the nova CLI
-            // Priority: env var > global npm > dev paths > bundled sidecar (prod only)
+            // Priority: env var > bundled sidecar (prod) > global npm > dev paths
             let cli_path = resolve_cli_path(app.handle());
 
             // Create the central AgentManager
@@ -70,10 +70,10 @@ pub fn run() {
 ///
 /// Search order:
 /// 1. NOVA_CLI_PATH env var (explicit override)
-/// 2. Bundled sidecar (production only)
+/// 2. Bundled sidecar (production only - check binaries/ dir)
 /// 3. `nova` command in PATH (global npm install)
 /// 4. Dev mode relative paths
-fn resolve_cli_path(_app_handle: &tauri::AppHandle) -> String {
+fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
     // 1. Explicit env var override (highest priority)
     if let Ok(path) = std::env::var("NOVA_CLI_PATH") {
         if std::path::Path::new(&path).exists() {
@@ -84,11 +84,14 @@ fn resolve_cli_path(_app_handle: &tauri::AppHandle) -> String {
 
     // 2. Try bundled sidecar (production only - dev doesn't bundle externalBin)
     #[cfg(not(dev))]
-    if let Ok(sidecar_path) = app_handle.path().sidecar("nova") {
-        let path = sidecar_path.into_path();
-        if path.exists() {
-            log::info!("Using bundled nova sidecar: {}", path.display());
-            return path.to_string_lossy().to_string();
+    {
+        // In production, check app bundle's Resources directory
+        if let Some(resource_dir) = app_handle.path().resource_dir().ok() {
+            let nova_path = resource_dir.join("nova");
+            if nova_path.exists() {
+                log::info!("Using bundled nova: {}", nova_path.display());
+                return nova_path.to_string_lossy().to_string();
+            }
         }
     }
 

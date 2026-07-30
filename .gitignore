@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Rust build
+src-tauri/target
+
+# Tauri sidecar binaries (too large for git)
+src-tauri/binaries
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
