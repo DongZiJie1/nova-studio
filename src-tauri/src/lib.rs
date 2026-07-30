@@ -43,6 +43,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let mut rx = manager_ref.subscribe_global();
                 while let Ok((agent_id, msg)) = rx.recv().await {
+                    log::debug!("[event] -> frontend: agent={} type={:?}", agent_id, msg_type(&msg));
                     let payload = serde_json::json!({
                         "agentId": agent_id,
                         "event": msg,
@@ -86,4 +87,20 @@ fn resolve_cli_path() -> String {
     // Fallback: assume it's in PATH or relative
     log::warn!("Could not find nova CLI, using default path");
     "dist/cli.js".to_string()
+}
+
+fn msg_type(msg: &rpc_types::AgentMessage) -> &'static str {
+    match msg {
+        rpc_types::AgentMessage::Response { .. } => "response",
+        rpc_types::AgentMessage::MessageStart { .. } => "message_start",
+        rpc_types::AgentMessage::MessageUpdate { .. } => "message_update",
+        rpc_types::AgentMessage::MessageEnd { .. } => "message_end",
+        rpc_types::AgentMessage::ToolExecutionStart { .. } => "tool_start",
+        rpc_types::AgentMessage::ToolExecutionUpdate { .. } => "tool_update",
+        rpc_types::AgentMessage::ToolExecutionEnd { .. } => "tool_end",
+        rpc_types::AgentMessage::AgentSettled {} => "agent_settled",
+        rpc_types::AgentMessage::TurnStart {} => "turn_start",
+        rpc_types::AgentMessage::TurnEnd {} => "turn_end",
+        rpc_types::AgentMessage::Unknown => "unknown",
+    }
 }

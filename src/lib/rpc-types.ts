@@ -1,0 +1,145 @@
+/**
+ * RPC protocol TypeScript types — mirrors src-tauri/src/rpc_types.rs
+ * and nova's AgentSessionEvent / AssistantMessageEvent.
+ */
+
+// ─── Commands (frontend → agent via Rust backend) ───
+
+export type RpcCommand =
+  | { type: "prompt"; id?: string; message: string; images?: string[] }
+  | { type: "abort"; id?: string }
+  | { type: "set_model"; id?: string; provider: string; model_id: string }
+  | { type: "get_state"; id?: string }
+  | { type: "get_messages"; id?: string }
+  | { type: "get_session_stats"; id?: string }
+  | { type: "new_session"; id?: string }
+  | { type: "set_thinking_level"; id?: string; level: string }
+  | { type: "compact"; id?: string; custom_instructions?: string };
+
+// ─── Spawn / Prompt requests (Tauri command args) ───
+
+export interface SpawnRequest {
+  cwd: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface PromptRequest {
+  agent_id: string;
+  message: string;
+  images?: string[];
+}
+
+// ─── Streaming events from LLM (AssistantMessageEvent subset) ───
+
+export type StreamEventType =
+  | "text_start"
+  | "text_delta"
+  | "text_end"
+  | "thinking_start"
+  | "thinking_delta"
+  | "thinking_end"
+  | "toolcall_start"
+  | "toolcall_delta"
+  | "toolcall_end"
+  | "start"
+  | "done"
+  | "error";
+
+export interface StreamEvent {
+  type: StreamEventType;
+  delta?: string;
+  contentIndex?: number;
+  toolCall?: ToolCallInfo;
+  [key: string]: unknown;
+}
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+// ─── Messages from agent process (stdout JSONL) ───
+
+export type AgentMessage =
+  | {
+      type: "response";
+      id?: string;
+      command?: string;
+      success: boolean;
+      data?: Record<string, unknown>;
+    }
+  | { type: "message_start"; message?: Record<string, unknown> }
+  | {
+      type: "message_update";
+      message?: Record<string, unknown>;
+      assistantMessageEvent?: StreamEvent;
+    }
+  | { type: "message_end"; message?: Record<string, unknown> }
+  | {
+      type: "tool_execution_start";
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+    }
+  | {
+      type: "tool_execution_update";
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+      partialResult: unknown;
+    }
+  | {
+      type: "tool_execution_end";
+      toolCallId: string;
+      toolName: string;
+      result: unknown;
+      isError: boolean;
+    }
+  | { type: "agent_settled" }
+  | { type: "turn_start" }
+  | { type: "turn_end"; message?: Record<string, unknown>; toolResults?: unknown[] }
+  | { type: "agent_start" }
+  | { type: "agent_end"; messages?: unknown[]; willRetry?: boolean }
+  | { type: "queue_update"; steering?: string[]; followUp?: string[] }
+  | { type: "compaction_start"; reason?: string }
+  | { type: "compaction_end"; reason?: string; aborted?: boolean }
+  | { type: "auto_retry_start"; attempt?: number; maxAttempts?: number; errorMessage?: string }
+  | { type: "auto_retry_end"; success?: boolean; attempt?: number }
+  | { type: "bash_execution_update"; id?: string; delta?: string }
+  | { type: "unknown"; [key: string]: unknown };
+
+// ─── Agent status ───
+
+export type AgentStatus = "starting" | "idle" | "streaming" | "error" | "stopped";
+
+// ─── Agent info (from Rust backend) ───
+
+export interface AgentInfo {
+  id: string;
+  status: AgentStatus;
+  cwd: string;
+  model: string | null;
+  session_id: string | null;
+  created_at: string;
+  message_count: number;
+  last_error: string | null;
+}
+
+// ─── Tauri event payload (from Rust backend via emit) ───
+
+export interface AgentEventPayload {
+  agentId: string;
+  event: AgentMessage;
+}
+
+// ─── Settings ───
+
+export interface AppSettings {
+  apiKey: string;
+  defaultModel: string;
+  defaultProvider: string;
+  defaultCwd: string;
+  thinkingLevel: string;
+}
