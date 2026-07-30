@@ -67,16 +67,36 @@ pub fn run() {
 }
 
 /// Resolve the path to the nova CLI entry point
+///
+/// Search order:
+/// 1. NOVA_CLI_PATH env var (explicit override)
+/// 2. `nova` command in PATH (global npm install)
+/// 3. Dev mode relative paths
 fn resolve_cli_path() -> String {
-    // Try common locations
-    let candidates = vec![
-        // Relative to nova-studio (dev mode)
+    // 1. Explicit env var override
+    if let Ok(path) = std::env::var("NOVA_CLI_PATH") {
+        if std::path::Path::new(&path).exists() {
+            log::info!("Using nova CLI from NOVA_CLI_PATH: {}", path);
+            return path;
+        }
+    }
+
+    // 2. Try to find `nova` in PATH (user did npm i -g)
+    if let Ok(output) = std::process::Command::new("which").arg("nova").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            log::info!("Found nova in PATH: {}", path);
+            return path;
+        }
+    }
+
+    // 3. Dev mode: relative to nova-studio
+    let dev_candidates = vec![
         "../../nova/packages/nova/dist/cli.js",
-        // Absolute path
         "/Users/dongzj1102/Desktop/Pi-Agent/nova/packages/nova/dist/cli.js",
     ];
 
-    for candidate in &candidates {
+    for candidate in &dev_candidates {
         if std::path::Path::new(candidate).exists() {
             return std::fs::canonicalize(candidate)
                 .map(|p| p.to_string_lossy().to_string())
@@ -84,9 +104,8 @@ fn resolve_cli_path() -> String {
         }
     }
 
-    // Fallback: assume it's in PATH or relative
-    log::warn!("Could not find nova CLI, using default path");
-    "dist/cli.js".to_string()
+    log::warn!("Could not find nova CLI. Install it: npm i -g @dongzijie1/nova");
+    "nova".to_string()
 }
 
 fn msg_type(msg: &rpc_types::AgentMessage) -> &'static str {
