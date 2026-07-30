@@ -15,11 +15,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // Determine the path to the nova CLI
-            // In dev, it's the nova monorepo's dist/cli.js
-            // In production, it's bundled with the app
-            let cli_path = resolve_cli_path();
+            // Priority: env var > bundled sidecar (prod) > global npm > dev paths
+            let cli_path = resolve_cli_path(app.handle());
 
             // Create the central AgentManager
             let manager = Arc::new(AgentManager::new(cli_path));
@@ -70,10 +70,11 @@ pub fn run() {
 ///
 /// Search order:
 /// 1. NOVA_CLI_PATH env var (explicit override)
-/// 2. `nova` command in PATH (global npm install)
-/// 3. Dev mode relative paths
-fn resolve_cli_path() -> String {
-    // 1. Explicit env var override
+/// 2. Bundled sidecar (production only - check binaries/ dir)
+/// 3. `nova` command in PATH (global npm install)
+/// 4. Dev mode relative paths
+fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
+    // 1. Explicit env var override (highest priority)
     if let Ok(path) = std::env::var("NOVA_CLI_PATH") {
         if std::path::Path::new(&path).exists() {
             log::info!("Using nova CLI from NOVA_CLI_PATH: {}", path);
@@ -81,7 +82,20 @@ fn resolve_cli_path() -> String {
         }
     }
 
-    // 2. Try to find `nova` in PATH (user did npm i -g)
+    // 2. Try bundled sidecar (production only - dev doesn't bundle externalBin)
+    #[cfg(not(dev))]
+    {
+        // In production, check app bundle's Resources directory
+        if let Some(resource_dir) = app_handle.path().resource_dir().ok() {
+            let nova_path = resource_dir.join("nova");
+            if nova_path.exists() {
+                log::info!("Using bundled nova: {}", nova_path.display());
+                return nova_path.to_string_lossy().to_string();
+            }
+        }
+    }
+
+    // 3. Try to find `nova` in PATH (user did npm i -g)
     if let Ok(output) = std::process::Command::new("which").arg("nova").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -90,7 +104,7 @@ fn resolve_cli_path() -> String {
         }
     }
 
-    // 3. Dev mode: relative to nova-studio
+    // 4. Dev mode: relative to nova-studio
     let dev_candidates = vec![
         "../../nova/packages/nova/dist/cli.js",
         "/Users/dongzj1102/Desktop/Pi-Agent/nova/packages/nova/dist/cli.js",

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.0 (2026-07-30)
+
+### 新增功能
+
+- **Tauri Sidecar** — Nova agent 编译为独立二进制文件，捆绑在桌面应用内，用户无需手动安装。
+- **Bun 编译支持** — 使用 `bun build --compile` 将 TypeScript agent 编译为单个可执行文件（~73MB），无需 Node.js 运行时。
+- **自动化打包流程** — `npm run build:nova` 一键编译 agent 二进制，`npx tauri build` 生成 DMG 安装包。
+
+### 改进
+
+- **CLI 路径解析增强** — 优先查找 bundled sidecar（Resources 目录），其次环境变量，最后全局安装。
+- **新增 `tauri-plugin-shell`** — 支持 sidecar 进程管理（当前未使用，保留扩展能力）。
+
+---
+
 ## v0.2.1 (2026-07-30)
 
 ### 改进
@@ -10,6 +25,21 @@
 ### 修复
 
 - **`~` 路径展开** — Rust `Command::current_dir("~")` 不会像 shell 展开波浪号，现在用 `$HOME` 环境变量手动展开。
+
+---
+
+## v0.3.0 (2026-07-30)
+
+### Features
+
+- **Tauri Sidecar** — Nova agent compiled as standalone binary, bundled with desktop app. Users don't need manual installation.
+- **Bun compilation** — TypeScript agent compiled to single executable via `bun build --compile` (~73MB), no Node.js runtime required.
+- **Automated build flow** — `npm run build:nova` compiles agent binary, `npx tauri build` generates DMG installer.
+
+### Improvements
+
+- **Enhanced CLI path resolution** — Priority: bundled sidecar (Resources dir) > env var > global install.
+- **Added `tauri-plugin-shell`** — Support for sidecar process management (reserved for future use).
 
 ---
 
