@@ -30,7 +30,17 @@ impl AgentProcess {
         provider: Option<String>,
         extra_args: Vec<String>,
     ) -> Result<Self, String> {
-        let mut args = vec![cli_path.clone(), "--mode".to_string(), "rpc".to_string()];
+        // Determine how to invoke the CLI:
+        // - .js file → node <file> --mode rpc
+        // - command name (e.g. "nova") → nova --mode rpc
+        let is_js_file = cli_path.ends_with(".js");
+        let (program, mut args) = if is_js_file {
+            ("node".to_string(), vec![cli_path.clone()])
+        } else {
+            (cli_path.clone(), vec![])
+        };
+        args.push("--mode".to_string());
+        args.push("rpc".to_string());
 
         if let Some(m) = &model {
             args.push("--model".to_string());
@@ -51,9 +61,9 @@ impl AgentProcess {
             cwd.clone()
         };
 
-        log::info!("[process:{}] spawning: node {} {} (cwd={})", id, cli_path, args.join(" "), resolved_cwd);
+        log::info!("[process:{}] spawning: {} {} (cwd={})", id, program, args.join(" "), resolved_cwd);
 
-        let mut child = Command::new("node")
+        let mut child = Command::new(&program)
             .args(&args)
             .current_dir(&resolved_cwd)
             .stdin(Stdio::piped())
