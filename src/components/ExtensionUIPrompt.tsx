@@ -12,6 +12,10 @@ interface PendingDialog {
 
 const DIALOG_METHODS = new Set(["select", "confirm", "input"]);
 
+/** nova's ask_user_question appends this sentinel to select options; selecting it
+ * means "let the user type a custom answer" (ask-user-question.ts). */
+const TYPE_SOMETHING = "Type something";
+
 const overlayStyle: React.CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -97,6 +101,8 @@ const buttonBase: React.CSSProperties = {
 export function ExtensionUIPrompt() {
   const [queue, setQueue] = useState<PendingDialog[]>([]);
   const [inputValue, setInputValue] = useState("");
+  const [customInput, setCustomInput] = useState(false);
+  const [customValue, setCustomValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -113,8 +119,15 @@ export function ExtensionUIPrompt() {
   const current = queue[0];
 
   useEffect(() => {
-    if (current?.request.method === "input") {
+    if (current?.request.method === "input" || customInput) {
       inputRef.current?.focus();
+    }
+  }, [current, customInput]);
+
+  useEffect(() => {
+    if (current) {
+      setCustomInput(false);
+      setCustomValue("");
     }
   }, [current]);
 
@@ -168,24 +181,62 @@ export function ExtensionUIPrompt() {
 
         {request.method === "select" && (
           <>
-            {(request.options ?? []).map((opt, i) => (
-              <button
-                key={i}
-                style={optionStyle}
-                className="nova-ui-option"
-                onClick={() => respond({ value: opt })}
-              >
-                {opt}
-              </button>
-            ))}
-            <div style={actionRowStyle}>
-              <button
-                style={cancelButton}
-                onClick={() => respond({ cancelled: true })}
-              >
-                Cancel
-              </button>
-            </div>
+            {customInput ? (
+              <>
+                <input
+                  ref={inputRef}
+                  style={inputStyle}
+                  placeholder="Type your answer..."
+                  value={customValue}
+                  onChange={(e) => setCustomValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") respond({ value: customValue });
+                    if (e.key === "Escape") setCustomInput(false);
+                  }}
+                />
+                <div style={actionRowStyle}>
+                  <button
+                    style={cancelButton}
+                    onClick={() => setCustomInput(false)}
+                  >
+                    Back
+                  </button>
+                  <button
+                    style={confirmButton}
+                    onClick={() => respond({ value: customValue })}
+                  >
+                    Submit
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {(request.options ?? []).map((opt, i) => (
+                  <button
+                    key={i}
+                    style={optionStyle}
+                    className="nova-ui-option"
+                    onClick={() => {
+                      if (opt === TYPE_SOMETHING) {
+                        setCustomInput(true);
+                      } else {
+                        respond({ value: opt });
+                      }
+                    }}
+                  >
+                    {opt}
+                  </button>
+                ))}
+                <div style={actionRowStyle}>
+                  <button
+                    style={cancelButton}
+                    onClick={() => respond({ cancelled: true })}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
 
