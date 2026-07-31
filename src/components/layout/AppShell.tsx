@@ -1,18 +1,12 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import {
-  spawnAgent,
-  sendPrompt,
-  stopAgent,
-} from "../../lib/tauri-bridge";
-import {
-  Paperclip,
-  ArrowUp,
-  Settings2,
-  Square,
-} from "lucide-react";
+import { spawnAgent, sendPrompt, stopAgent } from "../../lib/tauri-bridge";
+import { ChatMessage } from "../chat/ChatMessage";
+import { StreamingText } from "../chat/StreamingText";
+import { ToolCallCard } from "../chat/ToolCallCard";
+import { Paperclip, ArrowUp, Settings2, Square } from "lucide-react";
 
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
@@ -32,6 +26,7 @@ export function AppShell() {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -42,6 +37,15 @@ export function AppShell() {
 
   const activeAgent = agents.find((a) => a.id === activeId);
   const hasMessages = (activeAgent?.messages.length ?? 0) > 0;
+  const streamingText = activeAgent?.streamingText ?? "";
+  const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
+  const messagesSize = activeAgent?.messages.length ?? 0;
+
+  // Follow the conversation: keep scrolled to the bottom as content streams in.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messagesSize, streamingText, toolCallsSize]);
 
   const handleSubmit = async () => {
     const text = input.trim();
@@ -178,7 +182,7 @@ export function AppShell() {
                   onClick={() => setActiveAgent(agent.id)}
                   className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all ${
                     agent.id === activeId
-                      ? "bg-indigo-50 text-accent-start font-medium"
+                      ? "bg-amber-50 text-amber-700 font-medium"
                       : "text-text-secondary hover:bg-gray-50"
                   }`}
                 >
@@ -187,7 +191,7 @@ export function AppShell() {
                       agent.status === "idle"
                         ? "bg-emerald-400"
                         : agent.status === "streaming"
-                          ? "bg-indigo-400 animate-pulse"
+                          ? "bg-orange-500 animate-pulse"
                           : agent.status === "error"
                             ? "bg-red-400"
                             : "bg-gray-300"
@@ -212,15 +216,20 @@ export function AppShell() {
         {/* Main */}
         <main className="glass-panel flex-1 flex flex-col overflow-hidden">
           {/* Content area */}
-          <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6">
+          <div
+            ref={scrollRef}
+            className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
+              !hasMessages ? "justify-center" : "justify-start"
+            }`}
+          >
             {!hasMessages ? (
               /* Empty state — tagline */
-              <div className="text-center max-w-2xl w-full">
+              <div className="text-center max-w-2xl w-full animate-fade-in-up">
                 {/* Logo */}
                 <div className="flex justify-center mb-6">
-                  <div className="h-12 w-12 rounded-xl bg-gray-100 flex items-center justify-center">
+                  <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 flex items-center justify-center">
                     <svg
-                      className="w-6 h-6 text-text-muted"
+                      className="w-7 h-7 text-orange-600"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -246,58 +255,26 @@ export function AppShell() {
               </div>
             ) : (
               /* Messages view */
-              <div className="w-full max-w-3xl space-y-4">
+              <div className="w-full max-w-3xl py-6">
                 {activeAgent?.messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-gradient-to-r from-accent-start to-accent-end text-white"
-                          : "bg-white/80 text-text-primary border border-border-glass"
-                      }`}
-                    >
-                      {msg.content}
-                    </div>
-                  </div>
+                  <ChatMessage key={msg.id} message={msg} />
                 ))}
-
-                {/* Streaming text */}
-                {activeAgent?.streamingText && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-white/80 text-text-primary border border-border-glass">
-                      {activeAgent.streamingText}
-                      <span className="inline-block w-1.5 h-4 bg-accent-start ml-0.5 animate-pulse" />
-                    </div>
-                  </div>
-                )}
 
                 {/* Active tool calls */}
                 {activeAgent &&
-                  activeAgent.activeToolCalls.size > 0 &&
-                  Array.from(activeAgent.activeToolCalls.values()).map(
-                    (tc) => (
-                      <div
-                        key={tc.id}
-                        className="flex justify-start"
-                      >
-                        <div className="rounded-2xl px-4 py-2 text-xs bg-indigo-50 text-accent-start border border-indigo-100 flex items-center gap-2">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              tc.status === "running"
-                                ? "bg-indigo-400 animate-pulse"
-                                : tc.status === "done"
-                                  ? "bg-emerald-400"
-                                  : "bg-red-400"
-                            }`}
-                          />
-                          {tc.name}
-                        </div>
-                      </div>
-                    ),
-                  )}
+                  Array.from(activeAgent.activeToolCalls.values()).map((tc) => (
+                    <div key={tc.id} className="msg-row msg-row-tool">
+                      <ToolCallCard
+                        name={tc.name}
+                        status={tc.status}
+                        args={tc.args}
+                        result={tc.result}
+                      />
+                    </div>
+                  ))}
+
+                {/* Streaming text */}
+                {streamingText && <StreamingText content={streamingText} />}
               </div>
             )}
           </div>

@@ -34,7 +34,7 @@ export function Sidebar({ onCreateAgent, onOpenSettings }: SidebarProps) {
               onClick={() => setActive(agent.id)}
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all ${
                 activeId === agent.id
-                  ? "bg-indigo-50 text-accent-start font-medium"
+                  ? "bg-amber-50 text-amber-700 font-medium"
                   : "text-text-secondary hover:bg-gray-50 hover:text-text-primary"
               }`}
             >
@@ -58,9 +58,9 @@ export function Sidebar({ onCreateAgent, onOpenSettings }: SidebarProps) {
         {/* New agent button */}
         <button
           onClick={onCreateAgent}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-text-secondary transition-all hover:bg-indigo-50 hover:text-accent-start border border-dashed border-border-glass hover:border-indigo-200"
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-text-secondary transition-all hover:bg-amber-50 hover:text-amber-700 border border-dashed border-border-glass hover:border-amber-200"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-50 text-xs font-medium text-accent-start">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-50 text-xs font-medium text-amber-700">
             <Plus className="w-3.5 h-3.5" />
           </span>
           New Agent

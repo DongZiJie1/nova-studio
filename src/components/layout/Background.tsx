@@ -1,11 +1,11 @@
 import { useUiStore } from "../../stores/ui-store";
 
 const presets = {
-  "mesh-indigo": {
-    gradient: "from-indigo-50 via-white to-violet-50",
+  "mesh-amber": {
+    gradient: "from-amber-50 via-white to-orange-50",
     orbs: [
-      { color: "rgba(139,92,246,0.15)", x: "right-0 top-0", size: "h-[600px] w-[600px]" },
-      { color: "rgba(99,102,241,0.12)", x: "left-0 bottom-0", size: "h-[500px] w-[500px]" },
+      { color: "rgba(249,115,22,0.15)", x: "right-0 top-0", size: "h-[600px] w-[600px]" },
+      { color: "rgba(239,68,68,0.10)", x: "left-0 bottom-0", size: "h-[500px] w-[500px]" },
     ],
   },
   "mesh-rose": {
@@ -41,7 +41,7 @@ export function Background() {
   const bgPreset = useUiStore((s) => s.bgPreset);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
 
-  const preset = presets[bgPreset as PresetKey] ?? presets["mesh-indigo"];
+  const preset = presets[bgPreset as PresetKey] ?? presets["mesh-amber"];
 
   return (
     <div className="absolute inset-0 overflow-hidden">

@@ -14,7 +14,7 @@ interface UiState {
 export const useUiStore = create<UiState>()(
   persist(
     (set) => ({
-      bgPreset: "mesh-indigo",
+      bgPreset: "mesh-amber",
       customBgUrl: null,
       sidebarCollapsed: false,
 
