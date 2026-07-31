@@ -8,7 +8,11 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentEventPayload, AgentInfo } from "./rpc-types";
+import type {
+  AgentEventPayload,
+  AgentInfo,
+  ExtensionUIResponse,
+} from "./rpc-types";
 
 // ─── Tauri Commands (frontend → Rust) ───
 
@@ -42,6 +46,19 @@ export async function sendPrompt(
 
 export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
+}
+
+export async function sendExtensionUIResponse(
+  agentId: string,
+  response: ExtensionUIResponse,
+): Promise<void> {
+  return invoke("send_extension_ui_response", {
+    agentId,
+    id: response.id,
+    value: response.value,
+    confirmed: response.confirmed,
+    cancelled: response.cancelled,
+  });
 }
 
 // ─── Event Listener (Rust → frontend) ───

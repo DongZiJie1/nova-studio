@@ -106,6 +106,17 @@ export type AgentMessage =
       isError: boolean;
     }
   | { type: "agent_settled" }
+  | {
+      type: "extension_ui_request";
+      id: string;
+      method: string;
+      title?: string;
+      message?: string;
+      options?: string[];
+      placeholder?: string;
+      timeout?: number;
+      [key: string]: unknown;
+    }
   | { type: "turn_start" }
   | { type: "turn_end"; message?: Record<string, unknown>; toolResults?: unknown[] }
   | { type: "agent_start" }
@@ -117,6 +128,34 @@ export type AgentMessage =
   | { type: "auto_retry_end"; success?: boolean; attempt?: number }
   | { type: "bash_execution_update"; id?: string; delta?: string }
   | { type: "unknown"; [key: string]: unknown };
+
+// ─── Extension UI dialogs (agent asks the user for input) ───
+
+export interface ExtensionUIRequest {
+  id: string;
+  method:
+    | "select"
+    | "confirm"
+    | "input"
+    | "notify"
+    | "setStatus"
+    | "setWidget"
+    | "setTitle"
+    | string;
+  title?: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  timeout?: number;
+}
+
+/** One of value / confirmed / cancelled — mirrors nova's RpcExtensionUIResponse */
+export interface ExtensionUIResponse {
+  id: string;
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+}
 
 // ─── Agent status ───
 

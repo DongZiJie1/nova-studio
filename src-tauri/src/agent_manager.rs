@@ -92,6 +92,29 @@ impl AgentManager {
         agent.send_command(&cmd)
     }
 
+    /// Send an extension UI response (from a frontend dialog) to an agent
+    pub async fn send_extension_ui_response(
+        &self,
+        agent_id: &str,
+        id: String,
+        value: Option<String>,
+        confirmed: Option<bool>,
+        cancelled: Option<bool>,
+    ) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        if !agent.is_alive().await {
+            return Err("Agent process is not running".to_string());
+        }
+        let cmd = RpcCommand::ExtensionUIResponse {
+            id,
+            value,
+            confirmed,
+            cancelled,
+        };
+        agent.send_command(&cmd)
+    }
+
     /// Stop and remove an agent
     pub async fn stop(&self, agent_id: &str) -> Result<(), String> {
         let mut agents = self.agents.write().await;

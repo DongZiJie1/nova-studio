@@ -85,6 +85,7 @@ pub fn run() {
             commands::get_agent_info,
             commands::send_prompt,
             commands::abort_agent,
+            commands::send_extension_ui_response,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -161,6 +162,7 @@ fn msg_type(msg: &rpc_types::AgentMessage) -> &'static str {
         rpc_types::AgentMessage::AutoRetryEnd { .. } => "auto_retry_end",
         rpc_types::AgentMessage::TurnStart {} => "turn_start",
         rpc_types::AgentMessage::TurnEnd {} => "turn_end",
+        rpc_types::AgentMessage::ExtensionUIRequest { .. } => "extension_ui_request",
         rpc_types::AgentMessage::Unknown => "unknown",
     }
 }

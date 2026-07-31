@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
+import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
 import { onAgentEvent } from "./lib/tauri-bridge";
 import { useAgentStore } from "./stores/agent-store";
 
@@ -14,7 +15,12 @@ function App() {
     return unlisten;
   }, [handleAgentEvent]);
 
-  return <AppShell />;
+  return (
+    <>
+      <AppShell />
+      <ExtensionUIPrompt />
+    </>
+  );
 }
 
 export default App;
