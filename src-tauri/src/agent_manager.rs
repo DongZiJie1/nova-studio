@@ -1,5 +1,5 @@
 use crate::agent_process::AgentProcess;
-use crate::rpc_types::{AgentInfo, AgentMessage, RpcCommand, SpawnRequest};
+use crate::rpc_types::{AgentInfo, AgentMessage, ImageContent, RpcCommand, SpawnRequest};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,7 +67,7 @@ impl AgentManager {
         &self,
         agent_id: &str,
         message: String,
-        images: Option<Vec<String>>,
+        images: Option<Vec<ImageContent>>,
     ) -> Result<(), String> {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;

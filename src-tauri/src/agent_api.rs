@@ -1,5 +1,5 @@
 use crate::agent_manager::AgentManager;
-use crate::rpc_types::{AgentInfo, SpawnRequest};
+use crate::rpc_types::{AgentInfo, ImageContent, SpawnRequest};
 use axum::{
     extract::State as AxumState,
     http::StatusCode,
@@ -36,7 +36,7 @@ struct SpawnResponse {
 struct PromptBody {
     message: String,
     #[serde(default)]
-    images: Option<Vec<String>>,
+    images: Option<Vec<ImageContent>>,
 }
 
 #[derive(Deserialize)]
