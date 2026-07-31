@@ -83,6 +83,12 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
+/** An input that fills a select option slot — same sizing as optionStyle */
+const optionInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  marginBottom: 8,
+};
+
 const actionRowStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "flex-end",
@@ -101,7 +107,6 @@ const buttonBase: React.CSSProperties = {
 export function ExtensionUIPrompt() {
   const [queue, setQueue] = useState<PendingDialog[]>([]);
   const [inputValue, setInputValue] = useState("");
-  const [customInput, setCustomInput] = useState(false);
   const [customValue, setCustomValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -119,14 +124,13 @@ export function ExtensionUIPrompt() {
   const current = queue[0];
 
   useEffect(() => {
-    if (current?.request.method === "input" || customInput) {
+    if (current?.request.method === "input") {
       inputRef.current?.focus();
     }
-  }, [current, customInput]);
+  }, [current]);
 
   useEffect(() => {
     if (current) {
-      setCustomInput(false);
       setCustomValue("");
     }
   }, [current]);
@@ -181,62 +185,39 @@ export function ExtensionUIPrompt() {
 
         {request.method === "select" && (
           <>
-            {customInput ? (
-              <>
+            {(request.options ?? []).map((opt, i) =>
+              opt === TYPE_SOMETHING ? (
                 <input
-                  ref={inputRef}
-                  style={inputStyle}
-                  placeholder="Type your answer..."
+                  key={i}
+                  style={optionInputStyle}
+                  placeholder={TYPE_SOMETHING}
                   value={customValue}
                   onChange={(e) => setCustomValue(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") respond({ value: customValue });
-                    if (e.key === "Escape") setCustomInput(false);
+                    if (e.key === "Enter" && customValue.trim()) {
+                      respond({ value: customValue.trim() });
+                    }
                   }}
                 />
-                <div style={actionRowStyle}>
-                  <button
-                    style={cancelButton}
-                    onClick={() => setCustomInput(false)}
-                  >
-                    Back
-                  </button>
-                  <button
-                    style={confirmButton}
-                    onClick={() => respond({ value: customValue })}
-                  >
-                    Submit
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                {(request.options ?? []).map((opt, i) => (
-                  <button
-                    key={i}
-                    style={optionStyle}
-                    className="nova-ui-option"
-                    onClick={() => {
-                      if (opt === TYPE_SOMETHING) {
-                        setCustomInput(true);
-                      } else {
-                        respond({ value: opt });
-                      }
-                    }}
-                  >
-                    {opt}
-                  </button>
-                ))}
-                <div style={actionRowStyle}>
-                  <button
-                    style={cancelButton}
-                    onClick={() => respond({ cancelled: true })}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
+              ) : (
+                <button
+                  key={i}
+                  style={optionStyle}
+                  className="nova-ui-option"
+                  onClick={() => respond({ value: opt })}
+                >
+                  {opt}
+                </button>
+              ),
             )}
+            <div style={actionRowStyle}>
+              <button
+                style={cancelButton}
+                onClick={() => respond({ cancelled: true })}
+              >
+                Cancel
+              </button>
+            </div>
           </>
         )}
 
