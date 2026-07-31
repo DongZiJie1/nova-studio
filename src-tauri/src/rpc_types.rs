@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// Image content for prompt messages — mirrors nova's ImageContent
+/// (packages/ai/src/types.ts). `data` is base64-encoded image data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub data: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+}
+
 /// Commands sent from the bridge to the agent process (stdin)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -9,7 +20,7 @@ pub enum RpcCommand {
         id: Option<String>,
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        images: Option<Vec<String>>,
+        images: Option<Vec<ImageContent>>,
     },
     #[serde(rename = "abort")]
     Abort { id: Option<String> },
@@ -82,6 +93,38 @@ pub enum AgentMessage {
     },
     #[serde(rename = "agent_settled")]
     AgentSettled {},
+    #[serde(rename = "agent_start")]
+    AgentStart {},
+    #[serde(rename = "agent_end")]
+    AgentEnd {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
+    #[serde(rename = "queue_update")]
+    QueueUpdate {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
+    #[serde(rename = "compaction_start")]
+    CompactionStart {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
+    #[serde(rename = "compaction_end")]
+    CompactionEnd {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
+    #[serde(rename = "auto_retry_start")]
+    AutoRetryStart {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
+    #[serde(rename = "auto_retry_end")]
+    AutoRetryEnd {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
     #[serde(rename = "turn_start")]
     TurnStart {},
     #[serde(rename = "turn_end")]
@@ -133,7 +176,7 @@ pub struct PromptRequest {
     pub agent_id: String,
     pub message: String,
     #[serde(default)]
-    pub images: Option<Vec<String>>,
+    pub images: Option<Vec<ImageContent>>,
 }
 
 #[cfg(test)]
@@ -163,5 +206,44 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"customInstructions\":\"keep it short\""));
         assert!(!json.contains("custom_instructions"));
+    }
+
+    /// nova prompt images are ImageContent[] ({ type, data, mimeType }) — packages/ai/src/types.ts
+    #[test]
+    fn prompt_serializes_images_as_image_content() {
+        let cmd = RpcCommand::Prompt {
+            id: None,
+            message: "hi".into(),
+            images: Some(vec![ImageContent {
+                content_type: "image".into(),
+                data: "aGVsbG8=".into(),
+                mime_type: "image/png".into(),
+            }]),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"mimeType\":\"image/png\""));
+        assert!(json.contains("\"data\":\"aGVsbG8=\""));
+        assert!(json.contains("\"type\":\"image\""));
+        assert!(!json.contains("mime_type"));
+    }
+
+    /// nova emits agent_start/agent_end — must not be swallowed by the Unknown catch-all
+    #[test]
+    fn agent_start_and_end_parse_preserving_fields() {
+        let agent_start: AgentMessage =
+            serde_json::from_str(r#"{"type":"agent_start"}"#).unwrap();
+        assert!(matches!(agent_start, AgentMessage::AgentStart {}));
+
+        let agent_end: AgentMessage = serde_json::from_str(
+            r#"{"type":"agent_end","messages":[{"role":"assistant","content":"hi"}],"willRetry":false}"#,
+        )
+        .unwrap();
+        match agent_end {
+            AgentMessage::AgentEnd { data } => {
+                assert_eq!(data["willRetry"].as_bool(), Some(false));
+                assert!(data["messages"].is_array());
+            }
+            _ => panic!("expected AgentEnd"),
+        }
     }
 }

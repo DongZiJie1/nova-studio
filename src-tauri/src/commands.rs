@@ -1,5 +1,5 @@
 use crate::agent_manager::AgentManager;
-use crate::rpc_types::{AgentInfo, SpawnRequest};
+use crate::rpc_types::{AgentInfo, ImageContent, SpawnRequest};
 use std::sync::Arc;
 use tauri::State;
 
@@ -58,7 +58,7 @@ pub async fn send_prompt(
     state: State<'_, AgentManagerState>,
     agent_id: String,
     message: String,
-    images: Option<Vec<String>>,
+    images: Option<Vec<ImageContent>>,
 ) -> Result<(), String> {
     log::info!("[cmd] send_prompt agent_id={} len={} images={:?}", agent_id, message.len(), images.is_some());
     state.0.send_prompt(&agent_id, message, images).await

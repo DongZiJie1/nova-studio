@@ -5,16 +5,24 @@
 
 // ─── Commands (frontend → agent via Rust backend) ───
 
+/** Image content for prompts — mirrors nova's ImageContent (packages/ai/src/types.ts) */
+export interface ImageContent {
+  type: "image";
+  /** base64 encoded image data */
+  data: string;
+  mimeType: string;
+}
+
 export type RpcCommand =
-  | { type: "prompt"; id?: string; message: string; images?: string[] }
+  | { type: "prompt"; id?: string; message: string; images?: ImageContent[] }
   | { type: "abort"; id?: string }
-  | { type: "set_model"; id?: string; provider: string; model_id: string }
+  | { type: "set_model"; id?: string; provider: string; modelId: string }
   | { type: "get_state"; id?: string }
   | { type: "get_messages"; id?: string }
   | { type: "get_session_stats"; id?: string }
   | { type: "new_session"; id?: string }
   | { type: "set_thinking_level"; id?: string; level: string }
-  | { type: "compact"; id?: string; custom_instructions?: string };
+  | { type: "compact"; id?: string; customInstructions?: string };
 
 // ─── Spawn / Prompt requests (Tauri command args) ───
 
