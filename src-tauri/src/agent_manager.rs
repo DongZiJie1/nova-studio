@@ -1,5 +1,5 @@
 use crate::agent_process::AgentProcess;
-use crate::rpc_types::{AgentInfo, AgentMessage, ImageContent, RpcCommand, SpawnRequest};
+use crate::rpc_types::{AgentInfo, ImageContent, RpcCommand, SpawnRequest};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub struct AgentManager {
     agents: Arc<RwLock<HashMap<String, Arc<AgentProcess>>>>,
     /// Global event bus: receives events from ALL agents, tagged with agent_id
-    global_event_tx: broadcast::Sender<(String, AgentMessage)>,
+    global_event_tx: broadcast::Sender<(String, serde_json::Value)>,
     cli_path: String,
 }
 
@@ -165,7 +165,7 @@ impl AgentManager {
     }
 
     /// Subscribe to global events (all agents)
-    pub fn subscribe_global(&self) -> broadcast::Receiver<(String, AgentMessage)> {
+    pub fn subscribe_global(&self) -> broadcast::Receiver<(String, serde_json::Value)> {
         self.global_event_tx.subscribe()
     }
 
