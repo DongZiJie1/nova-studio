@@ -147,9 +147,20 @@ export function ExtensionUIPrompt() {
   return (
     <div style={overlayStyle} onClick={() => respond({ cancelled: true })}>
       <style>{`
-        .nova-ui-option { transition: background 0.15s ease, border-color 0.15s ease; }
-        .nova-ui-option:hover { background: rgba(255, 255, 255, 0.95); border-color: #2563eb; }
-        .nova-ui-option:active { background: rgba(226, 232, 240, 0.9); }
+        .nova-ui-option {
+          transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+        }
+        .nova-ui-option:hover {
+          background: rgba(255, 255, 255, 0.98);
+          border-color: #3b82f6;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+        }
+        .nova-ui-option:active {
+          background: rgba(219, 234, 254, 0.9);
+          transform: translateY(0);
+          box-shadow: none;
+        }
       `}</style>
       <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
         <div style={titleStyle}>{title}</div>
