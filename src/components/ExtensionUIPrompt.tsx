@@ -19,29 +19,34 @@ const overlayStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "rgba(0, 0, 0, 0.6)",
+  background: "rgba(120, 135, 160, 0.25)",
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
 };
 
 const cardStyle: React.CSSProperties = {
   width: 420,
   maxWidth: "90vw",
-  background: "#111827",
-  border: "1px solid #1f2937",
-  borderRadius: 12,
-  padding: 20,
-  color: "#e5e7eb",
-  boxShadow: "0 20px 50px rgba(0,0,0,0.5)",
+  background: "rgba(255, 255, 255, 0.7)",
+  backdropFilter: "blur(20px) saturate(180%)",
+  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+  border: "1px solid rgba(255, 255, 255, 0.6)",
+  borderRadius: 16,
+  padding: 24,
+  color: "#111827",
+  boxShadow: "0 20px 60px rgba(31, 41, 55, 0.18)",
 };
 
 const titleStyle: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
   marginBottom: 8,
+  color: "#111827",
 };
 
 const messageStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#9ca3af",
+  color: "#4b5563",
   marginBottom: 16,
   whiteSpace: "pre-wrap",
   wordBreak: "break-word",
@@ -53,22 +58,23 @@ const optionStyle: React.CSSProperties = {
   textAlign: "left",
   padding: "10px 12px",
   marginBottom: 8,
-  borderRadius: 8,
-  background: "#1f2937",
-  color: "#e5e7eb",
-  border: "1px solid #374151",
+  borderRadius: 10,
+  background: "rgba(255, 255, 255, 0.7)",
+  color: "#111827",
+  border: "1px solid rgba(148, 163, 184, 0.35)",
   cursor: "pointer",
   fontSize: 13,
+  boxSizing: "border-box",
 };
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
   marginBottom: 16,
-  borderRadius: 8,
-  background: "#1f2937",
-  color: "#e5e7eb",
-  border: "1px solid #374151",
+  borderRadius: 10,
+  background: "rgba(255, 255, 255, 0.8)",
+  color: "#111827",
+  border: "1px solid rgba(148, 163, 184, 0.4)",
   fontSize: 13,
   boxSizing: "border-box",
 };
@@ -82,7 +88,7 @@ const actionRowStyle: React.CSSProperties = {
 
 const buttonBase: React.CSSProperties = {
   padding: "8px 16px",
-  borderRadius: 8,
+  borderRadius: 10,
   fontSize: 13,
   border: "none",
   cursor: "pointer",
@@ -133,12 +139,18 @@ export function ExtensionUIPrompt() {
   };
   const cancelButton: React.CSSProperties = {
     ...buttonBase,
-    background: "#374151",
-    color: "#e5e7eb",
+    background: "rgba(255, 255, 255, 0.8)",
+    color: "#374151",
+    border: "1px solid rgba(148, 163, 184, 0.4)",
   };
 
   return (
     <div style={overlayStyle} onClick={() => respond({ cancelled: true })}>
+      <style>{`
+        .nova-ui-option { transition: background 0.15s ease, border-color 0.15s ease; }
+        .nova-ui-option:hover { background: rgba(255, 255, 255, 0.95); border-color: #2563eb; }
+        .nova-ui-option:active { background: rgba(226, 232, 240, 0.9); }
+      `}</style>
       <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
         <div style={titleStyle}>{title}</div>
         {message ? <div style={messageStyle}>{message}</div> : null}
@@ -149,6 +161,7 @@ export function ExtensionUIPrompt() {
               <button
                 key={i}
                 style={optionStyle}
+                className="nova-ui-option"
                 onClick={() => respond({ value: opt })}
               >
                 {opt}
