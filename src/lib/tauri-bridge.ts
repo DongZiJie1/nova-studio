@@ -49,17 +49,22 @@ export async function abortAgent(agentId: string): Promise<void> {
 export function onAgentEvent(
   callback: (payload: AgentEventPayload) => void,
 ): UnlistenFn {
-  // listen() returns a Promise<UnlistenFn>, but we fire-and-forget
-  // the unlisten is stored so callers can clean up
-  let unlisten: UnlistenFn | null = null;
+  let cleanedUp = false;
+  let unlistenFn: UnlistenFn | null = null;
 
   listen<AgentEventPayload>("agent-event", (event) => {
     callback(event.payload);
   }).then((fn) => {
-    unlisten = fn;
+    if (cleanedUp) {
+      // Effect already cleaned up before listener was ready — remove immediately
+      fn();
+    } else {
+      unlistenFn = fn;
+    }
   });
 
   return () => {
-    unlisten?.();
+    cleanedUp = true;
+    unlistenFn?.();
   };
 }

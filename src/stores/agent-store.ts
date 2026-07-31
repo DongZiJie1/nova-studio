@@ -137,6 +137,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   handleAgentEvent: (payload) => {
     const { agentId, event } = payload;
     const parsed = parseAgentEvent(event);
+    console.log(`[event] agent=${agentId} type=${event.type} → kind=${parsed.kind}`);
 
     set((s) => ({
       agents: s.agents.map((agent) => {
@@ -163,8 +164,21 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
         return { ...agent, status: "streaming" as const };
       }
       if (event.phase === "end") {
+        console.log("[message_end] full message:", JSON.stringify(event.message));
         const text = extractAssistantText(event.message);
+        console.log("[message_end] extracted text:", text?.substring(0, 200));
+        console.log("[message_end] current streamingText length:", agent.streamingText.length);
+        console.log("[message_end] current messages count:", agent.messages.length);
         if (text) {
+          // Deduplicate: agent may send message_end twice with the same content.
+          // If the last message already has identical content, skip adding.
+          const lastMsg = agent.messages[agent.messages.length - 1];
+          const isDuplicate =
+            lastMsg?.role === "assistant" && lastMsg.content === text;
+          if (isDuplicate) {
+            console.log("[message_end] duplicate detected, skipping");
+            return { ...agent, streamingText: "" };
+          }
           return {
             ...agent,
             messages: [
@@ -211,8 +225,11 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "agent_status": {
       if (event.status === "settled") {
+        console.log("[agent_settled] streamingText length:", agent.streamingText.length);
+        console.log("[agent_settled] messages count:", agent.messages.length);
         // Flush any remaining streaming text
         if (agent.streamingText) {
+          console.log("[agent_settled] flushing streamingText as assistant message");
           return {
             ...agent,
             status: "idle" as const,

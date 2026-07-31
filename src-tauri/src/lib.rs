@@ -104,21 +104,7 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
         }
     }
 
-    // 4. Dev mode: relative to nova-studio
-    let dev_candidates = vec![
-        "../../nova/packages/nova/dist/cli.js",
-        "/Users/dongzj1102/Desktop/Pi-Agent/nova/packages/nova/dist/cli.js",
-    ];
-
-    for candidate in &dev_candidates {
-        if std::path::Path::new(candidate).exists() {
-            return std::fs::canonicalize(candidate)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| candidate.to_string());
-        }
-    }
-
-    log::warn!("Could not find nova CLI. Install it: npm i -g @dongzijie1/nova");
+    log::warn!("Could not find nova CLI. Install it: npm link @dongzijie1/nova");
     "nova".to_string()
 }
 
