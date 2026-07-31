@@ -85,7 +85,17 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
     // 2. Try bundled sidecar (production only - dev doesn't bundle externalBin)
     #[cfg(not(dev))]
     {
-        // In production, check app bundle's Resources directory
+        // Tauri sidecars are placed next to the main executable (Contents/MacOS/)
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let nova_path = exe_dir.join("nova");
+                if nova_path.exists() {
+                    log::info!("Using bundled nova: {}", nova_path.display());
+                    return nova_path.to_string_lossy().to_string();
+                }
+            }
+        }
+        // Fallback: check Resources directory
         if let Some(resource_dir) = app_handle.path().resource_dir().ok() {
             let nova_path = resource_dir.join("nova");
             if nova_path.exists() {
