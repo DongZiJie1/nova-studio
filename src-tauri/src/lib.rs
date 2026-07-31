@@ -21,6 +21,30 @@ pub fn run() {
             // Priority: env var > bundled sidecar (prod) > global npm > dev paths
             let cli_path = resolve_cli_path(app.handle());
 
+            // Bun-compiled binaries look for resource dirs (theme/, export-html/, assets/)
+            // next to the executable. Tauri bundles these into Resources/binaries/ instead.
+            // Create symlinks so the binary can find them at runtime.
+            if let Some(bin_dir) = std::path::Path::new(&cli_path).parent() {
+                if let Ok(resource_dir) = app.handle().path().resource_dir() {
+                    // Tauri resources preserve the src-tauri/ directory structure
+                    let bundled_base = resource_dir.join("binaries");
+                    for dir_name in &["theme", "export-html", "assets"] {
+                        let bin_resource = bin_dir.join(dir_name);
+                        if !bin_resource.exists() {
+                            let bundled_resource = bundled_base.join(dir_name);
+                            if bundled_resource.exists() {
+                                log::info!("Linking {} -> {}", bundled_resource.display(), bin_resource.display());
+                                if let Err(e) = std::os::unix::fs::symlink(&bundled_resource, &bin_resource) {
+                                    log::warn!("Failed to symlink {}: {}", dir_name, e);
+                                }
+                            } else {
+                                log::warn!("Resource dir not found in bundle: {}", bundled_resource.display());
+                            }
+                        }
+                    }
+                }
+            }
+
             // Create the central AgentManager
             let manager = Arc::new(AgentManager::new(cli_path));
 

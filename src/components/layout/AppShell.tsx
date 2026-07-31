@@ -29,6 +29,7 @@ export function AppShell() {
 
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -83,7 +84,10 @@ export function AppShell() {
       // Send to agent via Tauri backend
       await sendPrompt(agentId, text);
     } catch (err) {
-      console.error("Failed to send prompt:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Failed to send prompt:", msg);
+      setError(msg);
+      setTimeout(() => setError(null), 8000);
     } finally {
       setIsSending(false);
     }
@@ -113,6 +117,45 @@ export function AppShell() {
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-bg-primary">
       <Background />
+
+      {/* Error banner */}
+      {error && (
+        <div
+          style={{
+            position: "fixed",
+            top: 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#991b1b",
+            padding: "10px 20px",
+            borderRadius: 12,
+            fontSize: 13,
+            fontFamily: "system-ui",
+            maxWidth: "90vw",
+            wordBreak: "break-word",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}
+        >
+          {error}
+          <button
+            onClick={() => setError(null)}
+            style={{
+              marginLeft: 12,
+              background: "none",
+              border: "none",
+              color: "#991b1b",
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 14,
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
 
       <div className="relative z-10 flex h-full p-4 gap-4">
         {/* Sidebar */}
