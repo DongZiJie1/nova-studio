@@ -1,5 +1,5 @@
 use crate::agent_process::AgentProcess;
-use crate::rpc_types::{AgentInfo, AgentMessage, ImageContent, RpcCommand, SpawnRequest};
+use crate::rpc_types::{AgentInfo, ImageContent, RpcCommand, SpawnRequest};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub struct AgentManager {
     agents: Arc<RwLock<HashMap<String, Arc<AgentProcess>>>>,
     /// Global event bus: receives events from ALL agents, tagged with agent_id
-    global_event_tx: broadcast::Sender<(String, AgentMessage)>,
+    global_event_tx: broadcast::Sender<(String, serde_json::Value)>,
     cli_path: String,
 }
 
@@ -92,6 +92,29 @@ impl AgentManager {
         agent.send_command(&cmd)
     }
 
+    /// Send an extension UI response (from a frontend dialog) to an agent
+    pub async fn send_extension_ui_response(
+        &self,
+        agent_id: &str,
+        id: String,
+        value: Option<String>,
+        confirmed: Option<bool>,
+        cancelled: Option<bool>,
+    ) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        if !agent.is_alive().await {
+            return Err("Agent process is not running".to_string());
+        }
+        let cmd = RpcCommand::ExtensionUIResponse {
+            id,
+            value,
+            confirmed,
+            cancelled,
+        };
+        agent.send_command(&cmd)
+    }
+
     /// Stop and remove an agent
     pub async fn stop(&self, agent_id: &str) -> Result<(), String> {
         let mut agents = self.agents.write().await;
@@ -142,7 +165,7 @@ impl AgentManager {
     }
 
     /// Subscribe to global events (all agents)
-    pub fn subscribe_global(&self) -> broadcast::Receiver<(String, AgentMessage)> {
+    pub fn subscribe_global(&self) -> broadcast::Receiver<(String, serde_json::Value)> {
         self.global_event_tx.subscribe()
     }
 

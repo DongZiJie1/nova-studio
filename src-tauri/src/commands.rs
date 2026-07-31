@@ -72,3 +72,25 @@ pub async fn abort_agent(
     log::info!("[cmd] abort_agent id={}", agent_id);
     state.0.abort(&agent_id).await
 }
+
+#[tauri::command]
+pub async fn send_extension_ui_response(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    id: String,
+    value: Option<String>,
+    confirmed: Option<bool>,
+    cancelled: Option<bool>,
+) -> Result<(), String> {
+    log::info!(
+        "[cmd] send_extension_ui_response id={} value={:?} confirmed={:?} cancelled={:?}",
+        id,
+        value,
+        confirmed,
+        cancelled
+    );
+    state
+        .0
+        .send_extension_ui_response(&agent_id, id, value, confirmed, cancelled)
+        .await
+}

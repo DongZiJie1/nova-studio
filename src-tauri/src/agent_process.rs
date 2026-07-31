@@ -15,7 +15,7 @@ pub struct AgentProcess {
     pub last_error: Arc<Mutex<Option<String>>>,
     child: Arc<Mutex<Child>>,
     stdin_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    event_tx: broadcast::Sender<AgentMessage>,
+    event_tx: broadcast::Sender<serde_json::Value>,
     _stdout_task: tokio::task::JoinHandle<()>,
     _stdin_task: tokio::task::JoinHandle<()>,
 }
@@ -84,7 +84,7 @@ impl AgentProcess {
         let status = Arc::new(Mutex::new(AgentStatus::Starting));
         let message_count = Arc::new(Mutex::new(0usize));
         let last_error = Arc::new(Mutex::new(None));
-        let (event_tx, _) = broadcast::channel(256);
+        let (event_tx, _) = broadcast::channel::<serde_json::Value>(256);
         let (stdin_tx, stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
         // stdout reader task - parses JSONL events
@@ -149,7 +149,11 @@ impl AgentProcess {
                             }
                             _ => {}
                         }
-                        let _ = event_tx_clone.send(msg);
+                        // Forward the raw parsed JSON (not the lossy enum) so unknown
+                        // event fields survive the trip to the frontend unchanged.
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let _ = event_tx_clone.send(value);
+                        }
                     }
                     Err(e) => {
                         log::warn!("[process:{}] parse error: {} — raw: {}", id_clone, e, truncate(&line, 200));
@@ -210,7 +214,7 @@ impl AgentProcess {
     }
 
     /// Subscribe to events from this agent
-    pub fn subscribe(&self) -> broadcast::Receiver<AgentMessage> {
+    pub fn subscribe(&self) -> broadcast::Receiver<serde_json::Value> {
         self.event_tx.subscribe()
     }
 
