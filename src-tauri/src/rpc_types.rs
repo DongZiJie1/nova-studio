@@ -17,6 +17,7 @@ pub enum RpcCommand {
     SetModel {
         id: Option<String>,
         provider: String,
+        #[serde(rename = "modelId")]
         model_id: String,
     },
     #[serde(rename = "get_state")]
@@ -33,6 +34,7 @@ pub enum RpcCommand {
     Compact {
         id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "customInstructions")]
         custom_instructions: Option<String>,
     },
 }
@@ -132,4 +134,34 @@ pub struct PromptRequest {
     pub message: String,
     #[serde(default)]
     pub images: Option<Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// nova reads set_model via `command.modelId` (camelCase) — rpc-mode.ts
+    #[test]
+    fn set_model_serializes_camel_case_model_id() {
+        let cmd = RpcCommand::SetModel {
+            id: None,
+            provider: "anthropic".into(),
+            model_id: "claude-opus-4-7".into(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"modelId\":\"claude-opus-4-7\""));
+        assert!(!json.contains("model_id"));
+    }
+
+    /// nova reads compact via `command.customInstructions` (camelCase) — rpc-mode.ts
+    #[test]
+    fn compact_serializes_camel_case_custom_instructions() {
+        let cmd = RpcCommand::Compact {
+            id: None,
+            custom_instructions: Some("keep it short".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"customInstructions\":\"keep it short\""));
+        assert!(!json.contains("custom_instructions"));
+    }
 }
