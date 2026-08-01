@@ -183,6 +183,10 @@ pub struct SpawnRequest {
     pub provider: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    /// Collaboration hop depth: 0 for user-spawned agents, incremented for
+    /// agents spawned by another agent. Used to bound delegation chains.
+    #[serde(default)]
+    pub depth: u64,
 }
 
 /// Prompt request

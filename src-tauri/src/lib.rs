@@ -52,8 +52,13 @@ pub fn run() {
             let manager_clone = manager.clone();
             let api_port = 9528; // fixed port for now
             tauri::async_runtime::spawn(async move {
-                match agent_api::start_api_server(manager_clone, api_port).await {
-                    Ok(port) => log::info!("Agent API available at http://127.0.0.1:{}", port),
+                match agent_api::start_api_server(manager_clone.clone(), api_port).await {
+                    Ok(port) => {
+                        manager_clone
+                            .set_hub_url(format!("http://127.0.0.1:{}", port))
+                            .await;
+                        log::info!("Agent API available at http://127.0.0.1:{}", port);
+                    }
                     Err(e) => log::error!("Failed to start agent API: {}", e),
                 }
             });

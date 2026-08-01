@@ -19,6 +19,7 @@ pub async fn spawn_agent(
         model,
         provider,
         args: None,
+        depth: 0,
     };
     let result = state.0.spawn(request).await;
     match &result {

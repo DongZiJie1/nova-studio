@@ -10,9 +10,14 @@ use tokio::sync::{broadcast, Mutex};
 pub struct AgentProcess {
     pub id: String,
     pub cwd: String,
+    pub model: Option<String>,
+    pub created_at: String,
     pub status: Arc<Mutex<AgentStatus>>,
     pub message_count: Arc<Mutex<usize>>,
     pub last_error: Arc<Mutex<Option<String>>>,
+    /// Serializes prompt/ask interactions coming from the hub API so
+    /// concurrent collaborators can't interleave messages in one session.
+    pub prompt_lock: Arc<Mutex<()>>,
     child: Arc<Mutex<Child>>,
     stdin_tx: tokio::sync::mpsc::UnboundedSender<String>,
     event_tx: broadcast::Sender<serde_json::Value>,
@@ -29,6 +34,9 @@ impl AgentProcess {
         model: Option<String>,
         provider: Option<String>,
         extra_args: Vec<String>,
+        hub_url: String,
+        hub_token: String,
+        depth: u64,
     ) -> Result<Self, String> {
         // Determine how to invoke the CLI:
         // - .js file → node <file> --mode rpc
@@ -66,6 +74,12 @@ impl AgentProcess {
         let mut child = Command::new(&program)
             .args(&args)
             .current_dir(&resolved_cwd)
+            // Hub collaboration identity: every agent knows who it is,
+            // where the hub API lives, and the token to call it with.
+            .env("NOVA_HUB_URL", &hub_url)
+            .env("NOVA_HUB_TOKEN", &hub_token)
+            .env("NOVA_AGENT_ID", &id)
+            .env("NOVA_ASK_DEPTH", depth.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -193,9 +207,12 @@ impl AgentProcess {
         Ok(Self {
             id,
             cwd,
+            model,
+            created_at: chrono::Utc::now().to_rfc3339(),
             status,
             message_count,
             last_error,
+            prompt_lock: Arc::new(Mutex::new(())),
             child: Arc::new(Mutex::new(child)),
             stdin_tx,
             event_tx,
