@@ -23,7 +23,7 @@ const overlayStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "rgba(120, 135, 160, 0.25)",
+  background: "rgba(0, 0, 0, 0.5)",
   backdropFilter: "blur(6px)",
   WebkitBackdropFilter: "blur(6px)",
 };
@@ -31,26 +31,26 @@ const overlayStyle: React.CSSProperties = {
 const cardStyle: React.CSSProperties = {
   width: 420,
   maxWidth: "90vw",
-  background: "rgba(255, 255, 255, 0.7)",
+  background: "rgba(12, 14, 28, 0.92)",
   backdropFilter: "blur(20px) saturate(180%)",
   WebkitBackdropFilter: "blur(20px) saturate(180%)",
-  border: "1px solid rgba(255, 255, 255, 0.6)",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
   borderRadius: 16,
   padding: 24,
-  color: "#111827",
-  boxShadow: "0 20px 60px rgba(31, 41, 55, 0.18)",
+  color: "#e8eaed",
+  boxShadow: "0 20px 60px rgba(0, 0, 0, 0.4)",
 };
 
 const titleStyle: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
   marginBottom: 8,
-  color: "#111827",
+  color: "#e8eaed",
 };
 
 const messageStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#4b5563",
+  color: "#9ca3af",
   marginBottom: 16,
   whiteSpace: "pre-wrap",
   wordBreak: "break-word",
@@ -63,9 +63,9 @@ const optionStyle: React.CSSProperties = {
   padding: "10px 12px",
   marginBottom: 8,
   borderRadius: 10,
-  background: "rgba(255, 255, 255, 0.7)",
-  color: "#111827",
-  border: "1px solid rgba(148, 163, 184, 0.35)",
+  background: "rgba(255, 255, 255, 0.04)",
+  color: "#e8eaed",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
   cursor: "pointer",
   fontSize: 13,
   boxSizing: "border-box",
@@ -76,9 +76,9 @@ const inputStyle: React.CSSProperties = {
   padding: "10px 12px",
   marginBottom: 16,
   borderRadius: 10,
-  background: "rgba(255, 255, 255, 0.8)",
-  color: "#111827",
-  border: "1px solid rgba(148, 163, 184, 0.4)",
+  background: "rgba(255, 255, 255, 0.04)",
+  color: "#e8eaed",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
   fontSize: 13,
   boxSizing: "border-box",
 };
@@ -151,14 +151,14 @@ export function ExtensionUIPrompt() {
 
   const confirmButton: React.CSSProperties = {
     ...buttonBase,
-    background: "#2563eb",
+    background: "#818cf8",
     color: "#fff",
   };
   const cancelButton: React.CSSProperties = {
     ...buttonBase,
-    background: "rgba(255, 255, 255, 0.8)",
-    color: "#374151",
-    border: "1px solid rgba(148, 163, 184, 0.4)",
+    background: "rgba(255, 255, 255, 0.06)",
+    color: "#9ca3af",
+    border: "1px solid rgba(255, 255, 255, 0.08)",
   };
 
   return (
@@ -168,13 +168,13 @@ export function ExtensionUIPrompt() {
           transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
         }
         .nova-ui-option:hover {
-          background: rgba(255, 255, 255, 0.98);
-          border-color: #3b82f6;
+          background: rgba(129, 140, 248, 0.12);
+          border-color: #818cf8;
           transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+          box-shadow: 0 4px 12px rgba(129, 140, 248, 0.2);
         }
         .nova-ui-option:active {
-          background: rgba(219, 234, 254, 0.9);
+          background: rgba(129, 140, 248, 0.18);
           transform: translateY(0);
           box-shadow: none;
         }
