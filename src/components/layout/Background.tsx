@@ -17,12 +17,14 @@ export function Background() {
         }}
       />
 
-      {/* Soft depth glow behind the hero */}
+      {/* Light rising from the horizon's midpoint — spreads wider than the
+          screen and fades gradually, so no ellipse edge is ever visible.
+          It backlights the hero text above the arc. */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 55% 40% at 50% 38%, rgba(48, 44, 110, 0.35) 0%, transparent 70%)",
+            "radial-gradient(ellipse 135% 46% at 50% 60%, rgba(128, 138, 252, 0.15) 0%, rgba(102, 110, 235, 0.08) 35%, rgba(70, 74, 180, 0.03) 55%, transparent 72%)",
         }}
       />
 
@@ -66,21 +68,21 @@ export function Background() {
         }}
       />
 
-      {/* Center bloom — concentrates the light at the horizon apex */}
+      {/* Center bloom — the arc burns brightest at its midpoint */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 42% 9% at 50% 52%, rgba(186, 194, 255, 0.34) 0%, rgba(135, 145, 255, 0.12) 45%, transparent 72%)",
+            "radial-gradient(ellipse 34% 7% at 50% 52%, rgba(195, 202, 255, 0.4) 0%, rgba(140, 150, 255, 0.14) 45%, transparent 72%)",
         }}
       />
 
-      {/* Wide halo rising above the horizon */}
+      {/* Wide faint halo hugging the horizon */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 65% 16% at 50% 55%, rgba(96, 104, 220, 0.07) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 13% at 50% 54%, rgba(110, 118, 240, 0.06) 0%, transparent 70%)",
         }}
       />
 

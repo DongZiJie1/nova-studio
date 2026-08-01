@@ -22,6 +22,7 @@ import {
   BarChart3,
   Sparkles,
   ChevronDown,
+  Plus,
 } from "lucide-react";
 
 export function AppShell() {
@@ -283,42 +284,59 @@ export function AppShell() {
               <div className="mb-4 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
                 Agents
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1">
-                {agents.map((agent) => (
-                <button
-                  key={agent.id}
-                  onClick={() => setActiveAgent(agent.id)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all ${
-                    agent.id === activeId
-                      ? "bg-indigo-500/10 text-indigo-300 font-medium"
-                      : "text-text-secondary hover:bg-white/5"
-                  }`}
-                >
-                  <span
-                    className={`h-2 w-2 rounded-full flex-shrink-0 ${
-                      agent.status === "idle"
-                        ? "bg-emerald-400"
-                        : agent.status === "streaming"
-                          ? "bg-indigo-400 animate-pulse"
-                          : agent.status === "error"
-                            ? "bg-red-400"
-                            : "bg-gray-500"
-                    }`}
-                  />
-                  <span className="truncate">
-                    {agent.name ?? agent.id.replace(/^agent-/, "")}
-                  </span>
+              <div className="flex-1 overflow-y-auto space-y-1.5">
+                {agents.map((agent) => {
+                  const isActive = agent.id === activeId;
+                  const dotColor =
+                    agent.status === "idle"
+                      ? "#34d399"
+                      : agent.status === "streaming"
+                        ? "#818cf8"
+                        : agent.status === "error"
+                          ? "#f87171"
+                          : "#6b7280";
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => setActiveAgent(agent.id)}
+                      className={`agent-card ${isActive ? "agent-card-active" : ""}`}
+                    >
+                      <span className="agent-tile">
+                        <Sparkles
+                          size={17}
+                          style={{ color: isActive ? "#b9c1ff" : "#6f78a0" }}
+                        />
+                        <span
+                          className={`agent-dot ${agent.status === "streaming" ? "animate-pulse" : ""}`}
+                          style={{ background: dotColor }}
+                        />
+                      </span>
+                      <span className="agent-text">
+                        <span className="agent-name">
+                          {agent.name ??
+                            agent.model ??
+                            agent.id.replace(/^agent-/, "")}
+                        </span>
+                        <span className="agent-sub" title={agent.cwd}>
+                          {agent.cwd}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+                <button className="agent-add" onClick={() => setActiveAgent(null)}>
+                  <Plus size={14} />
+                  Add Agent
                 </button>
-              ))}
-            </div>
-            {activeId && (
-              <button
-                onClick={handleStopAgent}
-                className="mt-2 text-xs text-text-muted hover:text-error transition-colors"
-              >
-                Stop Agent
-              </button>
-            )}
+              </div>
+              {activeId && (
+                <button
+                  onClick={handleStopAgent}
+                  className="mt-3 w-full text-center text-xs text-text-muted hover:text-error transition-colors"
+                >
+                  Stop Agent
+                </button>
+              )}
             </>
           )}
         </aside>
