@@ -77,7 +77,17 @@ impl AgentManager {
         self.agents
             .write()
             .await
-            .insert(agent_id, Arc::new(process));
+            .insert(agent_id.clone(), Arc::new(process));
+
+        // Notify the frontend even when the agent was created through the
+        // HTTP hub API rather than a Tauri invoke from the UI.
+        let _ = self.global_event_tx.send((
+            agent_id,
+            serde_json::json!({
+                "type": "agent_created",
+                "info": info.clone(),
+            }),
+        ));
 
         Ok(info)
     }
@@ -124,10 +134,7 @@ impl AgentManager {
         question: String,
         timeout_secs: u64,
     ) -> Result<String, String> {
-        let agent = self
-            .get_process(agent_id)
-            .await
-            .ok_or("Agent not found")?;
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
         if !agent.is_alive().await {
             return Err("Agent process is not running".to_string());
         }
@@ -211,7 +218,14 @@ impl AgentManager {
     pub async fn stop(&self, agent_id: &str) -> Result<(), String> {
         let mut agents = self.agents.write().await;
         let agent = agents.remove(agent_id).ok_or("Agent not found")?;
-        agent.stop().await
+        agent.stop().await?;
+        let _ = self.global_event_tx.send((
+            agent_id.to_string(),
+            serde_json::json!({
+                "type": "agent_removed",
+            }),
+        ));
+        Ok(())
     }
 
     /// List all agents
@@ -266,12 +280,7 @@ impl AgentManager {
         self.agents.read().await.len()
     }
 
-    async fn build_info(
-        &self,
-        id: &str,
-        cwd: &str,
-        process: &AgentProcess,
-    ) -> AgentInfo {
+    async fn build_info(&self, id: &str, cwd: &str, process: &AgentProcess) -> AgentInfo {
         AgentInfo {
             id: id.to_string(),
             status: process.get_status().await,
@@ -308,6 +317,18 @@ mod tests {
         format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR"))
     }
 
+    async fn recv_lifecycle_event(
+        rx: &mut broadcast::Receiver<(String, serde_json::Value)>,
+        event_type: &str,
+    ) -> (String, serde_json::Value) {
+        loop {
+            let event = rx.recv().await.unwrap();
+            if event.1.get("type").and_then(|value| value.as_str()) == Some(event_type) {
+                return event;
+            }
+        }
+    }
+
     #[test]
     fn extract_text_handles_string_and_parts_content() {
         let s = serde_json::json!({"role": "assistant", "content": "plain"});
@@ -330,6 +351,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_injects_hub_env_and_ask_waits_for_reply() {
         let manager = AgentManager::new(mock_cli_path());
+        let mut lifecycle_rx = manager.subscribe_global();
         manager
             .set_hub_url("http://127.0.0.1:9999".to_string())
             .await;
@@ -349,13 +371,30 @@ mod tests {
         assert_eq!(info.model.as_deref(), Some("test-model"));
         assert!(!info.created_at.is_empty());
 
+        let (created_agent_id, created_event) =
+            recv_lifecycle_event(&mut lifecycle_rx, "agent_created").await;
+        assert_eq!(created_agent_id, info.id);
+        assert_eq!(
+            created_event.get("type").and_then(|value| value.as_str()),
+            Some("agent_created")
+        );
+        assert_eq!(
+            created_event
+                .pointer("/info/id")
+                .and_then(|value| value.as_str()),
+            Some(info.id.as_str())
+        );
+
         let reply = manager
             .ask(&info.id, "hello".to_string(), 15)
             .await
             .expect("ask failed");
 
         // The mock CLI echoes its hub env vars in the reply text.
-        assert!(reply.contains("url=http://127.0.0.1:9999"), "reply: {reply}");
+        assert!(
+            reply.contains("url=http://127.0.0.1:9999"),
+            "reply: {reply}"
+        );
         assert!(reply.contains(&format!("id={}", info.id)), "reply: {reply}");
         assert!(
             reply.contains(&format!("token={}", manager.hub_token)),
@@ -372,6 +411,14 @@ mod tests {
         assert_eq!(got.created_at, info.created_at);
 
         manager.stop(&info.id).await.unwrap();
+
+        let (removed_agent_id, removed_event) =
+            recv_lifecycle_event(&mut lifecycle_rx, "agent_removed").await;
+        assert_eq!(removed_agent_id, info.id);
+        assert_eq!(
+            removed_event.get("type").and_then(|value| value.as_str()),
+            Some("agent_removed")
+        );
     }
 
     #[tokio::test]

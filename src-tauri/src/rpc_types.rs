@@ -73,9 +73,7 @@ pub enum AgentMessage {
         data: serde_json::Value,
     },
     #[serde(rename = "message_start")]
-    MessageStart {
-        message: Option<serde_json::Value>,
-    },
+    MessageStart { message: Option<serde_json::Value> },
     #[serde(rename = "message_update")]
     MessageUpdate {
         message: Option<serde_json::Value>,
@@ -83,9 +81,7 @@ pub enum AgentMessage {
         assistant_message_event: Option<serde_json::Value>,
     },
     #[serde(rename = "message_end")]
-    MessageEnd {
-        message: Option<serde_json::Value>,
-    },
+    MessageEnd { message: Option<serde_json::Value> },
     #[serde(rename = "tool_execution_start")]
     ToolExecutionStart {
         #[serde(flatten)]
@@ -311,8 +307,7 @@ mod tests {
     /// nova emits agent_start/agent_end — must not be swallowed by the Unknown catch-all
     #[test]
     fn agent_start_and_end_parse_preserving_fields() {
-        let agent_start: AgentMessage =
-            serde_json::from_str(r#"{"type":"agent_start"}"#).unwrap();
+        let agent_start: AgentMessage = serde_json::from_str(r#"{"type":"agent_start"}"#).unwrap();
         assert!(matches!(agent_start, AgentMessage::AgentStart {}));
 
         let agent_end: AgentMessage = serde_json::from_str(

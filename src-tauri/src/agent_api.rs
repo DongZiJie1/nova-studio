@@ -101,17 +101,15 @@ async fn spawn_agent(
         args: None,
         depth: body.depth,
     };
-    let info = state
-        .manager
-        .spawn(request)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e })))?;
+    let info = state.manager.spawn(request).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError { error: e }),
+        )
+    })?;
 
     let agent_id = info.id.clone();
-    Ok(Json(SpawnResponse {
-        agent_id,
-        info,
-    }))
+    Ok(Json(SpawnResponse { agent_id, info }))
 }
 
 async fn send_prompt(
@@ -127,7 +125,11 @@ async fn send_prompt(
             }),
         )
     };
-    let process = state.manager.get_process(&agent_id).await.ok_or_else(not_found)?;
+    let process = state
+        .manager
+        .get_process(&agent_id)
+        .await
+        .ok_or_else(not_found)?;
     // Queue behind any in-flight ask() on this agent.
     let _guard = process.prompt_lock.lock().await;
     state
@@ -147,7 +149,12 @@ async fn ask_agent(
         .manager
         .ask(&agent_id, body.question, body.timeout_secs)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e })))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError { error: e }),
+            )
+        })?;
     Ok(Json(AskResponse { reply }))
 }
 
@@ -187,9 +194,7 @@ async fn stop_agent(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-async fn list_agents(
-    AxumState(state): AxumState<AppState>,
-) -> Json<Vec<AgentInfo>> {
+async fn list_agents(AxumState(state): AxumState<AppState>) -> Json<Vec<AgentInfo>> {
     Json(state.manager.list().await)
 }
 
@@ -197,10 +202,7 @@ async fn list_agents(
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/agents", get(list_agents).post(spawn_agent))
-        .route(
-            "/agents/{agent_id}",
-            get(get_status).delete(stop_agent),
-        )
+        .route("/agents/{agent_id}", get(get_status).delete(stop_agent))
         .route("/agents/{agent_id}/prompt", post(send_prompt))
         .route("/agents/{agent_id}/ask", post(ask_agent))
         .route_layer(middleware::from_fn_with_state(
@@ -211,10 +213,7 @@ fn build_router(state: AppState) -> Router {
 }
 
 /// Start the HTTP API server on localhost. Returns the bound port.
-pub async fn start_api_server(
-    manager: Arc<AgentManager>,
-    port: u16,
-) -> Result<u16, String> {
+pub async fn start_api_server(manager: Arc<AgentManager>, port: u16) -> Result<u16, String> {
     let state = AppState {
         manager: manager.clone(),
     };
@@ -231,9 +230,7 @@ pub async fn start_api_server(
         .port();
 
     tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("API server failed");
+        axum::serve(listener, app).await.expect("API server failed");
     });
 
     log::info!("Agent API server started on port {}", actual_port);

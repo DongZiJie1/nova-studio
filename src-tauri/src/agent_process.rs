@@ -69,7 +69,13 @@ impl AgentProcess {
             cwd.clone()
         };
 
-        log::info!("[process:{}] spawning: {} {} (cwd={})", id, program, args.join(" "), resolved_cwd);
+        log::info!(
+            "[process:{}] spawning: {} {} (cwd={})",
+            id,
+            program,
+            args.join(" "),
+            resolved_cwd
+        );
 
         let mut child = Command::new(&program)
             .args(&args)
@@ -135,17 +141,40 @@ impl AgentProcess {
                                 *message_count_clone.lock().await += 1;
                             }
                             AgentMessage::ToolExecutionStart { data } => {
-                                let name = data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
-                                let id = data.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("?");
+                                let name =
+                                    data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
+                                let id = data
+                                    .get("toolCallId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
                                 log::info!("[process:{}] tool_start: {} ({})", id_clone, name, id);
                             }
                             AgentMessage::ToolExecutionEnd { data } => {
-                                let name = data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
-                                let err = data.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
-                                log::info!("[process:{}] tool_end: {} error={}", id_clone, name, err);
+                                let name =
+                                    data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
+                                let err = data
+                                    .get("isError")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                log::info!(
+                                    "[process:{}] tool_end: {} error={}",
+                                    id_clone,
+                                    name,
+                                    err
+                                );
                             }
-                            AgentMessage::Response { success, command, data, .. } => {
-                                log::info!("[process:{}] response: cmd={:?} success={}", id_clone, command, success);
+                            AgentMessage::Response {
+                                success,
+                                command,
+                                data,
+                                ..
+                            } => {
+                                log::info!(
+                                    "[process:{}] response: cmd={:?} success={}",
+                                    id_clone,
+                                    command,
+                                    success
+                                );
                                 if !success {
                                     *status_clone.lock().await = AgentStatus::Error;
                                     let err = data
@@ -170,11 +199,19 @@ impl AgentProcess {
                         }
                     }
                     Err(e) => {
-                        log::warn!("[process:{}] parse error: {} — raw: {}", id_clone, e, truncate(&line, 200));
+                        log::warn!(
+                            "[process:{}] parse error: {} — raw: {}",
+                            id_clone,
+                            e,
+                            truncate(&line, 200)
+                        );
                     }
                 }
             }
-            log::info!("[process:{}] stdout closed, setting status=Stopped", id_clone);
+            log::info!(
+                "[process:{}] stdout closed, setting status=Stopped",
+                id_clone
+            );
             *status_clone.lock().await = AgentStatus::Stopped;
         });
 
@@ -223,8 +260,8 @@ impl AgentProcess {
 
     /// Send a command to the agent process
     pub fn send_command(&self, cmd: &RpcCommand) -> Result<(), String> {
-        let json =
-            serde_json::to_string(cmd).map_err(|e| format!("Failed to serialize command: {}", e))?;
+        let json = serde_json::to_string(cmd)
+            .map_err(|e| format!("Failed to serialize command: {}", e))?;
         self.stdin_tx
             .send(json)
             .map_err(|e| format!("Failed to send command: {}", e))

@@ -71,6 +71,8 @@ export interface ToolCallInfo {
 // ─── Messages from agent process (stdout JSONL) ───
 
 export type AgentMessage =
+  | { type: "agent_created"; info: AgentInfo }
+  | { type: "agent_removed" }
   | {
       type: "response";
       id?: string;

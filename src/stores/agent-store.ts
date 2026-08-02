@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import type { AgentStatus, AgentEventPayload } from "../lib/rpc-types";
+import type {
+  AgentStatus,
+  AgentEventPayload,
+  AgentInfo,
+} from "../lib/rpc-types";
 import {
   parseAgentEvent,
   extractAssistantText,
@@ -46,6 +50,7 @@ interface AgentStoreState {
 
   // Agent CRUD
   addAgent: (agent: AgentState) => void;
+  syncAgents: (agents: AgentInfo[]) => void;
   removeAgent: (id: string) => void;
   setActiveAgent: (id: string | null) => void;
   updateAgent: (id: string, update: Partial<AgentState>) => void;
@@ -67,15 +72,61 @@ function nextId(): string {
   return `msg-${Date.now()}-${++messageCounter}`;
 }
 
+function agentStateFromInfo(info: AgentInfo): AgentState {
+  return {
+    id: info.id,
+    name: null,
+    status: info.status,
+    cwd: info.cwd,
+    model: info.model,
+    messages: [],
+    createdAt: info.created_at,
+    streamingText: "",
+    activeToolCalls: new Map(),
+  };
+}
+
+function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
+  return {
+    ...agent,
+    status: info.status,
+    cwd: info.cwd,
+    model: info.model,
+    createdAt: info.created_at,
+  };
+}
+
 export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   agents: [],
   activeAgentId: null,
 
   addAgent: (agent) =>
     set((s) => ({
-      agents: [...s.agents, agent],
+      agents: s.agents.some((existing) => existing.id === agent.id)
+        ? s.agents.map((existing) =>
+            existing.id === agent.id ? { ...existing, ...agent } : existing,
+          )
+        : [...s.agents, agent],
       activeAgentId: s.activeAgentId ?? agent.id,
     })),
+
+  syncAgents: (infos) =>
+    set((s) => {
+      const currentById = new Map(s.agents.map((agent) => [agent.id, agent]));
+      const agents = infos.map((info) => {
+        const current = currentById.get(info.id);
+        return current
+          ? mergeAgentInfo(current, info)
+          : agentStateFromInfo(info);
+      });
+      return {
+        agents,
+        activeAgentId:
+          s.activeAgentId && agents.some((agent) => agent.id === s.activeAgentId)
+            ? s.activeAgentId
+            : (agents[0]?.id ?? null),
+      };
+    }),
 
   removeAgent: (id) =>
     set((s) => ({
@@ -136,6 +187,39 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
 
   handleAgentEvent: (payload) => {
     const { agentId, event } = payload;
+
+    if (event.type === "agent_created") {
+      set((s) => {
+        const existing = s.agents.find((agent) => agent.id === agentId);
+        const nextAgent = existing
+          ? mergeAgentInfo(existing, event.info)
+          : agentStateFromInfo(event.info);
+        return {
+          agents: existing
+            ? s.agents.map((agent) =>
+                agent.id === agentId ? nextAgent : agent,
+              )
+            : [...s.agents, nextAgent],
+          activeAgentId: s.activeAgentId ?? agentId,
+        };
+      });
+      return;
+    }
+
+    if (event.type === "agent_removed") {
+      set((s) => {
+        const agents = s.agents.filter((agent) => agent.id !== agentId);
+        return {
+          agents,
+          activeAgentId:
+            s.activeAgentId === agentId
+              ? (agents[0]?.id ?? null)
+              : s.activeAgentId,
+        };
+      });
+      return;
+    }
+
     const parsed = parseAgentEvent(event);
     console.log(`[event] agent=${agentId} type=${event.type} → kind=${parsed.kind}`);
 
