@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   AgentEventPayload,
   AgentInfo,
+  PersistedRpcMessage,
 } from "../lib/rpc-types";
 import {
   parseAgentEvent,
@@ -100,6 +101,33 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
   };
 }
 
+function messageText(message: PersistedRpcMessage): string {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+}
+
+function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
+  return messages.flatMap((message) => {
+    if (message.role !== "user" && message.role !== "assistant") return [];
+    const content = messageText(message);
+    if (!content) return [];
+    const parsedTimestamp =
+      typeof message.timestamp === "number"
+        ? message.timestamp
+        : Date.parse(message.timestamp ?? "");
+    return [{
+      id: nextId(),
+      role: message.role,
+      content,
+      timestamp: Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now(),
+    }];
+  });
+}
+
 export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   agents: [],
   activeAgentId: null,
@@ -128,7 +156,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         activeAgentId:
           s.activeAgentId && agents.some((agent) => agent.id === s.activeAgentId)
             ? s.activeAgentId
-            : (agents[0]?.id ?? null),
+            : null,
       };
     }),
 
@@ -228,6 +256,24 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       set((s) => ({
         agents: s.agents.map((agent) =>
           agent.id === agentId ? { ...agent, name: event.name } : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_messages" &&
+      event.success
+    ) {
+      const messages = Array.isArray(event.data?.messages)
+        ? (event.data.messages as PersistedRpcMessage[])
+        : [];
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId
+            ? { ...agent, messages: hydrateMessages(messages) }
+            : agent,
         ),
       }));
       return;

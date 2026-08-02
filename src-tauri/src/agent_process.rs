@@ -12,6 +12,7 @@ pub struct AgentProcess {
     pub parent_agent_id: Option<String>,
     pub cwd: String,
     pub model: Option<String>,
+    pub session_id: String,
     pub created_at: String,
     /// Display name: starts as "Nova", replaced by LLM-generated name on first prompt.
     pub name: Arc<Mutex<Option<String>>>,
@@ -41,6 +42,9 @@ impl AgentProcess {
         hub_url: String,
         hub_token: String,
         depth: u64,
+        session_id: String,
+        restored_name: Option<String>,
+        restored_created_at: Option<String>,
     ) -> Result<Self, String> {
         // Determine how to invoke the CLI:
         // - .js file → node <file> --mode rpc
@@ -53,6 +57,8 @@ impl AgentProcess {
         };
         args.push("--mode".to_string());
         args.push("rpc".to_string());
+        args.push("--session-id".to_string());
+        args.push(session_id.clone());
 
         if let Some(m) = &model {
             args.push("--model".to_string());
@@ -108,7 +114,9 @@ impl AgentProcess {
         let status = Arc::new(Mutex::new(AgentStatus::Starting));
         let message_count = Arc::new(Mutex::new(0usize));
         let last_error = Arc::new(Mutex::new(None));
-        let name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("Nova".to_string())));
+        let name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(
+            restored_name.or_else(|| Some("Nova".to_string())),
+        ));
         let (event_tx, _) = broadcast::channel::<serde_json::Value>(256);
         let (stdin_tx, stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -256,7 +264,8 @@ impl AgentProcess {
             parent_agent_id,
             cwd,
             model,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            session_id,
+            created_at: restored_created_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
             name,
             status,
             message_count,

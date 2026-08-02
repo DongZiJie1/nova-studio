@@ -9,12 +9,9 @@ import { ToolCallCard } from "../chat/ToolCallCard";
 import {
   Paperclip,
   ArrowUp,
-  Settings2,
   Square,
   Home,
   FolderOpen,
-  FileCode2,
-  Users,
   Code,
   Pencil,
   Lightbulb,
@@ -22,6 +19,8 @@ import {
   BarChart3,
   Sparkles,
   ChevronDown,
+  ChevronRight,
+  PanelLeftClose,
   Plus,
 } from "lucide-react";
 
@@ -78,29 +77,20 @@ function AgentTreeNode({
   depth = 0,
 }: AgentTreeNodeProps) {
   const children = childrenByParent.get(agent.id) ?? [];
-  const parent = agent.parentAgentId
-    ? agentsById.get(agent.parentAgentId)
-    : undefined;
+  const [childrenExpanded, setChildrenExpanded] = useState(false);
   const status = agentStatusMeta(agent.status);
   const isActive = agent.id === activeId;
+  const isChild = depth > 0;
 
   return (
     <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""}`}>
-      {agent.parentAgentId && (
-        <div className="agent-parent-label">
-          <Sparkles size={13} />
-          <span>
-            Spawned by {parent ? agentDisplayName(parent) : "offline agent"}
-          </span>
-        </div>
-      )}
       <button
         onClick={() => onSelect(agent.id)}
-        className={`agent-card ${isActive ? "agent-card-active" : ""}`}
+        className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
       >
         <span className="agent-tile">
           <Sparkles
-            size={20}
+            size={isChild ? 15 : 20}
             style={{ color: isActive ? "#c4caff" : "#8d95c5" }}
           />
           <span
@@ -110,16 +100,39 @@ function AgentTreeNode({
         </span>
         <span className="agent-text">
           <span className="agent-name">{agentDisplayName(agent)}</span>
-          <span className="agent-sub" title={agent.cwd}>
-            {agentSubtitle(agent)}
-          </span>
+          {!isChild && (
+            <span className="agent-sub" title={agent.cwd}>
+              {agentSubtitle(agent)}
+            </span>
+          )}
         </span>
+        {children.length > 0 && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="agent-expand"
+            title={childrenExpanded ? "Collapse child agents" : "Expand child agents"}
+            onClick={(event) => {
+              event.stopPropagation();
+              setChildrenExpanded((expanded) => !expanded);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                setChildrenExpanded((expanded) => !expanded);
+              }
+            }}
+          >
+            {childrenExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+        )}
         <span className={`agent-status-badge agent-status-${status.className}`}>
           {status.label}
         </span>
       </button>
 
-      {children.length > 0 && (
+      {childrenExpanded && children.length > 0 && (
         <div className="agent-children">
           {children.map((child) => (
             <AgentTreeNode
@@ -154,6 +167,10 @@ export function AppShell() {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
+    () => new Set(),
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -177,6 +194,12 @@ export function AppShell() {
   const rootAgents = agents.filter(
     (agent) => !agent.parentAgentId || !agentsById.has(agent.parentAgentId),
   );
+  const rootsByProject = new Map<string, AgentState[]>();
+  for (const agent of rootAgents) {
+    const projectAgents = rootsByProject.get(agent.cwd) ?? [];
+    projectAgents.push(agent);
+    rootsByProject.set(agent.cwd, projectAgents);
+  }
   const hasMessages = (activeAgent?.messages.length ?? 0) > 0;
   const streamingText = activeAgent?.streamingText ?? "";
   const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
@@ -319,38 +342,24 @@ export function AppShell() {
           }}
         >
           {/* Logo */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              fontSize: 15,
-              fontWeight: 600,
-              letterSpacing: "0.01em",
-              color: "#eef0f8",
-            }}
-          >
-            <Sparkles size={17} style={{ color: "#b9c1ff" }} />
-            Nova Studio
-          </div>
-
-          {/* Nav links */}
-          <nav
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            {[
-              { icon: Home, label: "Home", active: true },
-              { icon: FolderOpen, label: "Projects", active: false },
-              { icon: FileCode2, label: "Templates", active: false },
-              { icon: Users, label: "Agents", active: false },
-              { icon: Settings2, label: "Settings", active: false },
-            ].map(({ icon: Icon, label, active }) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                fontSize: 15,
+                fontWeight: 600,
+                letterSpacing: "0.01em",
+                color: "#eef0f8",
+              }}
+            >
+              <Sparkles size={17} style={{ color: "#b9c1ff" }} />
+              Nova Studio
+            </div>
+            <nav style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <button
-                key={label}
+                onClick={() => setActiveAgent(null)}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -358,23 +367,38 @@ export function AppShell() {
                   padding: "7px 16px",
                   borderRadius: 999,
                   fontSize: 13,
-                  fontWeight: active ? 500 : 400,
-                  color: active ? "#eef0f8" : "#7b8197",
-                  background: active
-                    ? "rgba(255, 255, 255, 0.07)"
-                    : "transparent",
-                  border: active
-                    ? "1px solid rgba(255, 255, 255, 0.09)"
-                    : "1px solid transparent",
+                  fontWeight: activeId === null ? 500 : 400,
+                  color: activeId === null ? "#eef0f8" : "#7b8197",
+                  background: activeId === null ? "rgba(255, 255, 255, 0.07)" : "transparent",
+                  border: "1px solid rgba(255, 255, 255, 0.09)",
                   cursor: "pointer",
                   transition: "all 0.15s ease",
                 }}
               >
-                <Icon size={15} />
-                {label}
+                <Home size={15} />
+                Home
               </button>
-            ))}
-          </nav>
+              <button
+                onClick={() => setSidebarOpen((open) => !open)}
+                className={sidebarOpen ? "top-nav-active" : ""}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  padding: "7px 16px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  color: sidebarOpen ? "#eef0f8" : "#7b8197",
+                  background: sidebarOpen ? "rgba(255, 255, 255, 0.07)" : "transparent",
+                  border: "1px solid rgba(255, 255, 255, 0.09)",
+                  cursor: "pointer",
+                }}
+              >
+                {sidebarOpen ? <PanelLeftClose size={15} /> : <FolderOpen size={15} />}
+                Projects
+              </button>
+            </nav>
+          </div>
 
           {/* User avatar */}
           <div
@@ -397,28 +421,52 @@ export function AppShell() {
         </div>
 
         {/* Body row: sidebar + main */}
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className={`glass-panel flex-shrink-0 p-4 flex flex-col ml-3 mb-3 ${
-            agents.length > 0 ? "w-[340px]" : "w-0 overflow-hidden p-0 border-0"
+          className={`glass-panel absolute z-20 top-0 bottom-3 left-3 p-4 flex flex-col ${
+            sidebarOpen ? "w-[340px]" : "hidden"
           }`}
         >
-          {agents.length > 0 && (
+          {sidebarOpen && (
             <>
               <div className="mb-4 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
                 Agents
               </div>
               <div className="agent-tree flex-1 overflow-y-auto">
-                {rootAgents.map((agent) => (
-                  <AgentTreeNode
-                    key={agent.id}
-                    agent={agent}
-                    childrenByParent={childrenByParent}
-                    agentsById={agentsById}
-                    activeId={activeId}
-                    onSelect={setActiveAgent}
-                  />
+                {Array.from(rootsByProject.entries()).map(([cwd, projectAgents]) => (
+                  <section key={cwd} className="project-group">
+                    <button
+                      className="project-group-title"
+                      title={cwd}
+                      onClick={() =>
+                        setCollapsedProjects((current) => {
+                          const next = new Set(current);
+                          if (next.has(cwd)) next.delete(cwd);
+                          else next.add(cwd);
+                          return next;
+                        })
+                      }
+                    >
+                      <FolderOpen size={13} />
+                      <span>{cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}</span>
+                      {collapsedProjects.has(cwd) ? (
+                        <ChevronRight size={13} />
+                      ) : (
+                        <ChevronDown size={13} />
+                      )}
+                    </button>
+                    {!collapsedProjects.has(cwd) && projectAgents.map((agent) => (
+                      <AgentTreeNode
+                        key={agent.id}
+                        agent={agent}
+                        childrenByParent={childrenByParent}
+                        agentsById={agentsById}
+                        activeId={activeId}
+                        onSelect={setActiveAgent}
+                      />
+                    ))}
+                  </section>
                 ))}
                 <button className="agent-add" onClick={() => setActiveAgent(null)}>
                   <Plus size={14} />
@@ -438,7 +486,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+        <main className="w-full flex flex-col overflow-hidden">
           {/* Content area */}
           <div
             ref={scrollRef}
@@ -529,7 +577,7 @@ export function AppShell() {
               justifyContent: "center",
             }}
           >
-            <div style={{ width: "100%", maxWidth: 720 }}>
+            <div style={{ width: "100%", maxWidth: 640 }}>
               {/* Project path */}
               {activeAgent && (
                 <div

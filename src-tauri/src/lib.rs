@@ -55,7 +55,15 @@ pub fn run() {
             }
 
             // Create the central AgentManager
-            let manager = Arc::new(AgentManager::new(cli_path));
+            let state_path = app.handle().path().app_data_dir()?.join("agents.json");
+            let manager = Arc::new(AgentManager::new(cli_path, state_path));
+
+            let restore_manager = manager.clone();
+            tauri::async_runtime::block_on(async move {
+                if let Err(error) = restore_manager.restore().await {
+                    log::error!("Failed to restore Studio state: {}", error);
+                }
+            });
 
             // Start the HTTP API server for agent tools
             let manager_clone = manager.clone();

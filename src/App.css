@@ -736,6 +736,49 @@ body {
   box-shadow: 0 0 16px rgba(129, 140, 248, 0.25);
 }
 
+.agent-card-child {
+  min-height: 46px;
+  gap: 9px;
+  padding: 6px 9px;
+  border-radius: 12px;
+}
+
+.agent-card-child .agent-tile {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.agent-card-child .agent-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.agent-card-child .agent-name {
+  font-size: 12.5px;
+}
+
+.agent-card-child .agent-status-badge {
+  padding: 4px 7px;
+  font-size: 9.5px;
+}
+
+.agent-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: #777f99;
+}
+
+.agent-expand:hover {
+  color: #c4caff;
+  background: rgba(129, 140, 248, 0.1);
+}
+
 .agent-dot {
   position: absolute;
   bottom: -2px;
@@ -776,6 +819,40 @@ body {
   padding: 1px 2px 8px;
 }
 
+.project-group + .project-group {
+  margin-top: 18px;
+}
+
+.project-group-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 0 7px 8px;
+  color: #9299b2;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.project-group-title span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-group-title:hover {
+  color: #b9c1ff;
+}
+
 .agent-tree-node + .agent-tree-node {
   margin-top: 10px;
 }
@@ -794,27 +871,12 @@ body {
 .agent-tree-child::before {
   content: "";
   position: absolute;
-  top: 22px;
+  top: 15px;
   left: -22px;
   width: 18px;
   height: 14px;
   border-bottom: 2px solid rgba(143, 151, 192, 0.38);
   border-bottom-left-radius: 11px;
-}
-
-.agent-parent-label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 28px;
-  padding: 0 7px;
-  color: #838aa5;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.agent-parent-label svg {
-  color: #a5adf3;
 }
 
 .agent-status-badge {

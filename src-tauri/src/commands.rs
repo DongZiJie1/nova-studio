@@ -51,6 +51,7 @@ pub async fn stop_agent(
 #[tauri::command]
 pub async fn list_agents(state: State<'_, AgentManagerState>) -> Result<Vec<AgentInfo>, String> {
     let list = state.0.list().await;
+    state.0.request_all_messages().await;
     log::debug!("[cmd] list_agents -> {} agents", list.len());
     Ok(list)
 }

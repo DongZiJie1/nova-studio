@@ -250,7 +250,10 @@ mod tests {
 
     #[tokio::test]
     async fn hub_rejects_requests_without_token() {
-        let manager = Arc::new(AgentManager::new("true".to_string()));
+        let manager = Arc::new(AgentManager::new(
+            "true".to_string(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
         let app = build_router(AppState {
             manager: manager.clone(),
         });
@@ -269,7 +272,10 @@ mod tests {
 
     #[tokio::test]
     async fn hub_accepts_request_with_token() {
-        let manager = Arc::new(AgentManager::new("true".to_string()));
+        let manager = Arc::new(AgentManager::new(
+            "true".to_string(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
         let app = build_router(AppState {
             manager: manager.clone(),
         });
@@ -289,7 +295,10 @@ mod tests {
 
     #[tokio::test]
     async fn hub_rejects_wrong_token() {
-        let manager = Arc::new(AgentManager::new("true".to_string()));
+        let manager = Arc::new(AgentManager::new(
+            "true".to_string(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
         let app = build_router(AppState {
             manager: manager.clone(),
         });
