@@ -13,16 +13,27 @@ pub async fn spawn_agent(
     model: Option<String>,
     provider: Option<String>,
 ) -> Result<AgentInfo, String> {
-    log::info!("[cmd] spawn_agent cwd={:?} model={:?} provider={:?}", cwd, model, provider);
+    log::info!(
+        "[cmd] spawn_agent cwd={:?} model={:?} provider={:?}",
+        cwd,
+        model,
+        provider
+    );
     let request = SpawnRequest {
         cwd,
+        parent_agent_id: None,
         model,
         provider,
         args: None,
+        depth: 0,
     };
     let result = state.0.spawn(request).await;
     match &result {
-        Ok(info) => log::info!("[cmd] spawn_agent -> id={} status={:?}", info.id, info.status),
+        Ok(info) => log::info!(
+            "[cmd] spawn_agent -> id={} status={:?}",
+            info.id,
+            info.status
+        ),
         Err(e) => log::error!("[cmd] spawn_agent -> error: {}", e),
     }
     result
@@ -60,7 +71,12 @@ pub async fn send_prompt(
     message: String,
     images: Option<Vec<ImageContent>>,
 ) -> Result<(), String> {
-    log::info!("[cmd] send_prompt agent_id={} len={} images={:?}", agent_id, message.len(), images.is_some());
+    log::info!(
+        "[cmd] send_prompt agent_id={} len={} images={:?}",
+        agent_id,
+        message.len(),
+        images.is_some()
+    );
     state.0.send_prompt(&agent_id, message, images).await
 }
 

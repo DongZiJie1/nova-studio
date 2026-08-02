@@ -73,9 +73,7 @@ pub enum AgentMessage {
         data: serde_json::Value,
     },
     #[serde(rename = "message_start")]
-    MessageStart {
-        message: Option<serde_json::Value>,
-    },
+    MessageStart { message: Option<serde_json::Value> },
     #[serde(rename = "message_update")]
     MessageUpdate {
         message: Option<serde_json::Value>,
@@ -83,9 +81,7 @@ pub enum AgentMessage {
         assistant_message_event: Option<serde_json::Value>,
     },
     #[serde(rename = "message_end")]
-    MessageEnd {
-        message: Option<serde_json::Value>,
-    },
+    MessageEnd { message: Option<serde_json::Value> },
     #[serde(rename = "tool_execution_start")]
     ToolExecutionStart {
         #[serde(flatten)]
@@ -103,6 +99,8 @@ pub enum AgentMessage {
     },
     #[serde(rename = "agent_settled")]
     AgentSettled {},
+    #[serde(rename = "agent_name_update")]
+    AgentNameUpdate { name: String },
     #[serde(rename = "agent_start")]
     AgentStart {},
     #[serde(rename = "agent_end")]
@@ -164,6 +162,11 @@ pub enum AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
     pub id: String,
+    #[serde(default)]
+    pub parent_agent_id: Option<String>,
+    /// Display name, initially "Nova", then LLM-generated after first prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub status: AgentStatus,
     pub cwd: String,
     pub model: Option<String>,
@@ -177,12 +180,19 @@ pub struct AgentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnRequest {
     pub cwd: String,
+    /// The agent that delegated this process, or None for a user-created root.
+    #[serde(default)]
+    pub parent_agent_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    /// Collaboration hop depth: 0 for user-spawned agents, incremented for
+    /// agents spawned by another agent. Used to bound delegation chains.
+    #[serde(default)]
+    pub depth: u64,
 }
 
 /// Prompt request
@@ -307,8 +317,7 @@ mod tests {
     /// nova emits agent_start/agent_end — must not be swallowed by the Unknown catch-all
     #[test]
     fn agent_start_and_end_parse_preserving_fields() {
-        let agent_start: AgentMessage =
-            serde_json::from_str(r#"{"type":"agent_start"}"#).unwrap();
+        let agent_start: AgentMessage = serde_json::from_str(r#"{"type":"agent_start"}"#).unwrap();
         assert!(matches!(agent_start, AgentMessage::AgentStart {}));
 
         let agent_end: AgentMessage = serde_json::from_str(

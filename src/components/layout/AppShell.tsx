@@ -25,6 +25,119 @@ import {
   Plus,
 } from "lucide-react";
 
+function agentDisplayName(agent: AgentState): string {
+  if (agent.name) return agent.name;
+  if (!agent.parentAgentId) return "Nova";
+  return agent.model ?? `Agent ${agent.id.replace(/^agent-/, "")}`;
+}
+
+function agentSubtitle(agent: AgentState): string {
+  if (!agent.parentAgentId) {
+    return `Main coordinator · ${agent.id.replace(/^agent-/, "")}`;
+  }
+  if (agent.status === "streaming") return "Working on delegated task";
+  if (agent.status === "starting") return "Starting delegated agent";
+  if (agent.status === "error") return "Delegated task needs attention";
+  return agent.cwd;
+}
+
+function agentStatusMeta(status: AgentState["status"]): {
+  label: string;
+  className: string;
+  dot: string;
+} {
+  switch (status) {
+    case "streaming":
+      return { label: "Running", className: "running", dot: "#34d399" };
+    case "idle":
+      return { label: "Ready", className: "ready", dot: "#34d399" };
+    case "starting":
+      return { label: "Starting", className: "waiting", dot: "#fbbf24" };
+    case "error":
+      return { label: "Error", className: "error", dot: "#f87171" };
+    case "stopped":
+      return { label: "Stopped", className: "stopped", dot: "#6b7280" };
+  }
+}
+
+interface AgentTreeNodeProps {
+  agent: AgentState;
+  childrenByParent: Map<string, AgentState[]>;
+  agentsById: Map<string, AgentState>;
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  depth?: number;
+}
+
+function AgentTreeNode({
+  agent,
+  childrenByParent,
+  agentsById,
+  activeId,
+  onSelect,
+  depth = 0,
+}: AgentTreeNodeProps) {
+  const children = childrenByParent.get(agent.id) ?? [];
+  const parent = agent.parentAgentId
+    ? agentsById.get(agent.parentAgentId)
+    : undefined;
+  const status = agentStatusMeta(agent.status);
+  const isActive = agent.id === activeId;
+
+  return (
+    <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""}`}>
+      {agent.parentAgentId && (
+        <div className="agent-parent-label">
+          <Sparkles size={13} />
+          <span>
+            Spawned by {parent ? agentDisplayName(parent) : "offline agent"}
+          </span>
+        </div>
+      )}
+      <button
+        onClick={() => onSelect(agent.id)}
+        className={`agent-card ${isActive ? "agent-card-active" : ""}`}
+      >
+        <span className="agent-tile">
+          <Sparkles
+            size={20}
+            style={{ color: isActive ? "#c4caff" : "#8d95c5" }}
+          />
+          <span
+            className={`agent-dot ${agent.status === "streaming" ? "animate-pulse" : ""}`}
+            style={{ background: status.dot }}
+          />
+        </span>
+        <span className="agent-text">
+          <span className="agent-name">{agentDisplayName(agent)}</span>
+          <span className="agent-sub" title={agent.cwd}>
+            {agentSubtitle(agent)}
+          </span>
+        </span>
+        <span className={`agent-status-badge agent-status-${status.className}`}>
+          {status.label}
+        </span>
+      </button>
+
+      {children.length > 0 && (
+        <div className="agent-children">
+          {children.map((child) => (
+            <AgentTreeNode
+              key={child.id}
+              agent={child}
+              childrenByParent={childrenByParent}
+              agentsById={agentsById}
+              activeId={activeId}
+              onSelect={onSelect}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
@@ -53,6 +166,17 @@ export function AppShell() {
   }, []);
 
   const activeAgent = agents.find((a) => a.id === activeId);
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const childrenByParent = new Map<string, AgentState[]>();
+  for (const agent of agents) {
+    if (!agent.parentAgentId || !agentsById.has(agent.parentAgentId)) continue;
+    const siblings = childrenByParent.get(agent.parentAgentId) ?? [];
+    siblings.push(agent);
+    childrenByParent.set(agent.parentAgentId, siblings);
+  }
+  const rootAgents = agents.filter(
+    (agent) => !agent.parentAgentId || !agentsById.has(agent.parentAgentId),
+  );
   const hasMessages = (activeAgent?.messages.length ?? 0) > 0;
   const streamingText = activeAgent?.streamingText ?? "";
   const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
@@ -86,6 +210,7 @@ export function AppShell() {
 
         const newAgent: AgentState = {
           id: info.id,
+          parentAgentId: info.parent_agent_id,
           name: null,
           status: info.status,
           cwd: info.cwd,
@@ -276,7 +401,7 @@ export function AppShell() {
         {/* Sidebar */}
         <aside
           className={`glass-panel flex-shrink-0 p-4 flex flex-col ml-3 mb-3 ${
-            agents.length > 0 ? "w-64" : "w-0 overflow-hidden p-0 border-0"
+            agents.length > 0 ? "w-[340px]" : "w-0 overflow-hidden p-0 border-0"
           }`}
         >
           {agents.length > 0 && (
@@ -284,46 +409,17 @@ export function AppShell() {
               <div className="mb-4 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
                 Agents
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1.5">
-                {agents.map((agent) => {
-                  const isActive = agent.id === activeId;
-                  const dotColor =
-                    agent.status === "idle"
-                      ? "#34d399"
-                      : agent.status === "streaming"
-                        ? "#818cf8"
-                        : agent.status === "error"
-                          ? "#f87171"
-                          : "#6b7280";
-                  return (
-                    <button
-                      key={agent.id}
-                      onClick={() => setActiveAgent(agent.id)}
-                      className={`agent-card ${isActive ? "agent-card-active" : ""}`}
-                    >
-                      <span className="agent-tile">
-                        <Sparkles
-                          size={17}
-                          style={{ color: isActive ? "#b9c1ff" : "#6f78a0" }}
-                        />
-                        <span
-                          className={`agent-dot ${agent.status === "streaming" ? "animate-pulse" : ""}`}
-                          style={{ background: dotColor }}
-                        />
-                      </span>
-                      <span className="agent-text">
-                        <span className="agent-name">
-                          {agent.name ??
-                            agent.model ??
-                            agent.id.replace(/^agent-/, "")}
-                        </span>
-                        <span className="agent-sub" title={agent.cwd}>
-                          {agent.cwd}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className="agent-tree flex-1 overflow-y-auto">
+                {rootAgents.map((agent) => (
+                  <AgentTreeNode
+                    key={agent.id}
+                    agent={agent}
+                    childrenByParent={childrenByParent}
+                    agentsById={agentsById}
+                    activeId={activeId}
+                    onSelect={setActiveAgent}
+                  />
+                ))}
                 <button className="agent-add" onClick={() => setActiveAgent(null)}>
                   <Plus size={14} />
                   Add Agent

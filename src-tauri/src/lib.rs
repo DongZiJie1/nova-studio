@@ -33,12 +33,21 @@ pub fn run() {
                         if !bin_resource.exists() {
                             let bundled_resource = bundled_base.join(dir_name);
                             if bundled_resource.exists() {
-                                log::info!("Linking {} -> {}", bundled_resource.display(), bin_resource.display());
-                                if let Err(e) = std::os::unix::fs::symlink(&bundled_resource, &bin_resource) {
+                                log::info!(
+                                    "Linking {} -> {}",
+                                    bundled_resource.display(),
+                                    bin_resource.display()
+                                );
+                                if let Err(e) =
+                                    std::os::unix::fs::symlink(&bundled_resource, &bin_resource)
+                                {
                                     log::warn!("Failed to symlink {}: {}", dir_name, e);
                                 }
                             } else {
-                                log::warn!("Resource dir not found in bundle: {}", bundled_resource.display());
+                                log::warn!(
+                                    "Resource dir not found in bundle: {}",
+                                    bundled_resource.display()
+                                );
                             }
                         }
                     }
@@ -52,8 +61,13 @@ pub fn run() {
             let manager_clone = manager.clone();
             let api_port = 9528; // fixed port for now
             tauri::async_runtime::spawn(async move {
-                match agent_api::start_api_server(manager_clone, api_port).await {
-                    Ok(port) => log::info!("Agent API available at http://127.0.0.1:{}", port),
+                match agent_api::start_api_server(manager_clone.clone(), api_port).await {
+                    Ok(port) => {
+                        manager_clone
+                            .set_hub_url(format!("http://127.0.0.1:{}", port))
+                            .await;
+                        log::info!("Agent API available at http://127.0.0.1:{}", port);
+                    }
                     Err(e) => log::error!("Failed to start agent API: {}", e),
                 }
             });
@@ -67,7 +81,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let mut rx = manager_ref.subscribe_global();
                 while let Ok((agent_id, event)) = rx.recv().await {
-                    log::debug!("[event] -> frontend: agent={} type={}", agent_id, msg_type(&event));
+                    log::debug!(
+                        "[event] -> frontend: agent={} type={}",
+                        agent_id,
+                        msg_type(&event)
+                    );
                     let payload = serde_json::json!({
                         "agentId": agent_id,
                         "event": event,
@@ -144,5 +162,8 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
 }
 
 fn msg_type(msg: &serde_json::Value) -> String {
-    msg.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string()
+    msg.get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string()
 }

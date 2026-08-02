@@ -71,6 +71,8 @@ export interface ToolCallInfo {
 // ─── Messages from agent process (stdout JSONL) ───
 
 export type AgentMessage =
+  | { type: "agent_created"; info: AgentInfo }
+  | { type: "agent_removed" }
   | {
       type: "response";
       id?: string;
@@ -106,6 +108,7 @@ export type AgentMessage =
       isError: boolean;
     }
   | { type: "agent_settled" }
+  | { type: "agent_name_update"; name: string }
   | {
       type: "extension_ui_request";
       id: string;
@@ -165,6 +168,8 @@ export type AgentStatus = "starting" | "idle" | "streaming" | "error" | "stopped
 
 export interface AgentInfo {
   id: string;
+  parent_agent_id: string | null;
+  name: string | null;
   status: AgentStatus;
   cwd: string;
   model: string | null;
