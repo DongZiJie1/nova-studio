@@ -3,6 +3,7 @@ import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { spawnAgent, sendPrompt, stopAgent } from "../../lib/tauri-bridge";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
@@ -22,9 +23,41 @@ import {
   ChevronRight,
   PanelLeftClose,
   Plus,
+  X,
+  ExternalLink,
+  EyeOff,
 } from "lucide-react";
 
-function agentDisplayName(agent: AgentState): string {
+const PROJECT_NAMES_KEY = "nova-studio.project-names";
+const AGENT_NAMES_KEY = "nova-studio.agent-names";
+const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
+
+function loadProjectNames(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(PROJECT_NAMES_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function loadStringRecord(key: string): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function loadHiddenAgents(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(HIDDEN_AGENTS_KEY) ?? "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function agentDisplayName(agent: AgentState, agentNames: Record<string, string> = {}): string {
+  if (agentNames[agent.id]) return agentNames[agent.id];
   if (agent.name) return agent.name;
   if (!agent.parentAgentId) return "Nova";
   return agent.model ?? `Agent ${agent.id.replace(/^agent-/, "")}`;
@@ -47,11 +80,11 @@ function agentStatusMeta(status: AgentState["status"]): {
 } {
   switch (status) {
     case "streaming":
-      return { label: "Running", className: "running", dot: "#34d399" };
+      return { label: "Running", className: "running", dot: "#fbbf24" };
     case "idle":
       return { label: "Ready", className: "ready", dot: "#34d399" };
     case "starting":
-      return { label: "Starting", className: "waiting", dot: "#fbbf24" };
+      return { label: "Starting", className: "waiting", dot: "#60a5fa" };
     case "error":
       return { label: "Error", className: "error", dot: "#f87171" };
     case "stopped":
@@ -65,6 +98,9 @@ interface AgentTreeNodeProps {
   agentsById: Map<string, AgentState>;
   activeId: string | null;
   onSelect: (id: string) => void;
+  agentNames: Record<string, string>;
+  onEdit: (agent: AgentState) => void;
+  onHide: (agent: AgentState) => void;
   depth?: number;
 }
 
@@ -74,6 +110,9 @@ function AgentTreeNode({
   agentsById,
   activeId,
   onSelect,
+  agentNames,
+  onEdit,
+  onHide,
   depth = 0,
 }: AgentTreeNodeProps) {
   const children = childrenByParent.get(agent.id) ?? [];
@@ -99,12 +138,36 @@ function AgentTreeNode({
           />
         </span>
         <span className="agent-text">
-          <span className="agent-name">{agentDisplayName(agent)}</span>
+          <span className="agent-name">{agentDisplayName(agent, agentNames)}</span>
           {!isChild && (
             <span className="agent-sub" title={agent.cwd}>
               {agentSubtitle(agent)}
             </span>
           )}
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          className="agent-action"
+          title="Rename agent"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit(agent);
+          }}
+        >
+          <Pencil size={12} />
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          className="agent-action"
+          title="Hide agent"
+          onClick={(event) => {
+            event.stopPropagation();
+            onHide(agent);
+          }}
+        >
+          <EyeOff size={13} />
         </span>
         {children.length > 0 && (
           <span
@@ -127,9 +190,6 @@ function AgentTreeNode({
             {childrenExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
         )}
-        <span className={`agent-status-badge agent-status-${status.className}`}>
-          {status.label}
-        </span>
       </button>
 
       {childrenExpanded && children.length > 0 && (
@@ -142,6 +202,9 @@ function AgentTreeNode({
               agentsById={agentsById}
               activeId={activeId}
               onSelect={onSelect}
+              agentNames={agentNames}
+              onEdit={onEdit}
+              onHide={onHide}
               depth={depth + 1}
             />
           ))}
@@ -168,12 +231,22 @@ export function AppShell() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
+  const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
+  const [agentNames, setAgentNames] = useState<Record<string, string>>(
+    () => loadStringRecord(AGENT_NAMES_KEY),
+  );
+  const [hiddenAgentIds, setHiddenAgentIds] = useState<Set<string>>(loadHiddenAgents);
+  const [editingProject, setEditingProject] = useState<{ cwd: string; name: string } | null>(null);
+  const [editingAgent, setEditingAgent] = useState<{ id: string; name: string } | null>(null);
+  const [hidingAgent, setHidingAgent] = useState<AgentState | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => new Set(),
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isComposingRef = useRef(false);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -182,17 +255,28 @@ export function AppShell() {
     el.style.height = `${el.scrollHeight}px`;
   }, []);
 
-  const activeAgent = agents.find((a) => a.id === activeId);
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const isAgentHidden = (agent: AgentState): boolean => {
+    if (hiddenAgentIds.has(agent.id)) return true;
+    let parentId = agent.parentAgentId;
+    while (parentId) {
+      if (hiddenAgentIds.has(parentId)) return true;
+      parentId = agentsById.get(parentId)?.parentAgentId ?? null;
+    }
+    return false;
+  };
+  const visibleAgents = agents.filter((agent) => !isAgentHidden(agent));
+  const visibleAgentsById = new Map(visibleAgents.map((agent) => [agent.id, agent]));
+  const activeAgent = visibleAgents.find((a) => a.id === activeId);
   const childrenByParent = new Map<string, AgentState[]>();
-  for (const agent of agents) {
-    if (!agent.parentAgentId || !agentsById.has(agent.parentAgentId)) continue;
+  for (const agent of visibleAgents) {
+    if (!agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId)) continue;
     const siblings = childrenByParent.get(agent.parentAgentId) ?? [];
     siblings.push(agent);
     childrenByParent.set(agent.parentAgentId, siblings);
   }
-  const rootAgents = agents.filter(
-    (agent) => !agent.parentAgentId || !agentsById.has(agent.parentAgentId),
+  const rootAgents = visibleAgents.filter(
+    (agent) => !agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId),
   );
   const rootsByProject = new Map<string, AgentState[]>();
   for (const agent of rootAgents) {
@@ -216,15 +300,13 @@ export function AppShell() {
     if (!text || isSending) return;
 
     setIsSending(true);
-    setInput("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     try {
       let agentId = activeId;
 
       // Spawn agent if none exists
       if (!agentId) {
-        const cwd = defaultCwd || "~";
+        const cwd = (pendingProjectCwd ?? defaultCwd) || "~";
         const info = await spawnAgent(
           cwd,
           defaultModel || undefined,
@@ -245,10 +327,13 @@ export function AppShell() {
         };
         addAgent(newAgent);
         agentId = info.id;
+        setPendingProjectCwd(null);
       }
 
       // Add user message to UI immediately
       addUserMessage(agentId, text);
+      setInput("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
 
       // Send to agent via Tauri backend
       await sendPrompt(agentId, text);
@@ -431,7 +516,7 @@ export function AppShell() {
           {sidebarOpen && (
             <>
               <div className="mb-4 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-                Agents
+                Projects
               </div>
               <div className="agent-tree flex-1 overflow-y-auto">
                 {Array.from(rootsByProject.entries()).map(([cwd, projectAgents]) => (
@@ -448,30 +533,76 @@ export function AppShell() {
                         })
                       }
                     >
-                      <FolderOpen size={13} />
-                      <span>{cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}</span>
+                      <span className="project-group-icon">
+                        <FolderOpen size={17} />
+                      </span>
+                      <span className="project-group-text">
+                        <span className="project-group-name">
+                          {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
+                        </span>
+                        <span className="project-group-path">{cwd}</span>
+                      </span>
+                      <span className="project-agent-count">
+                        {projectAgents.length}
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="project-action"
+                        title="Add agent"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setPendingProjectCwd(cwd);
+                          setActiveAgent(null);
+                        }}
+                      >
+                        <Plus size={14} />
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="project-action"
+                        title="Edit project"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setEditingProject({
+                            cwd,
+                            name: projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd,
+                          });
+                        }}
+                      >
+                        <Pencil size={13} />
+                      </span>
                       {collapsedProjects.has(cwd) ? (
                         <ChevronRight size={13} />
                       ) : (
                         <ChevronDown size={13} />
                       )}
                     </button>
-                    {!collapsedProjects.has(cwd) && projectAgents.map((agent) => (
-                      <AgentTreeNode
-                        key={agent.id}
-                        agent={agent}
-                        childrenByParent={childrenByParent}
-                        agentsById={agentsById}
-                        activeId={activeId}
-                        onSelect={setActiveAgent}
-                      />
-                    ))}
+                    {!collapsedProjects.has(cwd) && (
+                      <div className="project-agents">
+                        {projectAgents.map((agent) => (
+                          <AgentTreeNode
+                            key={agent.id}
+                            agent={agent}
+                            childrenByParent={childrenByParent}
+                            agentsById={agentsById}
+                            activeId={activeId}
+                            onSelect={setActiveAgent}
+                            agentNames={agentNames}
+                            onEdit={(agent) =>
+                              setEditingAgent({
+                                id: agent.id,
+                                name: agentDisplayName(agent, agentNames),
+                              })
+                            }
+                            onHide={setHidingAgent}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </section>
                 ))}
-                <button className="agent-add" onClick={() => setActiveAgent(null)}>
-                  <Plus size={14} />
-                  Add Agent
-                </button>
               </div>
               {activeId && (
                 <button
@@ -618,10 +749,23 @@ export function AppShell() {
                     autoResize();
                   }}
                   onKeyDown={(e) => {
+                    if (
+                      isComposingRef.current ||
+                      e.nativeEvent.isComposing ||
+                      e.nativeEvent.keyCode === 229
+                    ) {
+                      return;
+                    }
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       handleSubmit();
                     }
+                  }}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false;
                   }}
                   placeholder="Ask Nova anything..."
                   rows={1}
@@ -855,6 +999,139 @@ export function AppShell() {
         </main>
         </div>
       </div>
+      {editingProject && (
+        <div className="project-modal-backdrop" onMouseDown={() => setEditingProject(null)}>
+          <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="project-modal-header">
+              <div>
+                <h3>Edit project</h3>
+                <p>{editingProject.cwd}</p>
+              </div>
+              <button onClick={() => setEditingProject(null)} title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <label className="project-modal-field">
+              <span>Project name</span>
+              <input
+                autoFocus
+                value={editingProject.name}
+                onChange={(event) =>
+                  setEditingProject({ ...editingProject, name: event.target.value })
+                }
+              />
+            </label>
+            <div className="project-modal-actions">
+              <button
+                className="project-open-button"
+                onClick={() => void openPath(editingProject.cwd)}
+              >
+                <ExternalLink size={14} />
+                Open folder
+              </button>
+              <button
+                className="project-save-button"
+                disabled={!editingProject.name.trim()}
+                onClick={() => {
+                  const next = {
+                    ...projectNames,
+                    [editingProject.cwd]: editingProject.name.trim(),
+                  };
+                  localStorage.setItem(PROJECT_NAMES_KEY, JSON.stringify(next));
+                  setProjectNames(next);
+                  setEditingProject(null);
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {editingAgent && (
+        <div className="project-modal-backdrop" onMouseDown={() => setEditingAgent(null)}>
+          <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="project-modal-header">
+              <div>
+                <h3>Edit agent</h3>
+                <p>{editingAgent.id}</p>
+              </div>
+              <button onClick={() => setEditingAgent(null)} title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <label className="project-modal-field">
+              <span>Agent name</span>
+              <input
+                autoFocus
+                value={editingAgent.name}
+                onChange={(event) =>
+                  setEditingAgent({ ...editingAgent, name: event.target.value })
+                }
+              />
+            </label>
+            <div className="project-modal-actions project-modal-actions-end">
+              <button
+                className="project-save-button"
+                disabled={!editingAgent.name.trim()}
+                onClick={() => {
+                  const next = {
+                    ...agentNames,
+                    [editingAgent.id]: editingAgent.name.trim(),
+                  };
+                  localStorage.setItem(AGENT_NAMES_KEY, JSON.stringify(next));
+                  setAgentNames(next);
+                  setEditingAgent(null);
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {hidingAgent && (
+        <div className="project-modal-backdrop" onMouseDown={() => setHidingAgent(null)}>
+          <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="project-modal-header">
+              <div>
+                <h3>Hide agent?</h3>
+                <p>{agentDisplayName(hidingAgent, agentNames)}</p>
+              </div>
+              <button onClick={() => setHidingAgent(null)} title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="project-modal-description">
+              This only removes the conversation from the project sidebar. The Agent session and its history will not be deleted.
+            </p>
+            <div className="project-modal-actions">
+              <button className="project-open-button" onClick={() => setHidingAgent(null)}>
+                Cancel
+              </button>
+              <button
+                className="agent-hide-confirm"
+                onClick={() => {
+                  const next = new Set(hiddenAgentIds).add(hidingAgent.id);
+                  localStorage.setItem(HIDDEN_AGENTS_KEY, JSON.stringify(Array.from(next)));
+                  setHiddenAgentIds(next);
+                  let selectedId = activeId;
+                  while (selectedId) {
+                    if (selectedId === hidingAgent.id) {
+                      setActiveAgent(null);
+                      break;
+                    }
+                    selectedId = agentsById.get(selectedId)?.parentAgentId ?? null;
+                  }
+                  setHidingAgent(null);
+                }}
+              >
+                Hide agent
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

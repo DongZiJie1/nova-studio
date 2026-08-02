@@ -272,7 +272,16 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       set((s) => ({
         agents: s.agents.map((agent) =>
           agent.id === agentId
-            ? { ...agent, messages: hydrateMessages(messages) }
+            ? {
+                ...agent,
+                // A newly spawned agent asks for history before its first
+                // prompt. That empty response can arrive after the optimistic
+                // user message, so never replace messages already rendered.
+                messages:
+                  agent.messages.length > 0
+                    ? agent.messages
+                    : hydrateMessages(messages),
+              }
             : agent,
         ),
       }));
