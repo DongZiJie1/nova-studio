@@ -9,13 +9,21 @@ use tokio::sync::{broadcast, Mutex};
 /// A single agent process running `node cli.js --mode rpc`
 pub struct AgentProcess {
     pub id: String,
+    pub parent_agent_id: Option<String>,
     pub cwd: String,
+    pub model: Option<String>,
+    pub created_at: String,
+    /// Display name: starts as "Nova", replaced by LLM-generated name on first prompt.
+    pub name: Arc<Mutex<Option<String>>>,
     pub status: Arc<Mutex<AgentStatus>>,
     pub message_count: Arc<Mutex<usize>>,
     pub last_error: Arc<Mutex<Option<String>>>,
+    /// Serializes prompt/ask interactions coming from the hub API so
+    /// concurrent collaborators can't interleave messages in one session.
+    pub prompt_lock: Arc<Mutex<()>>,
     child: Arc<Mutex<Child>>,
     stdin_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    event_tx: broadcast::Sender<AgentMessage>,
+    event_tx: broadcast::Sender<serde_json::Value>,
     _stdout_task: tokio::task::JoinHandle<()>,
     _stdin_task: tokio::task::JoinHandle<()>,
 }
@@ -24,11 +32,15 @@ impl AgentProcess {
     /// Spawn a new agent process
     pub async fn spawn(
         id: String,
+        parent_agent_id: Option<String>,
         cwd: String,
         cli_path: String,
         model: Option<String>,
         provider: Option<String>,
         extra_args: Vec<String>,
+        hub_url: String,
+        hub_token: String,
+        depth: u64,
     ) -> Result<Self, String> {
         // Determine how to invoke the CLI:
         // - .js file → node <file> --mode rpc
@@ -61,11 +73,23 @@ impl AgentProcess {
             cwd.clone()
         };
 
-        log::info!("[process:{}] spawning: {} {} (cwd={})", id, program, args.join(" "), resolved_cwd);
+        log::info!(
+            "[process:{}] spawning: {} {} (cwd={})",
+            id,
+            program,
+            args.join(" "),
+            resolved_cwd
+        );
 
         let mut child = Command::new(&program)
             .args(&args)
             .current_dir(&resolved_cwd)
+            // Hub collaboration identity: every agent knows who it is,
+            // where the hub API lives, and the token to call it with.
+            .env("NOVA_HUB_URL", &hub_url)
+            .env("NOVA_HUB_TOKEN", &hub_token)
+            .env("NOVA_AGENT_ID", &id)
+            .env("NOVA_ASK_DEPTH", depth.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -84,12 +108,14 @@ impl AgentProcess {
         let status = Arc::new(Mutex::new(AgentStatus::Starting));
         let message_count = Arc::new(Mutex::new(0usize));
         let last_error = Arc::new(Mutex::new(None));
-        let (event_tx, _) = broadcast::channel(256);
+        let name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("Nova".to_string())));
+        let (event_tx, _) = broadcast::channel::<serde_json::Value>(256);
         let (stdin_tx, stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
         // stdout reader task - parses JSONL events
         let event_tx_clone = event_tx.clone();
         let status_clone = status.clone();
+        let name_clone = name.clone();
         let message_count_clone = message_count.clone();
         let last_error_clone = last_error.clone();
         let id_clone = id.clone();
@@ -109,6 +135,10 @@ impl AgentProcess {
                                 log::info!("[process:{}] agent_settled", id_clone);
                                 *status_clone.lock().await = AgentStatus::Idle;
                             }
+                            AgentMessage::AgentNameUpdate { name } => {
+                                log::info!("[process:{}] agent_name_update: {}", id_clone, name);
+                                *name_clone.lock().await = Some(name.clone());
+                            }
                             AgentMessage::MessageStart { .. } => {
                                 log::debug!("[process:{}] message_start", id_clone);
                                 *status_clone.lock().await = AgentStatus::Streaming;
@@ -121,17 +151,40 @@ impl AgentProcess {
                                 *message_count_clone.lock().await += 1;
                             }
                             AgentMessage::ToolExecutionStart { data } => {
-                                let name = data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
-                                let id = data.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("?");
+                                let name =
+                                    data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
+                                let id = data
+                                    .get("toolCallId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
                                 log::info!("[process:{}] tool_start: {} ({})", id_clone, name, id);
                             }
                             AgentMessage::ToolExecutionEnd { data } => {
-                                let name = data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
-                                let err = data.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
-                                log::info!("[process:{}] tool_end: {} error={}", id_clone, name, err);
+                                let name =
+                                    data.get("toolName").and_then(|v| v.as_str()).unwrap_or("?");
+                                let err = data
+                                    .get("isError")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                log::info!(
+                                    "[process:{}] tool_end: {} error={}",
+                                    id_clone,
+                                    name,
+                                    err
+                                );
                             }
-                            AgentMessage::Response { success, command, data, .. } => {
-                                log::info!("[process:{}] response: cmd={:?} success={}", id_clone, command, success);
+                            AgentMessage::Response {
+                                success,
+                                command,
+                                data,
+                                ..
+                            } => {
+                                log::info!(
+                                    "[process:{}] response: cmd={:?} success={}",
+                                    id_clone,
+                                    command,
+                                    success
+                                );
                                 if !success {
                                     *status_clone.lock().await = AgentStatus::Error;
                                     let err = data
@@ -149,14 +202,26 @@ impl AgentProcess {
                             }
                             _ => {}
                         }
-                        let _ = event_tx_clone.send(msg);
+                        // Forward the raw parsed JSON (not the lossy enum) so unknown
+                        // event fields survive the trip to the frontend unchanged.
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let _ = event_tx_clone.send(value);
+                        }
                     }
                     Err(e) => {
-                        log::warn!("[process:{}] parse error: {} — raw: {}", id_clone, e, truncate(&line, 200));
+                        log::warn!(
+                            "[process:{}] parse error: {} — raw: {}",
+                            id_clone,
+                            e,
+                            truncate(&line, 200)
+                        );
                     }
                 }
             }
-            log::info!("[process:{}] stdout closed, setting status=Stopped", id_clone);
+            log::info!(
+                "[process:{}] stdout closed, setting status=Stopped",
+                id_clone
+            );
             *status_clone.lock().await = AgentStatus::Stopped;
         });
 
@@ -188,10 +253,15 @@ impl AgentProcess {
 
         Ok(Self {
             id,
+            parent_agent_id,
             cwd,
+            model,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            name,
             status,
             message_count,
             last_error,
+            prompt_lock: Arc::new(Mutex::new(())),
             child: Arc::new(Mutex::new(child)),
             stdin_tx,
             event_tx,
@@ -202,15 +272,15 @@ impl AgentProcess {
 
     /// Send a command to the agent process
     pub fn send_command(&self, cmd: &RpcCommand) -> Result<(), String> {
-        let json =
-            serde_json::to_string(cmd).map_err(|e| format!("Failed to serialize command: {}", e))?;
+        let json = serde_json::to_string(cmd)
+            .map_err(|e| format!("Failed to serialize command: {}", e))?;
         self.stdin_tx
             .send(json)
             .map_err(|e| format!("Failed to send command: {}", e))
     }
 
     /// Subscribe to events from this agent
-    pub fn subscribe(&self) -> broadcast::Receiver<AgentMessage> {
+    pub fn subscribe(&self) -> broadcast::Receiver<serde_json::Value> {
         self.event_tx.subscribe()
     }
 

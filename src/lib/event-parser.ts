@@ -174,6 +174,9 @@ function parseStreamEvent(evt: StreamEvent): ParsedStreamDelta {
 export function extractAssistantText(message?: Record<string, unknown>): string | null {
   if (!message) return null;
 
+  // Skip user messages — only extract assistant content
+  if (message.role === "user") return null;
+
   const content = message.content;
   if (typeof content === "string") return content;
 

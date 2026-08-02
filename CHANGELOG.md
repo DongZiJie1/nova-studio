@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.4.3 (2026-07-31)
+
+### 新增功能
+
+- **extension_ui_request 弹窗端到端支持** — 新增 `ExtensionUIPrompt` 组件，支持扩展 UI 弹窗（对话框 + 选项 + 自定义输入）。
+- **'Type something' 内联输入** — 弹窗选项支持内联自定义输入，选项列表保持完整。
+
+### RPC 协议对齐
+
+- **事件枚举补全 + `images` 类型** — RPC 协议与 nova 完全对齐。
+- **事件转发改用原始 JSON** — 未知事件不再丢字段。
+
+### 样式
+
+- **弹窗 light frosted-glass 毛玻璃效果** + 选项 hover 反馈增强。
+
+---
+
+## v0.4.2 (2026-07-31)
+
+### 修复
+
+- **RPC `set_model`/`compact` 字段名对齐** nova 的 camelCase 命名，修复 RPC 调用参数不匹配。
+
+---
+
+## v0.4.1 (2026-07-31)
+
+### 修复
+
+- **DMG 白屏 + Agent 无回复** — 修复两个打包 Bug。
+- **消息重复显示** — 修复重复显示 bug，开启 devtools 方便调试。
+- **sidecar 路径解析** — 从可执行文件目录（executable dir）解析，而非 resource_dir。
+
+### 改进
+
+- **GitHub Actions 跨平台构建** — 新增 CI 流水线，跨平台打包并修复 sidecar 打包。
+- **更换应用图标**。
+
+---
+
 ## v0.3.0 (2026-07-30)
 
 ### 新增功能

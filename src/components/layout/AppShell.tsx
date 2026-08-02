@@ -1,18 +1,142 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import {
-  spawnAgent,
-  sendPrompt,
-  stopAgent,
-} from "../../lib/tauri-bridge";
+import { spawnAgent, sendPrompt, stopAgent } from "../../lib/tauri-bridge";
+import { ChatMessage } from "../chat/ChatMessage";
+import { StreamingText } from "../chat/StreamingText";
+import { ToolCallCard } from "../chat/ToolCallCard";
 import {
   Paperclip,
   ArrowUp,
   Settings2,
   Square,
+  Home,
+  FolderOpen,
+  FileCode2,
+  Users,
+  Code,
+  Pencil,
+  Lightbulb,
+  Bug,
+  BarChart3,
+  Sparkles,
+  ChevronDown,
+  Plus,
 } from "lucide-react";
+
+function agentDisplayName(agent: AgentState): string {
+  if (agent.name) return agent.name;
+  if (!agent.parentAgentId) return "Nova";
+  return agent.model ?? `Agent ${agent.id.replace(/^agent-/, "")}`;
+}
+
+function agentSubtitle(agent: AgentState): string {
+  if (!agent.parentAgentId) {
+    return `Main coordinator · ${agent.id.replace(/^agent-/, "")}`;
+  }
+  if (agent.status === "streaming") return "Working on delegated task";
+  if (agent.status === "starting") return "Starting delegated agent";
+  if (agent.status === "error") return "Delegated task needs attention";
+  return agent.cwd;
+}
+
+function agentStatusMeta(status: AgentState["status"]): {
+  label: string;
+  className: string;
+  dot: string;
+} {
+  switch (status) {
+    case "streaming":
+      return { label: "Running", className: "running", dot: "#34d399" };
+    case "idle":
+      return { label: "Ready", className: "ready", dot: "#34d399" };
+    case "starting":
+      return { label: "Starting", className: "waiting", dot: "#fbbf24" };
+    case "error":
+      return { label: "Error", className: "error", dot: "#f87171" };
+    case "stopped":
+      return { label: "Stopped", className: "stopped", dot: "#6b7280" };
+  }
+}
+
+interface AgentTreeNodeProps {
+  agent: AgentState;
+  childrenByParent: Map<string, AgentState[]>;
+  agentsById: Map<string, AgentState>;
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  depth?: number;
+}
+
+function AgentTreeNode({
+  agent,
+  childrenByParent,
+  agentsById,
+  activeId,
+  onSelect,
+  depth = 0,
+}: AgentTreeNodeProps) {
+  const children = childrenByParent.get(agent.id) ?? [];
+  const parent = agent.parentAgentId
+    ? agentsById.get(agent.parentAgentId)
+    : undefined;
+  const status = agentStatusMeta(agent.status);
+  const isActive = agent.id === activeId;
+
+  return (
+    <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""}`}>
+      {agent.parentAgentId && (
+        <div className="agent-parent-label">
+          <Sparkles size={13} />
+          <span>
+            Spawned by {parent ? agentDisplayName(parent) : "offline agent"}
+          </span>
+        </div>
+      )}
+      <button
+        onClick={() => onSelect(agent.id)}
+        className={`agent-card ${isActive ? "agent-card-active" : ""}`}
+      >
+        <span className="agent-tile">
+          <Sparkles
+            size={20}
+            style={{ color: isActive ? "#c4caff" : "#8d95c5" }}
+          />
+          <span
+            className={`agent-dot ${agent.status === "streaming" ? "animate-pulse" : ""}`}
+            style={{ background: status.dot }}
+          />
+        </span>
+        <span className="agent-text">
+          <span className="agent-name">{agentDisplayName(agent)}</span>
+          <span className="agent-sub" title={agent.cwd}>
+            {agentSubtitle(agent)}
+          </span>
+        </span>
+        <span className={`agent-status-badge agent-status-${status.className}`}>
+          {status.label}
+        </span>
+      </button>
+
+      {children.length > 0 && (
+        <div className="agent-children">
+          {children.map((child) => (
+            <AgentTreeNode
+              key={child.id}
+              agent={child}
+              childrenByParent={childrenByParent}
+              agentsById={agentsById}
+              activeId={activeId}
+              onSelect={onSelect}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
@@ -29,8 +153,10 @@ export function AppShell() {
 
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -40,7 +166,27 @@ export function AppShell() {
   }, []);
 
   const activeAgent = agents.find((a) => a.id === activeId);
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const childrenByParent = new Map<string, AgentState[]>();
+  for (const agent of agents) {
+    if (!agent.parentAgentId || !agentsById.has(agent.parentAgentId)) continue;
+    const siblings = childrenByParent.get(agent.parentAgentId) ?? [];
+    siblings.push(agent);
+    childrenByParent.set(agent.parentAgentId, siblings);
+  }
+  const rootAgents = agents.filter(
+    (agent) => !agent.parentAgentId || !agentsById.has(agent.parentAgentId),
+  );
   const hasMessages = (activeAgent?.messages.length ?? 0) > 0;
+  const streamingText = activeAgent?.streamingText ?? "";
+  const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
+  const messagesSize = activeAgent?.messages.length ?? 0;
+
+  // Follow the conversation: keep scrolled to the bottom as content streams in.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messagesSize, streamingText, toolCallsSize]);
 
   const handleSubmit = async () => {
     const text = input.trim();
@@ -64,6 +210,7 @@ export function AppShell() {
 
         const newAgent: AgentState = {
           id: info.id,
+          parentAgentId: info.parent_agent_id,
           name: null,
           status: info.status,
           cwd: info.cwd,
@@ -83,7 +230,10 @@ export function AppShell() {
       // Send to agent via Tauri backend
       await sendPrompt(agentId, text);
     } catch (err) {
-      console.error("Failed to send prompt:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Failed to send prompt:", msg);
+      setError(msg);
+      setTimeout(() => setError(null), 8000);
     } finally {
       setIsSending(false);
     }
@@ -114,147 +264,258 @@ export function AppShell() {
     <div className="relative h-screen w-screen overflow-hidden bg-bg-primary">
       <Background />
 
-      <div className="relative z-10 flex h-full p-4 gap-4">
+      {/* Error banner */}
+      {error && (
+        <div
+          style={{
+            position: "fixed",
+            top: 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "rgba(239, 68, 68, 0.15)",
+            border: "1px solid rgba(239, 68, 68, 0.3)",
+            color: "#fca5a5",
+            padding: "10px 20px",
+            borderRadius: 12,
+            fontSize: 13,
+            fontFamily: "system-ui",
+            maxWidth: "90vw",
+            wordBreak: "break-word",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          {error}
+          <button
+            onClick={() => setError(null)}
+            style={{
+              marginLeft: 12,
+              background: "none",
+              border: "none",
+              color: "#fca5a5",
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 14,
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
+
+      <div className="relative z-10 flex h-full flex-col">
+        {/* Top nav bar */}
+        <div
+          style={{
+            flexShrink: 0,
+            width: "100%",
+            height: 64,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 28px",
+            zIndex: 20,
+          }}
+        >
+          {/* Logo */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontSize: 15,
+              fontWeight: 600,
+              letterSpacing: "0.01em",
+              color: "#eef0f8",
+            }}
+          >
+            <Sparkles size={17} style={{ color: "#b9c1ff" }} />
+            Nova Studio
+          </div>
+
+          {/* Nav links */}
+          <nav
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {[
+              { icon: Home, label: "Home", active: true },
+              { icon: FolderOpen, label: "Projects", active: false },
+              { icon: FileCode2, label: "Templates", active: false },
+              { icon: Users, label: "Agents", active: false },
+              { icon: Settings2, label: "Settings", active: false },
+            ].map(({ icon: Icon, label, active }) => (
+              <button
+                key={label}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  padding: "7px 16px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: active ? 500 : 400,
+                  color: active ? "#eef0f8" : "#7b8197",
+                  background: active
+                    ? "rgba(255, 255, 255, 0.07)"
+                    : "transparent",
+                  border: active
+                    ? "1px solid rgba(255, 255, 255, 0.09)"
+                    : "1px solid transparent",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          {/* User avatar */}
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              background: "rgba(255, 255, 255, 0.07)",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#9aa0b4",
+            }}
+          >
+            N
+          </div>
+        </div>
+
+        {/* Body row: sidebar + main */}
+        <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className={`glass-panel flex-shrink-0 p-5 flex flex-col ${
-            agents.length > 0 ? "w-64" : "w-0 overflow-hidden p-0 border-0"
+          className={`glass-panel flex-shrink-0 p-4 flex flex-col ml-3 mb-3 ${
+            agents.length > 0 ? "w-[340px]" : "w-0 overflow-hidden p-0 border-0"
           }`}
         >
           {agents.length > 0 && (
             <>
-              <div className="mb-6">
-                <h1 className="text-lg font-bold text-text-primary tracking-tight">
-                  Nova <span className="gradient-text">Studio</span>
-                </h1>
+              <div className="mb-4 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+                Agents
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1">
-                {agents.map((agent) => (
-                <button
-                  key={agent.id}
-                  onClick={() => setActiveAgent(agent.id)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all ${
-                    agent.id === activeId
-                      ? "bg-indigo-50 text-accent-start font-medium"
-                      : "text-text-secondary hover:bg-gray-50"
-                  }`}
-                >
-                  <span
-                    className={`h-2 w-2 rounded-full flex-shrink-0 ${
-                      agent.status === "idle"
-                        ? "bg-emerald-400"
-                        : agent.status === "streaming"
-                          ? "bg-indigo-400 animate-pulse"
-                          : agent.status === "error"
-                            ? "bg-red-400"
-                            : "bg-gray-300"
-                    }`}
+              <div className="agent-tree flex-1 overflow-y-auto">
+                {rootAgents.map((agent) => (
+                  <AgentTreeNode
+                    key={agent.id}
+                    agent={agent}
+                    childrenByParent={childrenByParent}
+                    agentsById={agentsById}
+                    activeId={activeId}
+                    onSelect={setActiveAgent}
                   />
-                  <span className="truncate">{agent.name ?? agent.id}</span>
+                ))}
+                <button className="agent-add" onClick={() => setActiveAgent(null)}>
+                  <Plus size={14} />
+                  Add Agent
                 </button>
-              ))}
-            </div>
-            {activeId && (
-              <button
-                onClick={handleStopAgent}
-                className="mt-2 text-xs text-text-muted hover:text-error transition-colors"
-              >
-                Stop Agent
-              </button>
-            )}
+              </div>
+              {activeId && (
+                <button
+                  onClick={handleStopAgent}
+                  className="mt-3 w-full text-center text-xs text-text-muted hover:text-error transition-colors"
+                >
+                  Stop Agent
+                </button>
+              )}
             </>
           )}
         </aside>
 
         {/* Main */}
-        <main className="glass-panel flex-1 flex flex-col overflow-hidden">
+        <main className="flex-1 flex flex-col overflow-hidden">
           {/* Content area */}
-          <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6">
+          <div
+            ref={scrollRef}
+            className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
+              !hasMessages ? "justify-center" : "justify-start"
+            }`}
+          >
             {!hasMessages ? (
               /* Empty state — tagline */
-              <div className="text-center max-w-2xl w-full">
-                {/* Logo */}
-                <div className="flex justify-center mb-6">
-                  <div className="h-12 w-12 rounded-xl bg-gray-100 flex items-center justify-center">
-                    <svg
-                      className="w-6 h-6 text-text-muted"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z"
-                      />
-                    </svg>
-                  </div>
+              <div
+                className="text-center max-w-2xl w-full animate-fade-in-up"
+                style={{ marginTop: "4vh" }}
+              >
+                {/* Floating sparkle */}
+                <div className="flex justify-center" style={{ marginBottom: 32 }}>
+                  <svg
+                    className="hero-icon-glow"
+                    width="64"
+                    height="64"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.1}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z"
+                    />
+                  </svg>
                 </div>
 
                 {/* Tagline */}
-                <h2 className="text-3xl font-bold text-text-primary leading-snug">
+                <h2
+                  className="hero-title"
+                  style={{
+                    fontSize: 44,
+                    fontWeight: 700,
+                    letterSpacing: "-0.02em",
+                    lineHeight: 1.15,
+                  }}
+                >
                   Ship faster with Nova.
-                  <br />
-                  <span className="text-text-secondary font-normal text-2xl">
-                    From idea to code, from concept to creation.
-                  </span>
                 </h2>
+                <p
+                  style={{
+                    marginTop: 16,
+                    fontSize: 15,
+                    color: "#7d8398",
+                    letterSpacing: "0.01em",
+                  }}
+                >
+                  From idea to code, from concept to creation.
+                </p>
               </div>
             ) : (
               /* Messages view */
-              <div className="w-full max-w-3xl space-y-4">
+              <div className="w-full max-w-3xl py-6">
                 {activeAgent?.messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-gradient-to-r from-accent-start to-accent-end text-white"
-                          : "bg-white/80 text-text-primary border border-border-glass"
-                      }`}
-                    >
-                      {msg.content}
-                    </div>
-                  </div>
+                  <ChatMessage key={msg.id} message={msg} />
                 ))}
-
-                {/* Streaming text */}
-                {activeAgent?.streamingText && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-white/80 text-text-primary border border-border-glass">
-                      {activeAgent.streamingText}
-                      <span className="inline-block w-1.5 h-4 bg-accent-start ml-0.5 animate-pulse" />
-                    </div>
-                  </div>
-                )}
 
                 {/* Active tool calls */}
                 {activeAgent &&
-                  activeAgent.activeToolCalls.size > 0 &&
-                  Array.from(activeAgent.activeToolCalls.values()).map(
-                    (tc) => (
-                      <div
-                        key={tc.id}
-                        className="flex justify-start"
-                      >
-                        <div className="rounded-2xl px-4 py-2 text-xs bg-indigo-50 text-accent-start border border-indigo-100 flex items-center gap-2">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              tc.status === "running"
-                                ? "bg-indigo-400 animate-pulse"
-                                : tc.status === "done"
-                                  ? "bg-emerald-400"
-                                  : "bg-red-400"
-                            }`}
-                          />
-                          {tc.name}
-                        </div>
-                      </div>
-                    ),
-                  )}
+                  Array.from(activeAgent.activeToolCalls.values()).map((tc) => (
+                    <div key={tc.id} className="msg-row msg-row-tool">
+                      <ToolCallCard
+                        name={tc.name}
+                        status={tc.status}
+                        args={tc.args}
+                        result={tc.result}
+                      />
+                    </div>
+                  ))}
+
+                {/* Streaming text */}
+                {streamingText && <StreamingText content={streamingText} />}
               </div>
             )}
           </div>
@@ -263,12 +524,12 @@ export function AppShell() {
           <div
             style={{
               flexShrink: 0,
-              padding: "0 24px 32px",
+              padding: "0 24px 56px",
               display: "flex",
               justifyContent: "center",
             }}
           >
-            <div style={{ width: "100%", maxWidth: 680 }}>
+            <div style={{ width: "100%", maxWidth: 720 }}>
               {/* Project path */}
               {activeAgent && (
                 <div
@@ -278,7 +539,7 @@ export function AppShell() {
                     gap: 8,
                     padding: "8px 16px",
                     fontSize: 12,
-                    color: "#9ca3af",
+                    color: "#6b7186",
                   }}
                 >
                   <svg
@@ -300,14 +561,7 @@ export function AppShell() {
               )}
 
               {/* Input card */}
-              <div
-                style={{
-                  background: "#fff",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 16,
-                  overflow: "hidden",
-                }}
-              >
+              <div className="nova-input" style={{ overflow: "hidden" }}>
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -325,11 +579,12 @@ export function AppShell() {
                   rows={1}
                   style={{
                     width: "100%",
+                    minHeight: 96,
                     resize: "none",
                     background: "transparent",
-                    padding: "14px 16px 8px",
-                    fontSize: 14,
-                    color: "#1a1a2e",
+                    padding: "18px 20px 8px",
+                    fontSize: 15,
+                    color: "#eceef6",
                     outline: "none",
                     lineHeight: 1.6,
                     fontFamily: "inherit",
@@ -344,15 +599,19 @@ export function AppShell() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    padding: "6px 10px 10px",
+                    padding: "8px 12px 12px",
                   }}
                 >
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     style={{
-                      padding: 6,
-                      borderRadius: 8,
-                      color: "#9ca3af",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 32,
+                      height: 32,
+                      borderRadius: 9,
+                      color: "#6d7387",
                       background: "none",
                       border: "none",
                       cursor: "pointer",
@@ -379,25 +638,26 @@ export function AppShell() {
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 6,
+                      gap: 10,
                     }}
                   >
                     <button
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 4,
-                        padding: "4px 8px",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        color: "#9ca3af",
-                        background: "none",
-                        border: "none",
+                        gap: 6,
+                        padding: "6px 13px",
+                        borderRadius: 999,
+                        fontSize: 12.5,
+                        color: "#9aa0b4",
+                        background: "rgba(255, 255, 255, 0.05)",
+                        border: "1px solid rgba(255, 255, 255, 0.08)",
                         cursor: "pointer",
                       }}
                     >
-                      <Settings2 size={14} />
+                      <Sparkles size={13} style={{ color: "#a5b0fc" }} />
                       <span>High</span>
+                      <ChevronDown size={13} style={{ color: "#6d7387" }} />
                     </button>
 
                     {/* Abort button (visible during streaming) */}
@@ -408,8 +668,8 @@ export function AppShell() {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          width: 28,
-                          height: 28,
+                          width: 32,
+                          height: 32,
                           borderRadius: "50%",
                           background: "#ef4444",
                           color: "#fff",
@@ -427,17 +687,19 @@ export function AppShell() {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          width: 28,
-                          height: 28,
+                          width: 32,
+                          height: 32,
                           borderRadius: "50%",
-                          background:
-                            input.trim() && !isSending ? "#1f2937" : "#d1d5db",
+                          background: "#8b93f5",
                           color: "#fff",
                           border: "none",
+                          boxShadow: "0 2px 14px rgba(139, 147, 245, 0.45)",
+                          opacity: input.trim() && !isSending ? 1 : 0.55,
                           cursor:
                             input.trim() && !isSending
                               ? "pointer"
                               : "not-allowed",
+                          transition: "all 0.15s ease",
                         }}
                       >
                         <ArrowUp size={16} />
@@ -446,9 +708,104 @@ export function AppShell() {
                   </div>
                 </div>
               </div>
+
+              {/* Action buttons */}
+              {!hasMessages && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                    marginTop: 18,
+                  }}
+                >
+                  {[
+                    { icon: Code, label: "Code", color: "#60a5fa" },
+                    { icon: Pencil, label: "Design", color: "#a78bfa" },
+                    { icon: Lightbulb, label: "Brainstorm", color: "#fbbf24" },
+                    { icon: Bug, label: "Debug", color: "#f87171" },
+                    { icon: BarChart3, label: "Analyze", color: "#34d399" },
+                  ].map(({ icon: Icon, label, color }) => (
+                    <button
+                      key={label}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        padding: "8px 18px",
+                        borderRadius: 999,
+                        fontSize: 13,
+                        color: "#b7bdc9",
+                        background: "rgba(255, 255, 255, 0.035)",
+                        border: "1px solid rgba(255, 255, 255, 0.07)",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <Icon size={14} style={{ color }} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Keyboard shortcut hint */}
+              {!hasMessages && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    marginTop: 18,
+                    fontSize: 12,
+                    color: "#626879",
+                  }}
+                >
+                  <kbd
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minWidth: 24,
+                      height: 24,
+                      padding: "0 6px",
+                      borderRadius: 6,
+                      background: "rgba(255, 255, 255, 0.045)",
+                      border: "1px solid rgba(255, 255, 255, 0.09)",
+                      fontSize: 12,
+                      color: "#8a90a3",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    ⌘
+                  </kbd>
+                  <kbd
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minWidth: 24,
+                      height: 24,
+                      padding: "0 6px",
+                      borderRadius: 6,
+                      background: "rgba(255, 255, 255, 0.045)",
+                      border: "1px solid rgba(255, 255, 255, 0.09)",
+                      fontSize: 12,
+                      color: "#8a90a3",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    K
+                  </kbd>
+                  <span style={{ marginLeft: 4 }}>to quickly open</span>
+                </div>
+              )}
             </div>
           </div>
         </main>
+        </div>
       </div>
     </div>
   );

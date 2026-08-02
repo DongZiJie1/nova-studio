@@ -8,7 +8,11 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentEventPayload, AgentInfo } from "./rpc-types";
+import type {
+  AgentEventPayload,
+  AgentInfo,
+  ExtensionUIResponse,
+} from "./rpc-types";
 
 // ─── Tauri Commands (frontend → Rust) ───
 
@@ -44,22 +48,40 @@ export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
 }
 
+export async function sendExtensionUIResponse(
+  agentId: string,
+  response: ExtensionUIResponse,
+): Promise<void> {
+  return invoke("send_extension_ui_response", {
+    agentId,
+    id: response.id,
+    value: response.value,
+    confirmed: response.confirmed,
+    cancelled: response.cancelled,
+  });
+}
+
 // ─── Event Listener (Rust → frontend) ───
 
 export function onAgentEvent(
   callback: (payload: AgentEventPayload) => void,
 ): UnlistenFn {
-  // listen() returns a Promise<UnlistenFn>, but we fire-and-forget
-  // the unlisten is stored so callers can clean up
-  let unlisten: UnlistenFn | null = null;
+  let cleanedUp = false;
+  let unlistenFn: UnlistenFn | null = null;
 
   listen<AgentEventPayload>("agent-event", (event) => {
     callback(event.payload);
   }).then((fn) => {
-    unlisten = fn;
+    if (cleanedUp) {
+      // Effect already cleaned up before listener was ready — remove immediately
+      fn();
+    } else {
+      unlistenFn = fn;
+    }
   });
 
   return () => {
-    unlisten?.();
+    cleanedUp = true;
+    unlistenFn?.();
   };
 }

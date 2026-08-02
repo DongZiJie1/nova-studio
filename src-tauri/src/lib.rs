@@ -21,6 +21,39 @@ pub fn run() {
             // Priority: env var > bundled sidecar (prod) > global npm > dev paths
             let cli_path = resolve_cli_path(app.handle());
 
+            // Bun-compiled binaries look for resource dirs (theme/, export-html/, assets/)
+            // next to the executable. Tauri bundles these into Resources/binaries/ instead.
+            // Create symlinks so the binary can find them at runtime.
+            if let Some(bin_dir) = std::path::Path::new(&cli_path).parent() {
+                if let Ok(resource_dir) = app.handle().path().resource_dir() {
+                    // Tauri resources preserve the src-tauri/ directory structure
+                    let bundled_base = resource_dir.join("binaries");
+                    for dir_name in &["theme", "export-html", "assets"] {
+                        let bin_resource = bin_dir.join(dir_name);
+                        if !bin_resource.exists() {
+                            let bundled_resource = bundled_base.join(dir_name);
+                            if bundled_resource.exists() {
+                                log::info!(
+                                    "Linking {} -> {}",
+                                    bundled_resource.display(),
+                                    bin_resource.display()
+                                );
+                                if let Err(e) =
+                                    std::os::unix::fs::symlink(&bundled_resource, &bin_resource)
+                                {
+                                    log::warn!("Failed to symlink {}: {}", dir_name, e);
+                                }
+                            } else {
+                                log::warn!(
+                                    "Resource dir not found in bundle: {}",
+                                    bundled_resource.display()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             // Create the central AgentManager
             let manager = Arc::new(AgentManager::new(cli_path));
 
@@ -28,8 +61,13 @@ pub fn run() {
             let manager_clone = manager.clone();
             let api_port = 9528; // fixed port for now
             tauri::async_runtime::spawn(async move {
-                match agent_api::start_api_server(manager_clone, api_port).await {
-                    Ok(port) => log::info!("Agent API available at http://127.0.0.1:{}", port),
+                match agent_api::start_api_server(manager_clone.clone(), api_port).await {
+                    Ok(port) => {
+                        manager_clone
+                            .set_hub_url(format!("http://127.0.0.1:{}", port))
+                            .await;
+                        log::info!("Agent API available at http://127.0.0.1:{}", port);
+                    }
                     Err(e) => log::error!("Failed to start agent API: {}", e),
                 }
             });
@@ -42,11 +80,15 @@ pub fn run() {
             let manager_ref = app.state::<AgentManagerState>().0.clone();
             tauri::async_runtime::spawn(async move {
                 let mut rx = manager_ref.subscribe_global();
-                while let Ok((agent_id, msg)) = rx.recv().await {
-                    log::debug!("[event] -> frontend: agent={} type={:?}", agent_id, msg_type(&msg));
+                while let Ok((agent_id, event)) = rx.recv().await {
+                    log::debug!(
+                        "[event] -> frontend: agent={} type={}",
+                        agent_id,
+                        msg_type(&event)
+                    );
                     let payload = serde_json::json!({
                         "agentId": agent_id,
-                        "event": msg,
+                        "event": event,
                     });
                     let _ = app_handle.emit("agent-event", &payload);
                 }
@@ -61,6 +103,7 @@ pub fn run() {
             commands::get_agent_info,
             commands::send_prompt,
             commands::abort_agent,
+            commands::send_extension_ui_response,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -85,7 +128,17 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
     // 2. Try bundled sidecar (production only - dev doesn't bundle externalBin)
     #[cfg(not(dev))]
     {
-        // In production, check app bundle's Resources directory
+        // Tauri sidecars are placed next to the main executable (Contents/MacOS/)
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let nova_path = exe_dir.join("nova");
+                if nova_path.exists() {
+                    log::info!("Using bundled nova: {}", nova_path.display());
+                    return nova_path.to_string_lossy().to_string();
+                }
+            }
+        }
+        // Fallback: check Resources directory
         if let Some(resource_dir) = app_handle.path().resource_dir().ok() {
             let nova_path = resource_dir.join("nova");
             if nova_path.exists() {
@@ -104,36 +157,13 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
         }
     }
 
-    // 4. Dev mode: relative to nova-studio
-    let dev_candidates = vec![
-        "../../nova/packages/nova/dist/cli.js",
-        "/Users/dongzj1102/Desktop/Pi-Agent/nova/packages/nova/dist/cli.js",
-    ];
-
-    for candidate in &dev_candidates {
-        if std::path::Path::new(candidate).exists() {
-            return std::fs::canonicalize(candidate)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| candidate.to_string());
-        }
-    }
-
-    log::warn!("Could not find nova CLI. Install it: npm i -g @dongzijie1/nova");
+    log::warn!("Could not find nova CLI. Install it: npm link @dongzijie1/nova");
     "nova".to_string()
 }
 
-fn msg_type(msg: &rpc_types::AgentMessage) -> &'static str {
-    match msg {
-        rpc_types::AgentMessage::Response { .. } => "response",
-        rpc_types::AgentMessage::MessageStart { .. } => "message_start",
-        rpc_types::AgentMessage::MessageUpdate { .. } => "message_update",
-        rpc_types::AgentMessage::MessageEnd { .. } => "message_end",
-        rpc_types::AgentMessage::ToolExecutionStart { .. } => "tool_start",
-        rpc_types::AgentMessage::ToolExecutionUpdate { .. } => "tool_update",
-        rpc_types::AgentMessage::ToolExecutionEnd { .. } => "tool_end",
-        rpc_types::AgentMessage::AgentSettled {} => "agent_settled",
-        rpc_types::AgentMessage::TurnStart {} => "turn_start",
-        rpc_types::AgentMessage::TurnEnd {} => "turn_end",
-        rpc_types::AgentMessage::Unknown => "unknown",
-    }
+fn msg_type(msg: &serde_json::Value) -> String {
+    msg.get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string()
 }

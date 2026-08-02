@@ -1,9 +1,10 @@
 #!/bin/bash
 # Build nova binary for Tauri sidecar
+# Uses the published npm package (not local source)
 
 set -e
 
-NOVA_DIR="../nova/packages/nova"
+PACKAGE_NAME="@dongzijie1/nova"
 BINARY_NAME="nova"
 
 # Get current platform
@@ -34,7 +35,9 @@ case "$OS" in
         ;;
 esac
 
-echo "Building nova binary for $TARGET..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+echo "Building nova binary for $TARGET from npm package..."
 
 # Check if bun is available
 if ! command -v bun &> /dev/null && [ ! -f ~/.bun/bin/bun ]; then
@@ -47,23 +50,61 @@ if ! command -v bun &> /dev/null; then
     BUN_CMD="$HOME/.bun/bin/bun"
 fi
 
-# Build dependencies first
-cd ../nova
-npm run build:offline
+# Create temp directory and install npm package
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
 
-# Build nova binary
-cd packages/nova
-$BUN_CMD build --compile ./dist/bun/cli.js --outfile dist/$BINARY_NAME-bin
+echo "Installing $PACKAGE_NAME from npm..."
+cd "$TMPDIR"
+npm init -y > /dev/null 2>&1
+npm install "$PACKAGE_NAME"
 
-# Create binaries directory in src-tauri
-mkdir -p ../../nova-studio/src-tauri/binaries
+# Compile to single binary
+ENTRY="$TMPDIR/node_modules/$PACKAGE_NAME/dist/bun/cli.js"
+if [ ! -f "$ENTRY" ]; then
+    echo "Error: Entry point not found at $ENTRY"
+    exit 1
+fi
 
-# Copy binary with target triple name
-cp dist/$BINARY_NAME-bin ../../nova-studio/src-tauri/binaries/$BINARY_NAME-$TARGET
+echo "Compiling binary..."
+$BUN_CMD build --compile "$ENTRY" --outfile "$TMPDIR/$BINARY_NAME-bin"
+
+# Copy binary to src-tauri/binaries/
+BINARIES_DIR="$SCRIPT_DIR/../src-tauri/binaries"
+mkdir -p "$BINARIES_DIR"
+
+cp "$TMPDIR/$BINARY_NAME-bin" "$BINARIES_DIR/$BINARY_NAME-$TARGET"
 
 # On Windows, add .exe extension
 if [[ "$TARGET" == *windows* ]]; then
-    mv ../../nova-studio/src-tauri/binaries/$BINARY_NAME-$TARGET ../../nova-studio/src-tauri/binaries/$BINARY_NAME-$TARGET.exe
+    mv "$BINARIES_DIR/$BINARY_NAME-$TARGET" "$BINARIES_DIR/$BINARY_NAME-$TARGET.exe"
 fi
 
-echo "✓ Nova binary built: src-tauri/binaries/$BINARY_NAME-$TARGET"
+# Copy resource files needed by the bun-compiled binary at runtime:
+# - theme/*.json (dark.json, light.json, theme-schema.json)
+# - export-html/ (HTML export templates)
+# - assets/ (interactive assets)
+RESOURCE_DIRS=(
+  "dist/modes/interactive/theme"
+  "dist/core/export-html"
+  "dist/modes/interactive/assets"
+)
+NOVA_PKG="$TMPDIR/node_modules/$PACKAGE_NAME"
+for dir in "${RESOURCE_DIRS[@]}"; do
+  src="$NOVA_PKG/$dir"
+  if [ -d "$src" ]; then
+    dirname=$(basename "$dir")
+    echo "Copying resources: $dirname/"
+    rm -rf "$BINARIES_DIR/$dirname"
+    cp -r "$src" "$BINARIES_DIR/$dirname"
+  else
+    echo "Warning: resource directory not found: $dir"
+  fi
+done
+
+echo "Copied resource directories:"
+ls -ld "$BINARIES_DIR/theme" "$BINARIES_DIR/export-html" "$BINARIES_DIR/assets" 2>/dev/null
+
+# Show result
+ls -lh "$BINARIES_DIR/$BINARY_NAME-"*
+echo "✓ Nova binary built: $BINARIES_DIR/$BINARY_NAME-$TARGET"
