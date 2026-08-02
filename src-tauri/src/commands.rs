@@ -21,6 +21,7 @@ pub async fn spawn_agent(
     );
     let request = SpawnRequest {
         cwd,
+        parent_agent_id: None,
         model,
         provider,
         args: None,

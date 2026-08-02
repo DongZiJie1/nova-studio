@@ -39,6 +39,9 @@ async fn require_hub_token(
 #[derive(Deserialize)]
 struct SpawnBody {
     cwd: String,
+    /// Agent that initiated this delegation. Root agents have no parent.
+    #[serde(default)]
+    parent_agent_id: Option<String>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -96,6 +99,7 @@ async fn spawn_agent(
 ) -> Result<Json<SpawnResponse>, (StatusCode, Json<ApiError>)> {
     let request = SpawnRequest {
         cwd: body.cwd,
+        parent_agent_id: body.parent_agent_id,
         model: body.model,
         provider: body.provider,
         args: None,

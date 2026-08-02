@@ -9,9 +9,12 @@ use tokio::sync::{broadcast, Mutex};
 /// A single agent process running `node cli.js --mode rpc`
 pub struct AgentProcess {
     pub id: String,
+    pub parent_agent_id: Option<String>,
     pub cwd: String,
     pub model: Option<String>,
     pub created_at: String,
+    /// Display name: starts as "Nova", replaced by LLM-generated name on first prompt.
+    pub name: Arc<Mutex<Option<String>>>,
     pub status: Arc<Mutex<AgentStatus>>,
     pub message_count: Arc<Mutex<usize>>,
     pub last_error: Arc<Mutex<Option<String>>>,
@@ -29,6 +32,7 @@ impl AgentProcess {
     /// Spawn a new agent process
     pub async fn spawn(
         id: String,
+        parent_agent_id: Option<String>,
         cwd: String,
         cli_path: String,
         model: Option<String>,
@@ -104,12 +108,14 @@ impl AgentProcess {
         let status = Arc::new(Mutex::new(AgentStatus::Starting));
         let message_count = Arc::new(Mutex::new(0usize));
         let last_error = Arc::new(Mutex::new(None));
+        let name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("Nova".to_string())));
         let (event_tx, _) = broadcast::channel::<serde_json::Value>(256);
         let (stdin_tx, stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
         // stdout reader task - parses JSONL events
         let event_tx_clone = event_tx.clone();
         let status_clone = status.clone();
+        let name_clone = name.clone();
         let message_count_clone = message_count.clone();
         let last_error_clone = last_error.clone();
         let id_clone = id.clone();
@@ -128,6 +134,10 @@ impl AgentProcess {
                             AgentMessage::AgentSettled {} => {
                                 log::info!("[process:{}] agent_settled", id_clone);
                                 *status_clone.lock().await = AgentStatus::Idle;
+                            }
+                            AgentMessage::AgentNameUpdate { name } => {
+                                log::info!("[process:{}] agent_name_update: {}", id_clone, name);
+                                *name_clone.lock().await = Some(name.clone());
                             }
                             AgentMessage::MessageStart { .. } => {
                                 log::debug!("[process:{}] message_start", id_clone);
@@ -243,9 +253,11 @@ impl AgentProcess {
 
         Ok(Self {
             id,
+            parent_agent_id,
             cwd,
             model,
             created_at: chrono::Utc::now().to_rfc3339(),
+            name,
             status,
             message_count,
             last_error,

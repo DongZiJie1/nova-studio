@@ -30,6 +30,7 @@ export interface ChatMessage {
 
 export interface AgentState {
   id: string;
+  parentAgentId: string | null;
   name: string | null;
   status: AgentStatus;
   cwd: string;
@@ -75,7 +76,8 @@ function nextId(): string {
 function agentStateFromInfo(info: AgentInfo): AgentState {
   return {
     id: info.id,
-    name: null,
+    parentAgentId: info.parent_agent_id,
+    name: info.name ?? "Nova",
     status: info.status,
     cwd: info.cwd,
     model: info.model,
@@ -89,6 +91,8 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
 function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
   return {
     ...agent,
+    parentAgentId: info.parent_agent_id,
+    name: info.name ?? agent.name,
     status: info.status,
     cwd: info.cwd,
     model: info.model,
@@ -217,6 +221,15 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               : s.activeAgentId,
         };
       });
+      return;
+    }
+
+    if (event.type === "agent_name_update") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, name: event.name } : agent,
+        ),
+      }));
       return;
     }
 

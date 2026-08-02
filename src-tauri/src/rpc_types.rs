@@ -99,6 +99,8 @@ pub enum AgentMessage {
     },
     #[serde(rename = "agent_settled")]
     AgentSettled {},
+    #[serde(rename = "agent_name_update")]
+    AgentNameUpdate { name: String },
     #[serde(rename = "agent_start")]
     AgentStart {},
     #[serde(rename = "agent_end")]
@@ -160,6 +162,11 @@ pub enum AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
     pub id: String,
+    #[serde(default)]
+    pub parent_agent_id: Option<String>,
+    /// Display name, initially "Nova", then LLM-generated after first prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub status: AgentStatus,
     pub cwd: String,
     pub model: Option<String>,
@@ -173,6 +180,9 @@ pub struct AgentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnRequest {
     pub cwd: String,
+    /// The agent that delegated this process, or None for a user-created root.
+    #[serde(default)]
+    pub parent_agent_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]

@@ -43,6 +43,12 @@ impl AgentManager {
 
     /// Spawn a new agent process
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentInfo, String> {
+        if let Some(parent_id) = request.parent_agent_id.as_deref() {
+            if !self.agents.read().await.contains_key(parent_id) {
+                return Err(format!("Parent agent not found: {}", parent_id));
+            }
+        }
+
         let id = Uuid::new_v4().to_string()[..8].to_string();
         let agent_id = format!("agent-{}", id);
 
@@ -51,6 +57,7 @@ impl AgentManager {
         let hub_url = self.hub_url.read().await.clone();
         let process = AgentProcess::spawn(
             agent_id.clone(),
+            request.parent_agent_id.clone(),
             request.cwd.clone(),
             self.cli_path.clone(),
             request.model,
@@ -234,10 +241,13 @@ impl AgentManager {
         let mut infos = Vec::new();
         for (id, agent) in agents.iter() {
             let status = agent.get_status().await;
+            let agent_name = agent.name.lock().await.clone();
             let msg_count = *agent.message_count.lock().await;
             let last_err = agent.last_error.lock().await.clone();
             infos.push(AgentInfo {
                 id: id.clone(),
+                parent_agent_id: agent.parent_agent_id.clone(),
+                name: agent_name,
                 status,
                 cwd: agent.cwd.clone(),
                 model: agent.model.clone(),
@@ -256,10 +266,13 @@ impl AgentManager {
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         let status = agent.get_status().await;
         let cwd = agent.cwd.clone();
+        let agent_name = agent.name.lock().await.clone();
         let msg_count = *agent.message_count.lock().await;
         let last_err = agent.last_error.lock().await.clone();
         Ok(AgentInfo {
             id: agent_id.to_string(),
+            parent_agent_id: agent.parent_agent_id.clone(),
+            name: agent_name,
             status,
             cwd,
             model: agent.model.clone(),
@@ -283,6 +296,8 @@ impl AgentManager {
     async fn build_info(&self, id: &str, cwd: &str, process: &AgentProcess) -> AgentInfo {
         AgentInfo {
             id: id.to_string(),
+            parent_agent_id: process.parent_agent_id.clone(),
+            name: process.name.lock().await.clone(),
             status: process.get_status().await,
             cwd: cwd.to_string(),
             model: process.model.clone(),
@@ -359,6 +374,7 @@ mod tests {
         let info = manager
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
+                parent_agent_id: None,
                 model: Some("test-model".to_string()),
                 provider: None,
                 args: None,
@@ -429,5 +445,61 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "Agent not found");
+    }
+
+    #[tokio::test]
+    async fn spawn_records_parent_child_relationship() {
+        let manager = AgentManager::new(mock_cli_path());
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(child.parent_agent_id.as_deref(), Some(parent.id.as_str()));
+        let listed_child = manager.get_info(&child.id).await.unwrap();
+        assert_eq!(
+            listed_child.parent_agent_id.as_deref(),
+            Some(parent.id.as_str())
+        );
+
+        manager.stop(&child.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_unknown_parent() {
+        let manager = AgentManager::new(mock_cli_path());
+        let err = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some("agent-missing".to_string()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(err, "Parent agent not found: agent-missing");
     }
 }
