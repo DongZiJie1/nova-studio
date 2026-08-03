@@ -56,6 +56,8 @@ struct NovaSessionSummary {
     parent_session_id: Option<String>,
     created_at: String,
     message_count: usize,
+    #[serde(default)]
+    first_message: String,
 }
 
 impl AgentManager {
@@ -108,6 +110,10 @@ impl AgentManager {
                     let legacy = legacy_by_session.get(&session.session_id);
                     let cwd = normalize_project_cwd(&session.cwd).unwrap_or(session.cwd);
                     let id = format!("agent-{}", session.session_id);
+                    let name = session
+                        .name
+                        .or_else(|| legacy.and_then(|item| item.name.clone()))
+                        .or_else(|| fallback_session_name(&session.first_message));
                     (
                         id.clone(),
                         PersistedAgent {
@@ -115,9 +121,7 @@ impl AgentManager {
                             parent_agent_id: session
                                 .parent_session_id
                                 .map(|parent| format!("agent-{parent}")),
-                            name: session
-                                .name
-                                .or_else(|| legacy.and_then(|item| item.name.clone())),
+                            name,
                             cwd,
                             model: legacy.and_then(|item| item.model.clone()),
                             provider: legacy.and_then(|item| item.provider.clone()),
@@ -185,11 +189,14 @@ impl AgentManager {
                 .parent_session_id
                 .map(|parent| format!("agent-{parent}"));
             let cwd = normalize_project_cwd(&session.cwd).unwrap_or(session.cwd);
+            let fallback_name = fallback_session_name(&session.first_message);
 
             if let Some(record) = records.get_mut(&id) {
                 record.parent_agent_id = parent_agent_id;
                 if session.name.is_some() {
                     record.name = session.name;
+                } else if record.name.is_none() {
+                    record.name = fallback_name;
                 }
                 record.cwd = cwd;
                 record.session_file = Some(session.session_file);
@@ -201,7 +208,7 @@ impl AgentManager {
                     PersistedAgent {
                         id,
                         parent_agent_id,
-                        name: session.name,
+                        name: session.name.or(fallback_name),
                         cwd,
                         model: None,
                         provider: None,
@@ -622,6 +629,17 @@ fn normalize_project_cwd(cwd: &str) -> Result<String, String> {
     Ok(canonical.to_string_lossy().into_owned())
 }
 
+fn fallback_session_name(first_message: &str) -> Option<String> {
+    let first_line = first_message.lines().next()?.trim();
+    let first_clause = first_line
+        .split(['。', '！', '？', '，', '.', '!', '?', ','])
+        .next()
+        .unwrap_or(first_line)
+        .trim();
+    let name = first_clause.chars().take(12).collect::<String>();
+    (!name.is_empty()).then_some(name)
+}
+
 /// Extract assistant text from a `message_end` message payload.
 /// `content` may be a plain string or an array of content parts.
 fn extract_text_from_message(msg: &serde_json::Value) -> String {
@@ -684,6 +702,15 @@ mod tests {
         assert_eq!(direct, equivalent);
         assert!(std::path::Path::new(&direct).is_absolute());
         assert!(normalize_project_cwd("relative/project").is_err());
+    }
+
+    #[test]
+    fn unnamed_legacy_sessions_get_a_short_stable_fallback_name() {
+        assert_eq!(
+            fallback_session_name("帮我检查最近消失的会话，顺便修复加载问题。"),
+            Some("帮我检查最近消失的会话".to_string())
+        );
+        assert_eq!(fallback_session_name("  \nnext"), None);
     }
 
     #[tokio::test]
@@ -861,9 +888,27 @@ mod tests {
         assert_eq!(restored_child.session_id.as_deref(), Some("mock-child"));
         assert_eq!(restored.count().await, 0);
 
+        let mut events = restored.subscribe_global();
         let activated = restored.activate("agent-mock-parent").await.unwrap();
         assert_eq!(activated.status, AgentStatus::Idle);
         assert_eq!(restored.count().await, 1);
+        let (_, history) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            recv_lifecycle_event(&mut events, "response"),
+        )
+        .await
+        .expect("restored session did not replay its history");
+        assert_eq!(
+            history.get("command").and_then(|value| value.as_str()),
+            Some("get_messages")
+        );
+        assert_eq!(
+            history
+                .pointer("/data/messages")
+                .and_then(|value| value.as_array())
+                .map(Vec::len),
+            Some(2)
+        );
 
         let _ = tokio::fs::remove_file(state_path).await;
     }

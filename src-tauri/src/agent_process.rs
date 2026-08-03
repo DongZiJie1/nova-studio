@@ -2,7 +2,7 @@ use crate::rpc_types::{AgentMessage, AgentStatus, RpcCommand};
 use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex};
 
@@ -26,6 +26,7 @@ pub struct AgentProcess {
     stdin_tx: tokio::sync::mpsc::UnboundedSender<String>,
     event_tx: broadcast::Sender<serde_json::Value>,
     _stdout_task: tokio::task::JoinHandle<()>,
+    _stderr_task: tokio::task::JoinHandle<()>,
     _stdin_task: tokio::task::JoinHandle<()>,
 }
 
@@ -57,8 +58,13 @@ impl AgentProcess {
         };
         args.push("--mode".to_string());
         args.push("rpc".to_string());
-        args.push("--session-id".to_string());
-        args.push(session_id.clone());
+        // `--session` already identifies the exact persisted conversation and
+        // Nova rejects combining it with `--session-id`.
+        let restores_exact_session = extra_args.iter().any(|arg| arg == "--session");
+        if !restores_exact_session {
+            args.push("--session-id".to_string());
+            args.push(session_id.clone());
+        }
 
         if let Some(m) = &model {
             args.push("--model".to_string());
@@ -255,6 +261,34 @@ impl AgentProcess {
 
         // Wait a bit for the process to start
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if let Some(exit_status) = child
+            .try_wait()
+            .map_err(|error| format!("Failed to inspect agent process: {error}"))?
+        {
+            let mut stderr_text = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut stderr_text).await;
+            }
+            let detail = stderr_text.trim();
+            return Err(if detail.is_empty() {
+                format!("Agent process exited during startup ({exit_status})")
+            } else {
+                format!("Agent process exited during startup: {detail}")
+            });
+        }
+
+        // Drain stderr for the lifetime of the process so a verbose CLI cannot
+        // fill the pipe and stall. Errors remain visible in the Studio log.
+        let stderr = child.stderr.take();
+        let stderr_id = id.clone();
+        let stderr_task = tokio::spawn(async move {
+            if let Some(stderr) = stderr {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    log::warn!("[process:{}] stderr: {}", stderr_id, truncate(&line, 500));
+                }
+            }
+        });
         *status.lock().await = AgentStatus::Idle;
 
         log::info!("[process:{}] ready, status=Idle", id);
@@ -275,6 +309,7 @@ impl AgentProcess {
             stdin_tx,
             event_tx,
             _stdout_task: stdout_task,
+            _stderr_task: stderr_task,
             _stdin_task: stdin_task,
         })
     }
