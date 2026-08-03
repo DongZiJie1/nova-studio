@@ -109,6 +109,7 @@ pub fn run() {
             commands::stop_agent,
             commands::list_agents,
             commands::get_agent_info,
+            commands::activate_agent,
             commands::send_prompt,
             commands::abort_agent,
             commands::send_extension_ui_response,

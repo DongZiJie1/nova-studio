@@ -33,8 +33,29 @@ struct PersistedAgent {
     #[serde(default)]
     args: Vec<String>,
     session_id: String,
+    #[serde(default)]
+    session_file: Option<String>,
     created_at: String,
+    #[serde(default)]
+    message_count: usize,
     depth: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct NovaSessionCatalog {
+    sessions: Vec<NovaSessionSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NovaSessionSummary {
+    session_id: String,
+    cwd: String,
+    session_file: String,
+    name: Option<String>,
+    parent_session_id: Option<String>,
+    created_at: String,
+    message_count: usize,
 }
 
 impl AgentManager {
@@ -52,50 +73,103 @@ impl AgentManager {
     }
 
     pub async fn restore(&self) -> Result<(), String> {
-        let contents = match tokio::fs::read_to_string(&self.state_path).await {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(format!("Failed to read Studio state: {error}")),
+        let legacy: Vec<PersistedAgent> = match tokio::fs::read_to_string(&self.state_path).await {
+            Ok(contents) => match serde_json::from_str(&contents) {
+                Ok(records) => records,
+                Err(error) => {
+                    log::warn!(
+                        "Ignoring malformed legacy Studio state at {}: {}",
+                        self.state_path.display(),
+                        error
+                    );
+                    Vec::new()
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => {
+                log::warn!(
+                    "Unable to read legacy Studio state at {}: {}",
+                    self.state_path.display(),
+                    error
+                );
+                Vec::new()
+            }
         };
-        let saved: Vec<PersistedAgent> = serde_json::from_str(&contents)
-            .map_err(|error| format!("Failed to parse Studio state: {error}"))?;
-        *self.records.write().await = saved
+        let legacy_by_session: HashMap<_, _> = legacy
             .iter()
             .cloned()
-            .map(|item| (item.id.clone(), item))
+            .map(|record| (record.session_id.clone(), record))
             .collect();
-
-        let mut pending = saved;
-        while !pending.is_empty() {
-            let before = pending.len();
-            let mut deferred = Vec::new();
-            for record in pending {
-                let parent_ready = match record.parent_agent_id.as_ref() {
-                    Some(parent) => self.agents.read().await.contains_key(parent),
-                    None => true,
-                };
-                if !parent_ready {
-                    deferred.push(record);
-                    continue;
-                }
-                if let Err(error) = self.spawn_record(record.clone(), false).await {
-                    log::error!("Failed to restore agent {}: {}", record.id, error);
-                }
+        let records = match self.load_nova_sessions().await {
+            Ok(catalog) => catalog
+                .sessions
+                .into_iter()
+                .map(|session| {
+                    let legacy = legacy_by_session.get(&session.session_id);
+                    let cwd = normalize_project_cwd(&session.cwd).unwrap_or(session.cwd);
+                    let id = format!("agent-{}", session.session_id);
+                    (
+                        id.clone(),
+                        PersistedAgent {
+                            id,
+                            parent_agent_id: session
+                                .parent_session_id
+                                .map(|parent| format!("agent-{parent}")),
+                            name: session
+                                .name
+                                .or_else(|| legacy.and_then(|item| item.name.clone())),
+                            cwd,
+                            model: legacy.and_then(|item| item.model.clone()),
+                            provider: legacy.and_then(|item| item.provider.clone()),
+                            args: Vec::new(),
+                            session_id: session.session_id,
+                            session_file: Some(session.session_file),
+                            created_at: session.created_at,
+                            message_count: session.message_count,
+                            depth: legacy.map_or(0, |item| item.depth),
+                        },
+                    )
+                })
+                .collect(),
+            Err(error) if !legacy.is_empty() => {
+                log::warn!(
+                    "Nova session catalog unavailable; restoring legacy Studio records temporarily: {}",
+                    error
+                );
+                legacy
+                    .into_iter()
+                    .map(|record| (record.id.clone(), record))
+                    .collect()
             }
-            if deferred.len() == before {
-                for mut record in deferred.drain(..) {
-                    log::warn!(
-                        "Restoring {} without missing parent {:?}",
-                        record.id,
-                        record.parent_agent_id
-                    );
-                    record.parent_agent_id = None;
-                    let _ = self.spawn_record(record, false).await;
-                }
-            }
-            pending = deferred;
-        }
+            Err(error) => return Err(error),
+        };
+        *self.records.write().await = records;
         Ok(())
+    }
+
+    async fn load_nova_sessions(&self) -> Result<NovaSessionCatalog, String> {
+        let is_js_file = self.cli_path.ends_with(".js");
+        let mut command = if is_js_file {
+            let mut command = tokio::process::Command::new("node");
+            command.arg(&self.cli_path);
+            command
+        } else {
+            tokio::process::Command::new(&self.cli_path)
+        };
+        let output = command
+            .arg("--list-sessions")
+            .arg("--offline")
+            .output()
+            .await
+            .map_err(|error| format!("Failed to query Nova sessions: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Nova session query failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Nova returned invalid session catalog: {error}"))
     }
 
     /// Called once the hub HTTP server has bound its actual port.
@@ -117,17 +191,43 @@ impl AgentManager {
             }
         }
 
+        let cwd = normalize_project_cwd(&request.cwd)?;
         let short_id = Uuid::new_v4().to_string()[..8].to_string();
+        let mut args = request.args.unwrap_or_default();
+        if let Some(parent_id) = request.parent_agent_id.as_ref() {
+            let mut parent_file = self
+                .records
+                .read()
+                .await
+                .get(parent_id)
+                .and_then(|record| record.session_file.clone());
+            if parent_file.is_none() {
+                let parent_session_id = parent_id.strip_prefix("agent-").unwrap_or(parent_id);
+                parent_file = self
+                    .load_nova_sessions()
+                    .await?
+                    .sessions
+                    .into_iter()
+                    .find(|session| session.session_id == parent_session_id)
+                    .map(|session| session.session_file);
+            }
+            if let Some(parent_file) = parent_file {
+                args.push("--parent-session".to_string());
+                args.push(parent_file);
+            }
+        }
         let record = PersistedAgent {
             id: format!("agent-{short_id}"),
             parent_agent_id: request.parent_agent_id,
             name: Some("Nova".to_string()),
-            cwd: request.cwd,
+            cwd,
             model: request.model,
             provider: request.provider,
-            args: request.args.unwrap_or_default(),
+            args,
             session_id: short_id,
+            session_file: None,
             created_at: chrono::Utc::now().to_rfc3339(),
+            message_count: 0,
             depth: request.depth,
         };
         self.spawn_record(record, true).await
@@ -139,7 +239,17 @@ impl AgentManager {
         persist: bool,
     ) -> Result<AgentInfo, String> {
         let agent_id = record.id.clone();
-        let extra_args = record.args.clone();
+        let mut extra_args = record.args.clone();
+        // Restored sessions may live in a configured or project-specific
+        // directory that differs from the current Nova defaults. Opening the
+        // exact file prevents `--session-id` from silently creating a second
+        // session with the same id in another directory.
+        if let Some(session_file) = record.session_file.as_ref() {
+            if !extra_args.iter().any(|arg| arg == "--session") {
+                extra_args.push("--session".to_string());
+                extra_args.push(session_file.clone());
+            }
+        }
 
         let hub_url = self.hub_url.read().await.clone();
         let process = AgentProcess::spawn(
@@ -165,7 +275,6 @@ impl AgentManager {
         let mut rx = process.subscribe();
         let global_tx = self.global_event_tx.clone();
         let records = self.records.clone();
-        let state_path = self.state_path.clone();
         let aid = agent_id.clone();
         tokio::spawn(async move {
             while let Ok(msg) = rx.recv().await {
@@ -175,7 +284,6 @@ impl AgentManager {
                         if let Some(record) = records.write().await.get_mut(&aid) {
                             record.name = Some(name.to_string());
                         }
-                        let _ = persist_records(&state_path, &records).await;
                     }
                 }
                 let _ = global_tx.send((aid.clone(), msg));
@@ -188,7 +296,6 @@ impl AgentManager {
             .insert(agent_id.clone(), Arc::new(process));
         if persist {
             self.records.write().await.insert(agent_id.clone(), record);
-            self.persist().await?;
         }
 
         if let Some(agent) = self.get_process(&agent_id).await {
@@ -208,6 +315,20 @@ impl AgentManager {
         Ok(info)
     }
 
+    pub async fn activate(&self, agent_id: &str) -> Result<AgentInfo, String> {
+        if self.get_process(agent_id).await.is_some() {
+            return self.get_info(agent_id).await;
+        }
+        let record = self
+            .records
+            .read()
+            .await
+            .get(agent_id)
+            .cloned()
+            .ok_or("Agent session not found")?;
+        self.spawn_record(record, false).await
+    }
+
     /// Send a prompt to an agent
     pub async fn send_prompt(
         &self,
@@ -215,6 +336,9 @@ impl AgentManager {
         message: String,
         images: Option<Vec<ImageContent>>,
     ) -> Result<(), String> {
+        if self.get_process(agent_id).await.is_none() {
+            self.activate(agent_id).await?;
+        }
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
 
@@ -330,44 +454,27 @@ impl AgentManager {
         agent.send_command(&cmd)
     }
 
-    /// Stop and remove an agent
+    /// Stop an agent process while retaining its persisted session record.
     pub async fn stop(&self, agent_id: &str) -> Result<(), String> {
         let mut agents = self.agents.write().await;
         let agent = agents.remove(agent_id).ok_or("Agent not found")?;
         agent.stop().await?;
-        self.records.write().await.remove(agent_id);
-        self.persist().await?;
-        let _ = self.global_event_tx.send((
-            agent_id.to_string(),
-            serde_json::json!({
-                "type": "agent_removed",
-            }),
-        ));
         Ok(())
     }
 
     /// List all agents
     pub async fn list(&self) -> Vec<AgentInfo> {
+        let records = self.records.read().await;
         let agents = self.agents.read().await;
         let mut infos = Vec::new();
-        for (id, agent) in agents.iter() {
-            let status = agent.get_status().await;
-            let agent_name = agent.name.lock().await.clone();
-            let msg_count = *agent.message_count.lock().await;
-            let last_err = agent.last_error.lock().await.clone();
-            infos.push(AgentInfo {
-                id: id.clone(),
-                parent_agent_id: agent.parent_agent_id.clone(),
-                name: agent_name,
-                status,
-                cwd: agent.cwd.clone(),
-                model: agent.model.clone(),
-                session_id: Some(agent.session_id.clone()),
-                created_at: agent.created_at.clone(),
-                message_count: msg_count,
-                last_error: last_err,
-            });
+        for (id, record) in records.iter() {
+            if let Some(agent) = agents.get(id) {
+                infos.push(self.build_info(id, &record.cwd, agent).await);
+            } else {
+                infos.push(agent_info_from_record(record));
+            }
         }
+        infos.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         infos
     }
 
@@ -380,25 +487,15 @@ impl AgentManager {
 
     /// Get info about a specific agent
     pub async fn get_info(&self, agent_id: &str) -> Result<AgentInfo, String> {
-        let agents = self.agents.read().await;
-        let agent = agents.get(agent_id).ok_or("Agent not found")?;
-        let status = agent.get_status().await;
-        let cwd = agent.cwd.clone();
-        let agent_name = agent.name.lock().await.clone();
-        let msg_count = *agent.message_count.lock().await;
-        let last_err = agent.last_error.lock().await.clone();
-        Ok(AgentInfo {
-            id: agent_id.to_string(),
-            parent_agent_id: agent.parent_agent_id.clone(),
-            name: agent_name,
-            status,
-            cwd,
-            model: agent.model.clone(),
-            session_id: Some(agent.session_id.clone()),
-            created_at: agent.created_at.clone(),
-            message_count: msg_count,
-            last_error: last_err,
-        })
+        if let Some(agent) = self.agents.read().await.get(agent_id).cloned() {
+            return Ok(self.build_info(agent_id, &agent.cwd, &agent).await);
+        }
+        self.records
+            .read()
+            .await
+            .get(agent_id)
+            .map(agent_info_from_record)
+            .ok_or_else(|| "Agent session not found".to_string())
     }
 
     /// Subscribe to global events (all agents)
@@ -425,28 +522,55 @@ impl AgentManager {
             last_error: None,
         }
     }
+}
 
-    async fn persist(&self) -> Result<(), String> {
-        persist_records(&self.state_path, &self.records).await
+fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
+    AgentInfo {
+        id: record.id.clone(),
+        parent_agent_id: record.parent_agent_id.clone(),
+        name: record.name.clone(),
+        status: crate::rpc_types::AgentStatus::Stopped,
+        cwd: record.cwd.clone(),
+        model: record.model.clone(),
+        session_id: Some(record.session_id.clone()),
+        created_at: record.created_at.clone(),
+        message_count: record.message_count,
+        last_error: None,
     }
 }
 
-async fn persist_records(
-    path: &PathBuf,
-    records: &Arc<RwLock<HashMap<String, PersistedAgent>>>,
-) -> Result<(), String> {
-    let mut values: Vec<_> = records.read().await.values().cloned().collect();
-    values.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    let json = serde_json::to_string_pretty(&values)
-        .map_err(|error| format!("Failed to serialize Studio state: {error}"))?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| format!("Failed to create Studio state directory: {error}"))?;
+fn normalize_project_cwd(cwd: &str) -> Result<String, String> {
+    let expanded = if cwd == "~" {
+        PathBuf::from(
+            std::env::var("HOME").map_err(|_| "HOME is not set; cannot expand '~'".to_string())?,
+        )
+    } else if let Some(relative) = cwd.strip_prefix("~/") {
+        PathBuf::from(
+            std::env::var("HOME").map_err(|_| "HOME is not set; cannot expand '~'".to_string())?,
+        )
+        .join(relative)
+    } else {
+        PathBuf::from(cwd)
+    };
+    if !expanded.is_absolute() {
+        return Err(format!(
+            "Project directory '{cwd}' must be an absolute path or start with '~/'"
+        ));
     }
-    tokio::fs::write(path, json)
-        .await
-        .map_err(|error| format!("Failed to write Studio state: {error}"))
+    let absolute = expanded;
+    let canonical = std::fs::canonicalize(&absolute).map_err(|error| {
+        format!(
+            "Project directory '{}' is not accessible: {error}",
+            absolute.display()
+        )
+    })?;
+    if !canonical.is_dir() {
+        return Err(format!(
+            "Project path '{}' is not a directory",
+            canonical.display()
+        ));
+    }
+    Ok(canonical.to_string_lossy().into_owned())
 }
 
 /// Extract assistant text from a `message_end` message payload.
@@ -467,6 +591,7 @@ fn extract_text_from_message(msg: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rpc_types::AgentStatus;
 
     fn mock_cli_path() -> String {
         format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR"))
@@ -501,6 +626,15 @@ mod tests {
 
         let empty = serde_json::json!({"role": "assistant"});
         assert_eq!(extract_text_from_message(&empty), "");
+    }
+
+    #[test]
+    fn project_paths_are_normalized_to_one_real_directory() {
+        let direct = normalize_project_cwd("/tmp").unwrap();
+        let equivalent = normalize_project_cwd("/tmp/../tmp/").unwrap();
+        assert_eq!(direct, equivalent);
+        assert!(std::path::Path::new(&direct).is_absolute());
+        assert!(normalize_project_cwd("relative/project").is_err());
     }
 
     #[tokio::test]
@@ -570,14 +704,10 @@ mod tests {
         assert_eq!(got.created_at, info.created_at);
 
         manager.stop(&info.id).await.unwrap();
-
-        let (removed_agent_id, removed_event) =
-            recv_lifecycle_event(&mut lifecycle_rx, "agent_removed").await;
-        assert_eq!(removed_agent_id, info.id);
-        assert_eq!(
-            removed_event.get("type").and_then(|value| value.as_str()),
-            Some("agent_removed")
-        );
+        assert_eq!(manager.count().await, 0);
+        let stopped = manager.get_info(&info.id).await.unwrap();
+        assert_eq!(stopped.status, AgentStatus::Stopped);
+        assert_eq!(manager.list().await.len(), 1);
     }
 
     #[tokio::test]
@@ -659,45 +789,33 @@ mod tests {
     async fn restore_preserves_project_session_and_parent_relationship() {
         let state_path =
             std::env::temp_dir().join(format!("nova-studio-restore-{}.json", Uuid::new_v4()));
-        let manager = AgentManager::new(mock_cli_path(), state_path.clone());
-        let parent = manager
-            .spawn(SpawnRequest {
-                cwd: "/tmp".to_string(),
-                parent_agent_id: None,
-                model: Some("test-model".to_string()),
-                provider: None,
-                args: None,
-                depth: 0,
-            })
-            .await
-            .unwrap();
-        let child = manager
-            .spawn(SpawnRequest {
-                cwd: "/tmp".to_string(),
-                parent_agent_id: Some(parent.id.clone()),
-                model: None,
-                provider: None,
-                args: None,
-                depth: 1,
-            })
-            .await
-            .unwrap();
-        drop(manager);
-
         let restored = AgentManager::new(mock_cli_path(), state_path.clone());
         restored.restore().await.unwrap();
         let infos = restored.list().await;
         assert_eq!(infos.len(), 2);
-        let restored_parent = infos.iter().find(|info| info.id == parent.id).unwrap();
-        let restored_child = infos.iter().find(|info| info.id == child.id).unwrap();
-        assert_eq!(restored_parent.cwd, "/tmp");
-        assert_eq!(restored_parent.session_id, parent.session_id);
+        let restored_parent = infos
+            .iter()
+            .find(|info| info.id == "agent-mock-parent")
+            .unwrap();
+        let restored_child = infos
+            .iter()
+            .find(|info| info.id == "agent-mock-child")
+            .unwrap();
+        assert_eq!(restored_parent.cwd, normalize_project_cwd("/tmp").unwrap());
+        assert_eq!(restored_parent.session_id.as_deref(), Some("mock-parent"));
+        assert_eq!(restored_parent.status, AgentStatus::Stopped);
+        assert_eq!(restored_parent.message_count, 2);
         assert_eq!(
             restored_child.parent_agent_id.as_deref(),
-            Some(parent.id.as_str())
+            Some("agent-mock-parent")
         );
-        assert_eq!(restored_child.session_id, child.session_id);
+        assert_eq!(restored_child.session_id.as_deref(), Some("mock-child"));
+        assert_eq!(restored.count().await, 0);
 
-        tokio::fs::remove_file(state_path).await.unwrap();
+        let activated = restored.activate("agent-mock-parent").await.unwrap();
+        assert_eq!(activated.status, AgentStatus::Idle);
+        assert_eq!(restored.count().await, 1);
+
+        let _ = tokio::fs::remove_file(state_path).await;
     }
 }

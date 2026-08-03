@@ -66,6 +66,15 @@ pub async fn get_agent_info(
 }
 
 #[tauri::command]
+pub async fn activate_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<AgentInfo, String> {
+    log::info!("[cmd] activate_agent id={}", agent_id);
+    state.0.activate(&agent_id).await
+}
+
+#[tauri::command]
 pub async fn send_prompt(
     state: State<'_, AgentManagerState>,
     agent_id: String,

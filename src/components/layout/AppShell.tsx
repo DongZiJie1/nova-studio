@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { spawnAgent, sendPrompt, stopAgent } from "../../lib/tauri-bridge";
+import { activateAgent, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
@@ -220,7 +220,6 @@ export function AppShell() {
   const addAgent = useAgentStore((s) => s.addAgent);
   const addUserMessage = useAgentStore((s) => s.addUserMessage);
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
-  const removeAgent = useAgentStore((s) => s.removeAgent);
   const updateStatus = useAgentStore((s) => s.updateStatus);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
@@ -358,14 +357,13 @@ export function AppShell() {
     }
   };
 
-  const handleStopAgent = async () => {
-    if (!activeId) return;
-    try {
-      await stopAgent(activeId);
-      removeAgent(activeId);
-    } catch (err) {
-      console.error("Failed to stop agent:", err);
-    }
+  const handleSelectAgent = (agentId: string) => {
+    setActiveAgent(agentId);
+    void activateAgent(agentId).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("Failed to activate agent:", message);
+      setError(message);
+    });
   };
 
   return (
@@ -515,8 +513,12 @@ export function AppShell() {
         >
           {sidebarOpen && (
             <>
-              <div className="mb-4 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-                Projects
+              <div className="sidebar-section-title">
+                <span className="sidebar-section-icon">
+                  <FolderOpen size={14} />
+                </span>
+                <span>项目</span>
+                <span className="sidebar-project-count">{rootsByProject.size}</span>
               </div>
               <div className="agent-tree flex-1 overflow-y-auto">
                 {Array.from(rootsByProject.entries()).map(([cwd, projectAgents]) => (
@@ -588,7 +590,7 @@ export function AppShell() {
                             childrenByParent={childrenByParent}
                             agentsById={agentsById}
                             activeId={activeId}
-                            onSelect={setActiveAgent}
+                            onSelect={handleSelectAgent}
                             agentNames={agentNames}
                             onEdit={(agent) =>
                               setEditingAgent({
@@ -604,14 +606,6 @@ export function AppShell() {
                   </section>
                 ))}
               </div>
-              {activeId && (
-                <button
-                  onClick={handleStopAgent}
-                  className="mt-3 w-full text-center text-xs text-text-muted hover:text-error transition-colors"
-                >
-                  Stop Agent
-                </button>
-              )}
             </>
           )}
         </aside>
