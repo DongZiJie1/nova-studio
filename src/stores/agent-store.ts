@@ -38,6 +38,7 @@ export interface AgentState {
   model: string | null;
   messages: ChatMessage[];
   createdAt: string;
+  messageCount: number;
   /** Accumulated streaming text for the current assistant turn */
   streamingText: string;
   /** Active tool calls in the current turn */
@@ -84,6 +85,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     model: info.model,
     messages: [],
     createdAt: info.created_at,
+    messageCount: info.message_count,
     streamingText: "",
     activeToolCalls: new Map(),
   };
@@ -98,7 +100,12 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
     cwd: info.cwd,
     model: info.model,
     createdAt: info.created_at,
+    messageCount: Math.max(agent.messageCount, info.message_count),
   };
+}
+
+function sortAgentsByCreatedAt(agents: AgentState[]): AgentState[] {
+  return [...agents].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function messageText(message: PersistedRpcMessage): string {
@@ -133,24 +140,27 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   activeAgentId: null,
 
   addAgent: (agent) =>
-    set((s) => ({
-      agents: s.agents.some((existing) => existing.id === agent.id)
+    set((s) => {
+      const nextAgents = s.agents.some((existing) => existing.id === agent.id)
         ? s.agents.map((existing) =>
             existing.id === agent.id ? { ...existing, ...agent } : existing,
           )
-        : [...s.agents, agent],
-      activeAgentId: s.activeAgentId ?? agent.id,
-    })),
+        : [...s.agents, agent];
+      return {
+        agents: sortAgentsByCreatedAt(nextAgents),
+        activeAgentId: s.activeAgentId ?? agent.id,
+      };
+    }),
 
   syncAgents: (infos) =>
     set((s) => {
       const currentById = new Map(s.agents.map((agent) => [agent.id, agent]));
-      const agents = infos.map((info) => {
+      const agents = sortAgentsByCreatedAt(infos.map((info) => {
         const current = currentById.get(info.id);
         return current
           ? mergeAgentInfo(current, info)
           : agentStateFromInfo(info);
-      });
+      }));
       return {
         agents,
         activeAgentId:
@@ -185,7 +195,13 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     };
     set((s) => ({
       agents: s.agents.map((a) =>
-        a.id === agentId ? { ...a, messages: [...a.messages, msg] } : a,
+        a.id === agentId
+          ? {
+              ...a,
+              messages: [...a.messages, msg],
+              messageCount: Math.max(a.messageCount, a.messages.length + 1),
+            }
+          : a,
       ),
     }));
   },
@@ -204,6 +220,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           ? {
               ...a,
               messages: [...a.messages, msg],
+              messageCount: Math.max(a.messageCount, a.messages.length + 1),
               streamingText: "",
               activeToolCalls: new Map(),
             }
@@ -227,11 +244,13 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           ? mergeAgentInfo(existing, event.info)
           : agentStateFromInfo(event.info);
         return {
-          agents: existing
-            ? s.agents.map((agent) =>
-                agent.id === agentId ? nextAgent : agent,
-              )
-            : [...s.agents, nextAgent],
+          agents: sortAgentsByCreatedAt(
+            existing
+              ? s.agents.map((agent) =>
+                  agent.id === agentId ? nextAgent : agent,
+                )
+              : [...s.agents, nextAgent],
+          ),
           activeAgentId: s.activeAgentId ?? agentId,
         };
       });
@@ -270,20 +289,20 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         ? (event.data.messages as PersistedRpcMessage[])
         : [];
       set((s) => ({
-        agents: s.agents.map((agent) =>
-          agent.id === agentId
-            ? {
-                ...agent,
-                // A newly spawned agent asks for history before its first
-                // prompt. That empty response can arrive after the optimistic
-                // user message, so never replace messages already rendered.
-                messages:
-                  agent.messages.length > 0
-                    ? agent.messages
-                    : hydrateMessages(messages),
-              }
-            : agent,
-        ),
+        agents: s.agents.map((agent) => {
+          if (agent.id !== agentId) return agent;
+          // A newly spawned agent asks for history before its first prompt.
+          // That empty response can arrive after the optimistic user message,
+          // so never replace messages already rendered.
+          const hydrated = agent.messages.length > 0
+            ? agent.messages
+            : hydrateMessages(messages);
+          return {
+            ...agent,
+            messages: hydrated,
+            messageCount: Math.max(agent.messageCount, hydrated.length),
+          };
+        }),
       }));
       return;
     }
@@ -342,6 +361,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
                 timestamp: Date.now(),
               },
             ],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
             streamingText: "",
           };
         }
@@ -394,6 +414,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
                 timestamp: Date.now(),
               },
             ],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
             streamingText: "",
             activeToolCalls: new Map(),
           };

@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { activateAgent, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
+import { activateAgent, listAgents, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
@@ -218,8 +218,10 @@ export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
   const addAgent = useAgentStore((s) => s.addAgent);
+  const syncAgents = useAgentStore((s) => s.syncAgents);
   const addUserMessage = useAgentStore((s) => s.addUserMessage);
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
+  const updateAgent = useAgentStore((s) => s.updateAgent);
   const updateStatus = useAgentStore((s) => s.updateStatus);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
@@ -283,7 +285,9 @@ export function AppShell() {
     projectAgents.push(agent);
     rootsByProject.set(agent.cwd, projectAgents);
   }
-  const hasMessages = (activeAgent?.messages.length ?? 0) > 0;
+  const hasMessages =
+    (activeAgent?.messages.length ?? 0) > 0 ||
+    (activeAgent?.messageCount ?? 0) > 0;
   const streamingText = activeAgent?.streamingText ?? "";
   const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
   const messagesSize = activeAgent?.messages.length ?? 0;
@@ -321,6 +325,7 @@ export function AppShell() {
           model: info.model,
           messages: [],
           createdAt: info.created_at,
+          messageCount: info.message_count,
           streamingText: "",
           activeToolCalls: new Map(),
         };
@@ -359,11 +364,34 @@ export function AppShell() {
 
   const handleSelectAgent = (agentId: string) => {
     setActiveAgent(agentId);
-    void activateAgent(agentId).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("Failed to activate agent:", message);
-      setError(message);
-    });
+    void activateAgent(agentId)
+      .then((info) => {
+        updateAgent(agentId, {
+          status: info.status,
+          name: info.name,
+          model: info.model,
+          messageCount: Math.max(info.message_count, agentsById.get(agentId)?.messageCount ?? 0),
+        });
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("Failed to activate agent:", message);
+        setError(message);
+      });
+  };
+
+  const handleToggleSidebar = () => {
+    const willOpen = !sidebarOpen;
+    setSidebarOpen(willOpen);
+    if (willOpen) {
+      void listAgents()
+        .then(syncAgents)
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error("Failed to refresh sessions:", message);
+          setError(message);
+        });
+    }
   };
 
   return (
@@ -462,7 +490,7 @@ export function AppShell() {
                 Home
               </button>
               <button
-                onClick={() => setSidebarOpen((open) => !open)}
+                onClick={handleToggleSidebar}
                 className={sidebarOpen ? "top-nav-active" : ""}
                 style={{
                   display: "flex",
@@ -670,6 +698,18 @@ export function AppShell() {
             ) : (
               /* Messages view */
               <div className="w-full max-w-3xl py-6">
+                {activeAgent && activeAgent.messages.length === 0 && (
+                  <div
+                    style={{
+                      padding: "28px 0",
+                      color: "#7d8398",
+                      fontSize: 13,
+                      textAlign: "center",
+                    }}
+                  >
+                    Loading conversation…
+                  </div>
+                )}
                 {activeAgent?.messages.map((msg) => (
                   <ChatMessage key={msg.id} message={msg} />
                 ))}
@@ -703,18 +743,24 @@ export function AppShell() {
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
-              {/* Project path */}
-              {activeAgent && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "8px 16px",
-                    fontSize: 12,
-                    color: "#6b7186",
-                  }}
-                >
+              {/* Reserve the same row on Home so the centered hero never jumps when switching agents. */}
+              <div
+                aria-hidden={!activeAgent}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 30,
+                  padding: "8px 16px",
+                  boxSizing: "border-box",
+                  fontSize: 12,
+                  color: "#6b7186",
+                  visibility: activeAgent ? "visible" : "hidden",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                }}
+              >
+                {activeAgent && (
                   <svg
                     width="14"
                     height="14"
@@ -729,9 +775,11 @@ export function AppShell() {
                       d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
                     />
                   </svg>
-                  <span>{activeAgent.cwd}</span>
-                </div>
-              )}
+                )}
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {activeAgent?.cwd ?? ""}
+                </span>
+              </div>
 
               {/* Input card */}
               <div className="nova-input" style={{ overflow: "hidden" }}>

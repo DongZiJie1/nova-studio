@@ -172,6 +172,52 @@ impl AgentManager {
             .map_err(|error| format!("Nova returned invalid session catalog: {error}"))
     }
 
+    /// Merge Nova's current session catalog into the in-memory Studio view.
+    ///
+    /// Nova is the source of truth and may create sessions outside this Studio
+    /// process, so a one-time snapshot taken during startup is not sufficient.
+    pub async fn refresh_sessions(&self) -> Result<(), String> {
+        let catalog = self.load_nova_sessions().await?;
+        let mut records = self.records.write().await;
+        for session in catalog.sessions {
+            let id = format!("agent-{}", session.session_id);
+            let parent_agent_id = session
+                .parent_session_id
+                .map(|parent| format!("agent-{parent}"));
+            let cwd = normalize_project_cwd(&session.cwd).unwrap_or(session.cwd);
+
+            if let Some(record) = records.get_mut(&id) {
+                record.parent_agent_id = parent_agent_id;
+                if session.name.is_some() {
+                    record.name = session.name;
+                }
+                record.cwd = cwd;
+                record.session_file = Some(session.session_file);
+                record.created_at = session.created_at;
+                record.message_count = session.message_count;
+            } else {
+                records.insert(
+                    id.clone(),
+                    PersistedAgent {
+                        id,
+                        parent_agent_id,
+                        name: session.name,
+                        cwd,
+                        model: None,
+                        provider: None,
+                        args: Vec::new(),
+                        session_id: session.session_id,
+                        session_file: Some(session.session_file),
+                        created_at: session.created_at,
+                        message_count: session.message_count,
+                        depth: 0,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Called once the hub HTTP server has bound its actual port.
     pub async fn set_hub_url(&self, url: String) {
         *self.hub_url.write().await = url;
@@ -316,7 +362,10 @@ impl AgentManager {
     }
 
     pub async fn activate(&self, agent_id: &str) -> Result<AgentInfo, String> {
-        if self.get_process(agent_id).await.is_some() {
+        if let Some(agent) = self.get_process(agent_id).await {
+            // The frontend can be reloaded while the process remains alive.
+            // Always replay history when the user selects an existing process.
+            agent.send_command(&RpcCommand::GetMessages { id: None })?;
             return self.get_info(agent_id).await;
         }
         let record = self

@@ -50,6 +50,11 @@ pub async fn stop_agent(
 
 #[tauri::command]
 pub async fn list_agents(state: State<'_, AgentManagerState>) -> Result<Vec<AgentInfo>, String> {
+    if let Err(error) = state.0.refresh_sessions().await {
+        // Keep showing the last known snapshot if Nova is temporarily
+        // unavailable. A later list call can reconcile it again.
+        log::warn!("[cmd] unable to refresh Nova sessions: {}", error);
+    }
     let list = state.0.list().await;
     state.0.request_all_messages().await;
     log::debug!("[cmd] list_agents -> {} agents", list.len());
