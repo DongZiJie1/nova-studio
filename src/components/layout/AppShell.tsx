@@ -338,6 +338,14 @@ export function AppShell() {
   const welcomeProjectCwd =
     pendingProjectCwd || defaultCwd || agents[0]?.cwd || "~";
   const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
+  const conversationParent = activeAgent?.parentAgentId
+    ? agentsById.get(activeAgent.parentAgentId)
+    : undefined;
+  const conversationUserLabel = conversationParent
+    ? agentDisplayName(conversationParent, agentNames)
+    : activeAgent?.parentAgentId
+      ? (agentNames[activeAgent.parentAgentId] ?? "Parent Agent")
+      : "You";
   const availableProjectCwds = Array.from(
     new Set([
       ...rootsByProject.keys(),
@@ -884,7 +892,7 @@ export function AppShell() {
                     id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
                     style={{ scrollMarginTop: 24 }}
                   >
-                    <ChatMessage message={msg} />
+                    <ChatMessage message={msg} userLabel={conversationUserLabel} />
                   </div>
                 ))}
 
