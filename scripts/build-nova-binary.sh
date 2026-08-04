@@ -78,11 +78,11 @@ $BUN_CMD build --compile "$ENTRY" --outfile "$TMPDIR/$BINARY_NAME-bin"
 BINARIES_DIR="$SCRIPT_DIR/../src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
-cp "$TMPDIR/$BINARY_NAME-bin" "$BINARIES_DIR/$BINARY_NAME-$TARGET"
-
-# On Windows, add .exe extension
+# On Windows, bun outputs .exe and Git Bash treats no-ext and .exe as same file
 if [[ "$TARGET" == *windows* ]]; then
-    mv "$BINARIES_DIR/$BINARY_NAME-$TARGET" "$BINARIES_DIR/$BINARY_NAME-$TARGET.exe"
+    cp "$TMPDIR/$BINARY_NAME-bin.exe" "$BINARIES_DIR/$BINARY_NAME-$TARGET.exe"
+else
+    cp "$TMPDIR/$BINARY_NAME-bin" "$BINARIES_DIR/$BINARY_NAME-$TARGET"
 fi
 
 # Copy resource files needed by the bun-compiled binary at runtime:
