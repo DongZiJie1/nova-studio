@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:nova": "./scripts/build-nova-binary.sh"
+    "build:nova": "bash ./scripts/build-nova-binary.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

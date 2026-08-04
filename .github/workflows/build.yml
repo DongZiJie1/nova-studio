@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -46,6 +49,7 @@ jobs:
         run: npm ci
 
       - name: Build nova binary (latest npm)
+        shell: bash
         run: npm run build:nova
         env:
           BUN_CMD: ${{ matrix.bun_path }}
@@ -54,7 +58,6 @@ jobs:
         id: nova
         shell: bash
         run: |
-          # Build script installs to a temp dir, query npm directly
           VER=$(npm view @dongzijie1/nova version 2>/dev/null || echo "unknown")
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
