@@ -4,6 +4,7 @@ import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { activateAgent, listAgents, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
@@ -657,7 +658,7 @@ export function AppShell() {
           onMouseEnter={handleSidebarHoverEnter}
           onMouseLeave={handleSidebarHoverLeave}
           className={`glass-panel absolute z-20 top-0 bottom-3 left-[56px] p-4 flex flex-col ${
-            sidebarOpen ? "w-[340px]" : "hidden"
+            sidebarOpen ? "w-[280px]" : "hidden"
           }`}
         >
           {sidebarOpen && (
@@ -771,7 +772,7 @@ export function AppShell() {
             {!hasMessages ? (
               /* Empty state — tagline */
               <div
-                className="text-center max-w-2xl w-full animate-fade-in-up"
+                className="text-center max-w-4xl w-full animate-fade-in-up"
                 style={{ marginTop: "4vh" }}
               >
                 {/* Floating sparkle */}
@@ -803,7 +804,35 @@ export function AppShell() {
                     lineHeight: 1.15,
                   }}
                 >
-                  Ship faster with Nova.
+                  Ship faster with Nova in{" "}
+                  <span
+                    style={{
+                      position: "relative",
+                      display: "inline-block",
+                    }}
+                  >
+                    <span
+                      style={{
+                        background: "linear-gradient(135deg, #a78bfa, #818cf8, #60a5fa)",
+                        WebkitBackgroundClip: "text",
+                        WebkitTextFillColor: "transparent",
+                        textShadow: "0 0 40px rgba(129, 140, 248, 0.5)",
+                      }}
+                    >
+                      {projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd}
+                    </span>
+                    <span
+                      style={{
+                        position: "absolute",
+                        bottom: -2,
+                        left: 0,
+                        right: 0,
+                        height: 2,
+                        background: "linear-gradient(90deg, #818cf8, #60a5fa)",
+                        borderRadius: 1,
+                      }}
+                    />
+                  </span>.
                 </h2>
                 <p
                   style={{
@@ -900,125 +929,8 @@ export function AppShell() {
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
-              {/* Every conversation, including Home, belongs to a project. */}
-              <div ref={projectPickerRef} style={{ position: "relative" }}>
-                <button
-                  type="button"
-                  onClick={() => setProjectPickerOpen((open) => !open)}
-                  title="切换项目"
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    height: 30,
-                    padding: "8px 16px",
-                    boxSizing: "border-box",
-                    fontSize: 12,
-                    color: projectPickerOpen ? "#aeb5d4" : "#6b7186",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <FolderOpen size={14} style={{ flexShrink: 0 }} />
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {inputProjectCwd}
-                  </span>
-                  <ChevronDown size={13} style={{ flexShrink: 0, marginLeft: "auto" }} />
-                </button>
-                {projectPickerOpen && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 8,
-                      right: 8,
-                      bottom: 34,
-                      zIndex: 40,
-                      padding: 6,
-                      borderRadius: 12,
-                      background: "rgba(18, 20, 31, 0.98)",
-                      border: "1px solid rgba(151, 159, 204, 0.18)",
-                      boxShadow: "0 16px 42px rgba(0, 0, 0, 0.42)",
-                      backdropFilter: "blur(18px)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: "6px 9px 7px",
-                        color: "#6f758a",
-                        fontSize: 11,
-                        fontWeight: 600,
-                        letterSpacing: "0.06em",
-                      }}
-                    >
-                      选择项目
-                    </div>
-                    {availableProjectCwds.map((cwd) => {
-                      const selected = cwd === inputProjectCwd;
-                      return (
-                        <button
-                          key={cwd}
-                          type="button"
-                          onClick={() => {
-                            setPendingProjectCwd(cwd);
-                            setActiveAgent(null);
-                            setProjectPickerOpen(false);
-                          }}
-                          title={cwd}
-                          style={{
-                            width: "100%",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            padding: "9px 10px",
-                            borderRadius: 8,
-                            color: selected ? "#e5e8ff" : "#a2a8bb",
-                            background: selected ? "rgba(124, 133, 224, 0.14)" : "transparent",
-                            border: "none",
-                            cursor: "pointer",
-                            textAlign: "left",
-                          }}
-                        >
-                          <FolderOpen
-                            size={15}
-                            style={{ color: selected ? "#aeb6ff" : "#777e95", flexShrink: 0 }}
-                          />
-                          <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-                            <span
-                              style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                fontSize: 13,
-                              }}
-                            >
-                              {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
-                            </span>
-                            <span
-                              style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                color: "#656b7f",
-                                fontSize: 11,
-                              }}
-                            >
-                              {cwd}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
               {/* Input card */}
-              <div className="nova-input" style={{ overflow: "hidden" }}>
+              <div className="nova-input" style={{ overflow: "visible" }}>
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -1108,16 +1020,141 @@ export function AppShell() {
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 10,
+                      gap: 8,
+                      position: "relative",
                     }}
                   >
+                    <button
+                      type="button"
+                      onClick={() => setProjectPickerOpen((open) => !open)}
+                      title="切换项目"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "5px 10px",
+                        borderRadius: 8,
+                        fontSize: 11.5,
+                        color: projectPickerOpen ? "#d5d9ff" : "#8a90a4",
+                        background: projectPickerOpen ? "rgba(129, 140, 248, 0.12)" : "rgba(255, 255, 255, 0.05)",
+                        border: "1px solid rgba(255, 255, 255, 0.08)",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                        maxWidth: 180,
+                        overflow: "hidden",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!projectPickerOpen) {
+                          e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)";
+                          e.currentTarget.style.color = "#b9c1ff";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!projectPickerOpen) {
+                          e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                          e.currentTarget.style.color = "#8a90a4";
+                        }
+                      }}
+                    >
+                      <FolderOpen size={12} style={{ flexShrink: 0 }} />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd}
+                      </span>
+                    </button>
+                    {projectPickerOpen && (
+                      <div
+                        ref={projectPickerRef}
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          bottom: 44,
+                          zIndex: 40,
+                          padding: 4,
+                          borderRadius: 10,
+                          background: "rgba(18, 20, 31, 0.98)",
+                          border: "1px solid rgba(151, 159, 204, 0.18)",
+                          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.42)",
+                          backdropFilter: "blur(18px)",
+                          minWidth: 240,
+                          width: "max-content",
+                          maxWidth: 500,
+                        }}
+                      >
+                        <div
+                          style={{
+                            padding: "4px 8px 5px",
+                            color: "#6f758a",
+                            fontSize: 10,
+                            fontWeight: 600,
+                            letterSpacing: "0.06em",
+                          }}
+                        >
+                          选择项目
+                        </div>
+                        {availableProjectCwds.map((cwd) => {
+                          const selected = cwd === inputProjectCwd;
+                          return (
+                            <button
+                              key={cwd}
+                              type="button"
+                              onClick={() => {
+                                setPendingProjectCwd(cwd);
+                                setActiveAgent(null);
+                                setProjectPickerOpen(false);
+                              }}
+                              title={cwd}
+                              className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
+                            >
+                              <FolderOpen
+                                size={12}
+                                style={{ color: selected ? "#aeb6ff" : "#777e95", flexShrink: 0 }}
+                              />
+                              <span
+                                style={{
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  fontSize: 12,
+                                }}
+                              >
+                                {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const selected = await open({
+                              directory: true,
+                              multiple: false,
+                              title: "选择项目文件夹",
+                            });
+                            if (selected) {
+                              setPendingProjectCwd(selected);
+                              setActiveAgent(null);
+                              setProjectPickerOpen(false);
+                            }
+                          }}
+                          className="project-picker-option"
+                          style={{
+                            borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+                            marginTop: 4,
+                            paddingTop: 8,
+                          }}
+                        >
+                          <Plus size={12} style={{ color: "#a5b0fc", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, color: "#a5b0fc" }}>创建新项目</span>
+                        </button>
+                      </div>
+                    )}
                     <button
                       style={{
                         display: "flex",
                         alignItems: "center",
                         gap: 6,
-                        padding: "6px 13px",
-                        borderRadius: 999,
+                        padding: "5px 11px",
+                        borderRadius: 8,
                         fontSize: 12.5,
                         color: "#9aa0b4",
                         background: "rgba(255, 255, 255, 0.05)",

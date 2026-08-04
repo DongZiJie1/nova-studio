@@ -1287,6 +1287,38 @@ body {
   border-color: rgba(248, 113, 113, 0.4);
 }
 
+/* ─── Project picker option ─── */
+
+.project-picker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 7px;
+  color: #a2a8bb;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  font-size: 12.5px;
+}
+
+.project-picker-option:hover {
+  background: rgba(129, 140, 248, 0.12);
+  color: #e5e8ff;
+}
+
+.project-picker-option-selected {
+  color: #e5e8ff;
+  background: rgba(124, 133, 224, 0.14);
+}
+
+.project-picker-option-selected:hover {
+  background: rgba(124, 133, 224, 0.22);
+}
+
 .conversation-minimap {
   position: absolute;
   z-index: 18;
