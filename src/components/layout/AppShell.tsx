@@ -13,11 +13,7 @@ import {
   Square,
   Home,
   FolderOpen,
-  Code,
   Pencil,
-  Lightbulb,
-  Bug,
-  BarChart3,
   Sparkles,
   ChevronDown,
   ChevronRight,
@@ -31,6 +27,47 @@ import {
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
 const AGENT_NAMES_KEY = "nova-studio.agent-names";
 const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
+const SIDEBAR_LEFT = 56;
+const SIDEBAR_WIDTH = 340;
+const SIDEBAR_CONTENT_GAP = 20;
+const CHAT_COLUMN_MAX_WIDTH = 768;
+const PAGE_HORIZONTAL_PADDING = 24;
+const CONVERSATION_MINIMAP_PAIR_THRESHOLD = 6;
+
+interface ConversationPair {
+  userMessageId: string;
+  userText: string;
+  assistantText: string;
+}
+
+function buildConversationPairs(messages: AgentState["messages"]): ConversationPair[] {
+  const pairs: ConversationPair[] = [];
+  for (const message of messages) {
+    if (message.role === "user") {
+      pairs.push({
+        userMessageId: message.id,
+        userText: message.content,
+        assistantText: "",
+      });
+    } else if (message.role === "assistant") {
+      const currentPair = pairs[pairs.length - 1];
+      if (currentPair && !currentPair.assistantText) {
+        currentPair.assistantText = message.content;
+      }
+    }
+  }
+  return pairs;
+}
+
+function hasSidebarClearance(viewportWidth: number): boolean {
+  const contentWidth = Math.min(
+    CHAT_COLUMN_MAX_WIDTH,
+    Math.max(0, viewportWidth - PAGE_HORIZONTAL_PADDING * 2),
+  );
+  const contentLeft = (viewportWidth - contentWidth) / 2;
+  const sidebarRight = SIDEBAR_LEFT + SIDEBAR_WIDTH;
+  return sidebarRight + SIDEBAR_CONTENT_GAP <= contentLeft;
+}
 
 function loadProjectNames(): Record<string, string> {
   try {
@@ -60,12 +97,12 @@ function agentDisplayName(agent: AgentState, agentNames: Record<string, string> 
   if (agentNames[agent.id]) return agentNames[agent.id];
   if (agent.name) return agent.name;
   if (!agent.parentAgentId) return "Nova";
-  return agent.model ?? `Agent ${agent.id.replace(/^agent-/, "")}`;
+  return agent.model ?? "Agent";
 }
 
 function agentSubtitle(agent: AgentState): string {
   if (!agent.parentAgentId) {
-    return `Main coordinator · ${agent.id.replace(/^agent-/, "")}`;
+    return "Main coordinator";
   }
   if (agent.status === "streaming") return "Working on delegated task";
   if (agent.status === "starting") return "Starting delegated agent";
@@ -232,6 +269,7 @@ export function AppShell() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
   const [agentNames, setAgentNames] = useState<Record<string, string>>(
@@ -245,6 +283,9 @@ export function AppShell() {
     () => new Set(),
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectPickerRef = useRef<HTMLDivElement>(null);
+  const sidebarHoverModeRef = useRef(false);
+  const sidebarHoverCloseTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
@@ -288,7 +329,23 @@ export function AppShell() {
   const hasMessages =
     (activeAgent?.messages.length ?? 0) > 0 ||
     (activeAgent?.messageCount ?? 0) > 0;
+  // Home is a new conversation inside a concrete project, never a
+  // project-less scratchpad. Prefer an explicitly selected/default project,
+  // then the most recently used project, and finally the user's home folder.
+  const welcomeProjectCwd =
+    pendingProjectCwd || defaultCwd || agents[0]?.cwd || "~";
+  const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
+  const availableProjectCwds = Array.from(
+    new Set([
+      ...rootsByProject.keys(),
+      ...(defaultCwd ? [defaultCwd] : []),
+      inputProjectCwd,
+    ]),
+  );
   const streamingText = activeAgent?.streamingText ?? "";
+  const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
+  const showConversationMinimap =
+    conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
   const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
   const messagesSize = activeAgent?.messages.length ?? 0;
 
@@ -297,6 +354,43 @@ export function AppShell() {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messagesSize, streamingText, toolCallsSize]);
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    const closePicker = (event: MouseEvent) => {
+      if (!projectPickerRef.current?.contains(event.target as Node)) {
+        setProjectPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [projectPickerOpen]);
+
+  useEffect(() => {
+    const keepSidebarClear = () => {
+      if (!hasSidebarClearance(window.innerWidth)) {
+        setSidebarOpen(false);
+        sidebarHoverModeRef.current = false;
+      }
+    };
+    keepSidebarClear();
+    window.addEventListener("resize", keepSidebarClear);
+    const observer = new ResizeObserver(keepSidebarClear);
+    observer.observe(document.documentElement);
+    return () => {
+      window.removeEventListener("resize", keepSidebarClear);
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (sidebarHoverCloseTimerRef.current !== null) {
+        window.clearTimeout(sidebarHoverCloseTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const handleSubmit = async () => {
     const text = input.trim();
@@ -309,7 +403,7 @@ export function AppShell() {
 
       // Spawn agent if none exists
       if (!agentId) {
-        const cwd = (pendingProjectCwd ?? defaultCwd) || "~";
+        const cwd = welcomeProjectCwd;
         const info = await spawnAgent(
           cwd,
           defaultModel || undefined,
@@ -382,6 +476,10 @@ export function AppShell() {
 
   const handleToggleSidebar = () => {
     const willOpen = !sidebarOpen;
+    if (willOpen && !hasSidebarClearance(window.innerWidth)) {
+      setSidebarOpen(false);
+      return;
+    }
     setSidebarOpen(willOpen);
     if (willOpen) {
       void listAgents()
@@ -392,6 +490,26 @@ export function AppShell() {
           setError(message);
         });
     }
+  };
+
+  const handleSidebarHoverEnter = () => {
+    if (sidebarHoverCloseTimerRef.current !== null) {
+      window.clearTimeout(sidebarHoverCloseTimerRef.current);
+      sidebarHoverCloseTimerRef.current = null;
+    }
+    if (!hasSidebarClearance(window.innerWidth)) {
+      sidebarHoverModeRef.current = true;
+      setSidebarOpen(true);
+    }
+  };
+
+  const handleSidebarHoverLeave = () => {
+    if (!sidebarHoverModeRef.current) return;
+    sidebarHoverCloseTimerRef.current = window.setTimeout(() => {
+      setSidebarOpen(false);
+      sidebarHoverModeRef.current = false;
+      sidebarHoverCloseTimerRef.current = null;
+    }, 100);
   };
 
   return (
@@ -448,11 +566,11 @@ export function AppShell() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "0 28px",
+            padding: "0 18px 0 12px",
             zIndex: 20,
           }}
         >
-          {/* Logo */}
+          {/* Primary navigation stays at the far-left edge; branding follows it. */}
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
             <div
               style={{
@@ -468,15 +586,31 @@ export function AppShell() {
               <Sparkles size={17} style={{ color: "#b9c1ff" }} />
               Nova Studio
             </div>
-            <nav style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <nav
+              aria-label="Primary navigation"
+              style={{
+                position: "fixed",
+                zIndex: 32,
+                left: 8,
+                top: 72,
+                display: "flex",
+                width: 48,
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
               <button
                 onClick={() => setActiveAgent(null)}
+                title="Home"
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 7,
-                  padding: "7px 16px",
-                  borderRadius: 999,
+                  justifyContent: "center",
+                  width: 48,
+                  height: 42,
+                  padding: 0,
+                  borderRadius: 12,
                   fontSize: 13,
                   fontWeight: activeId === null ? 500 : 400,
                   color: activeId === null ? "#eef0f8" : "#7b8197",
@@ -487,17 +621,21 @@ export function AppShell() {
                 }}
               >
                 <Home size={15} />
-                Home
               </button>
               <button
                 onClick={handleToggleSidebar}
+                onMouseEnter={handleSidebarHoverEnter}
+                onMouseLeave={handleSidebarHoverLeave}
+                title="Projects"
                 className={sidebarOpen ? "top-nav-active" : ""}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 7,
-                  padding: "7px 16px",
-                  borderRadius: 999,
+                  justifyContent: "center",
+                  width: 48,
+                  height: 42,
+                  padding: 0,
+                  borderRadius: 12,
                   fontSize: 13,
                   color: sidebarOpen ? "#eef0f8" : "#7b8197",
                   background: sidebarOpen ? "rgba(255, 255, 255, 0.07)" : "transparent",
@@ -506,36 +644,19 @@ export function AppShell() {
                 }}
               >
                 {sidebarOpen ? <PanelLeftClose size={15} /> : <FolderOpen size={15} />}
-                Projects
               </button>
             </nav>
           </div>
 
-          {/* User avatar */}
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              background: "rgba(255, 255, 255, 0.07)",
-              border: "1px solid rgba(255, 255, 255, 0.1)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 13,
-              fontWeight: 600,
-              color: "#9aa0b4",
-            }}
-          >
-            N
-          </div>
         </div>
 
         {/* Body row: sidebar + main */}
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className={`glass-panel absolute z-20 top-0 bottom-3 left-3 p-4 flex flex-col ${
+          onMouseEnter={handleSidebarHoverEnter}
+          onMouseLeave={handleSidebarHoverLeave}
+          className={`glass-panel absolute z-20 top-0 bottom-3 left-[56px] p-4 flex flex-col ${
             sidebarOpen ? "w-[340px]" : "hidden"
           }`}
         >
@@ -639,7 +760,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className="w-full flex flex-col overflow-hidden">
+        <main className="relative w-full flex flex-col overflow-hidden">
           {/* Content area */}
           <div
             ref={scrollRef}
@@ -711,7 +832,13 @@ export function AppShell() {
                   </div>
                 )}
                 {activeAgent?.messages.map((msg) => (
-                  <ChatMessage key={msg.id} message={msg} />
+                  <div
+                    key={msg.id}
+                    id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
+                    style={{ scrollMarginTop: 24 }}
+                  >
+                    <ChatMessage message={msg} />
+                  </div>
                 ))}
 
                 {/* Active tool calls */}
@@ -733,6 +860,36 @@ export function AppShell() {
             )}
           </div>
 
+          {showConversationMinimap && (
+            <nav
+              className="conversation-minimap"
+              aria-label="Conversation navigation"
+              style={{
+                height: Math.min(420, Math.max(150, conversationPairs.length * 13)),
+              }}
+            >
+              {conversationPairs.map((pair, index) => (
+                <button
+                  key={pair.userMessageId}
+                  type="button"
+                  className="conversation-minimap-step"
+                  aria-label={`跳转到第 ${index + 1} 轮对话`}
+                  onClick={() => {
+                    document
+                      .getElementById(`conversation-turn-${pair.userMessageId}`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  <span className="conversation-minimap-tick" />
+                  <span className="conversation-minimap-preview" role="tooltip">
+                    <strong>{pair.userText}</strong>
+                    <span>{pair.assistantText || "等待模型回答…"}</span>
+                  </span>
+                </button>
+              ))}
+            </nav>
+          )}
+
           {/* Input area */}
           <div
             style={{
@@ -743,42 +900,121 @@ export function AppShell() {
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
-              {/* Reserve the same row on Home so the centered hero never jumps when switching agents. */}
-              <div
-                aria-hidden={!activeAgent}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  height: 30,
-                  padding: "8px 16px",
-                  boxSizing: "border-box",
-                  fontSize: 12,
-                  color: "#6b7186",
-                  visibility: activeAgent ? "visible" : "hidden",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                }}
-              >
-                {activeAgent && (
-                  <svg
-                    width="14"
-                    height="14"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
+              {/* Every conversation, including Home, belongs to a project. */}
+              <div ref={projectPickerRef} style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setProjectPickerOpen((open) => !open)}
+                  title="切换项目"
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    height: 30,
+                    padding: "8px 16px",
+                    boxSizing: "border-box",
+                    fontSize: 12,
+                    color: projectPickerOpen ? "#aeb5d4" : "#6b7186",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <FolderOpen size={14} style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {inputProjectCwd}
+                  </span>
+                  <ChevronDown size={13} style={{ flexShrink: 0, marginLeft: "auto" }} />
+                </button>
+                {projectPickerOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 8,
+                      right: 8,
+                      bottom: 34,
+                      zIndex: 40,
+                      padding: 6,
+                      borderRadius: 12,
+                      background: "rgba(18, 20, 31, 0.98)",
+                      border: "1px solid rgba(151, 159, 204, 0.18)",
+                      boxShadow: "0 16px 42px rgba(0, 0, 0, 0.42)",
+                      backdropFilter: "blur(18px)",
+                    }}
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
-                    />
-                  </svg>
+                    <div
+                      style={{
+                        padding: "6px 9px 7px",
+                        color: "#6f758a",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        letterSpacing: "0.06em",
+                      }}
+                    >
+                      选择项目
+                    </div>
+                    {availableProjectCwds.map((cwd) => {
+                      const selected = cwd === inputProjectCwd;
+                      return (
+                        <button
+                          key={cwd}
+                          type="button"
+                          onClick={() => {
+                            setPendingProjectCwd(cwd);
+                            setActiveAgent(null);
+                            setProjectPickerOpen(false);
+                          }}
+                          title={cwd}
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: "9px 10px",
+                            borderRadius: 8,
+                            color: selected ? "#e5e8ff" : "#a2a8bb",
+                            background: selected ? "rgba(124, 133, 224, 0.14)" : "transparent",
+                            border: "none",
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                        >
+                          <FolderOpen
+                            size={15}
+                            style={{ color: selected ? "#aeb6ff" : "#777e95", flexShrink: 0 }}
+                          />
+                          <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                fontSize: 13,
+                              }}
+                            >
+                              {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
+                            </span>
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                color: "#656b7f",
+                                fontSize: 11,
+                              }}
+                            >
+                              {cwd}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {activeAgent?.cwd ?? ""}
-                </span>
               </div>
 
               {/* Input card */}
@@ -943,99 +1179,6 @@ export function AppShell() {
                 </div>
               </div>
 
-              {/* Action buttons */}
-              {!hasMessages && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    marginTop: 18,
-                  }}
-                >
-                  {[
-                    { icon: Code, label: "Code", color: "#60a5fa" },
-                    { icon: Pencil, label: "Design", color: "#a78bfa" },
-                    { icon: Lightbulb, label: "Brainstorm", color: "#fbbf24" },
-                    { icon: Bug, label: "Debug", color: "#f87171" },
-                    { icon: BarChart3, label: "Analyze", color: "#34d399" },
-                  ].map(({ icon: Icon, label, color }) => (
-                    <button
-                      key={label}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 7,
-                        padding: "8px 18px",
-                        borderRadius: 999,
-                        fontSize: 13,
-                        color: "#b7bdc9",
-                        background: "rgba(255, 255, 255, 0.035)",
-                        border: "1px solid rgba(255, 255, 255, 0.07)",
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      <Icon size={14} style={{ color }} />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Keyboard shortcut hint */}
-              {!hasMessages && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 6,
-                    marginTop: 18,
-                    fontSize: 12,
-                    color: "#626879",
-                  }}
-                >
-                  <kbd
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      minWidth: 24,
-                      height: 24,
-                      padding: "0 6px",
-                      borderRadius: 6,
-                      background: "rgba(255, 255, 255, 0.045)",
-                      border: "1px solid rgba(255, 255, 255, 0.09)",
-                      fontSize: 12,
-                      color: "#8a90a3",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    ⌘
-                  </kbd>
-                  <kbd
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      minWidth: 24,
-                      height: 24,
-                      padding: "0 6px",
-                      borderRadius: 6,
-                      background: "rgba(255, 255, 255, 0.045)",
-                      border: "1px solid rgba(255, 255, 255, 0.09)",
-                      fontSize: 12,
-                      color: "#8a90a3",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    K
-                  </kbd>
-                  <span style={{ marginLeft: 4 }}>to quickly open</span>
-                </div>
-              )}
             </div>
           </div>
         </main>

@@ -1286,3 +1286,100 @@ body {
   background: rgba(239, 68, 68, 0.2);
   border-color: rgba(248, 113, 113, 0.4);
 }
+
+.conversation-minimap {
+  position: absolute;
+  z-index: 18;
+  top: 46%;
+  right: 14px;
+  display: flex;
+  width: 22px;
+  flex-direction: column;
+  transform: translateY(-50%);
+}
+
+.conversation-minimap-step {
+  position: relative;
+  display: flex;
+  min-height: 9px;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.conversation-minimap-tick {
+  width: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(151, 158, 178, 0.4);
+  transition: width 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.conversation-minimap-step:hover .conversation-minimap-tick,
+.conversation-minimap-step:focus-visible .conversation-minimap-tick {
+  width: 20px;
+  background: #b8c0ff;
+  box-shadow: 0 0 10px rgba(139, 147, 245, 0.55);
+}
+
+.conversation-minimap-preview {
+  position: absolute;
+  top: 50%;
+  right: 30px;
+  display: none;
+  width: min(340px, calc(100vw - 90px));
+  padding: 14px 15px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(154, 163, 208, 0.2);
+  border-radius: 14px;
+  background: rgba(17, 19, 29, 0.97);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+  color: #9299ad;
+  text-align: left;
+  backdrop-filter: blur(18px);
+  pointer-events: none;
+}
+
+.conversation-minimap-step:hover .conversation-minimap-preview,
+.conversation-minimap-step:focus-visible .conversation-minimap-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conversation-minimap-preview strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #f0f2fb;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.conversation-minimap-preview > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #8d94a9;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+@media (max-width: 760px) {
+  .conversation-minimap {
+    right: 6px;
+  }
+
+  .conversation-minimap-preview {
+    right: 24px;
+  }
+}
