@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "dmg",
+    "targets": ["dmg", "nsis"],
     "externalBin": [
       "binaries/nova"
     ],

@@ -54,10 +54,15 @@ fi
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-echo "Installing $PACKAGE_NAME from npm..."
+VERSION="${NOVA_VERSION:-}"
+if [ -n "$VERSION" ]; then
+  echo "Installing $PACKAGE_NAME@$VERSION from npm..."
+else
+  echo "Installing $PACKAGE_NAME@latest from npm..."
+fi
 cd "$TMPDIR"
 npm init -y > /dev/null 2>&1
-npm install "$PACKAGE_NAME"
+npm install "$PACKAGE_NAME${VERSION:+@$VERSION}"
 
 # Compile to single binary
 ENTRY="$TMPDIR/node_modules/$PACKAGE_NAME/dist/bun/cli.js"
