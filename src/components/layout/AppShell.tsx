@@ -270,6 +270,8 @@ export function AppShell() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
@@ -368,18 +370,19 @@ export function AppShell() {
   }, [projectPickerOpen]);
 
   useEffect(() => {
-    const keepSidebarClear = () => {
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
       if (!hasSidebarClearance(window.innerWidth)) {
         setSidebarOpen(false);
         sidebarHoverModeRef.current = false;
       }
     };
-    keepSidebarClear();
-    window.addEventListener("resize", keepSidebarClear);
-    const observer = new ResizeObserver(keepSidebarClear);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    const observer = new ResizeObserver(handleResize);
     observer.observe(document.documentElement);
     return () => {
-      window.removeEventListener("resize", keepSidebarClear);
+      window.removeEventListener("resize", handleResize);
       observer.disconnect();
     };
   }, []);
@@ -392,6 +395,16 @@ export function AppShell() {
     },
     [],
   );
+
+  // Load agents on mount
+  useEffect(() => {
+    listAgents()
+      .then((infos) => {
+        syncAgents(infos);
+        setAgentsLoaded(true);
+      })
+      .catch(() => setAgentsLoaded(true));
+  }, []);
 
   const handleSubmit = async () => {
     const text = input.trim();
@@ -660,6 +673,7 @@ export function AppShell() {
           className={`glass-panel absolute z-20 top-0 bottom-3 left-[56px] p-4 flex flex-col ${
             sidebarOpen ? "w-[280px]" : "hidden"
           }`}
+          style={!hasSidebarClearance(windowWidth) ? { backgroundColor: "rgba(10, 12, 24, 0.95)" } : undefined}
         >
           {sidebarOpen && (
             <>
@@ -804,23 +818,25 @@ export function AppShell() {
                     lineHeight: 1.15,
                   }}
                 >
-                  Ship faster with Nova in{" "}
-                  <span
-                    style={{
-                      position: "relative",
-                      display: "inline-block",
-                    }}
-                  >
-                    <span
-                      style={{
-                        background: "linear-gradient(135deg, #a78bfa, #818cf8, #60a5fa)",
-                        WebkitBackgroundClip: "text",
-                        WebkitTextFillColor: "transparent",
-                        textShadow: "0 0 40px rgba(129, 140, 248, 0.5)",
-                      }}
-                    >
-                      {projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd}
-                    </span>
+                  Ship faster with Nova{agentsLoaded && (
+                    <>
+                      {" in "}
+                      <span
+                        style={{
+                          position: "relative",
+                          display: "inline-block",
+                        }}
+                      >
+                        <span
+                          style={{
+                            background: "linear-gradient(135deg, #a78bfa, #818cf8, #60a5fa)",
+                            WebkitBackgroundClip: "text",
+                            WebkitTextFillColor: "transparent",
+                            textShadow: "0 0 40px rgba(129, 140, 248, 0.5)",
+                          }}
+                        >
+                          {projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd}
+                        </span>
                     <span
                       style={{
                         position: "absolute",
@@ -833,6 +849,8 @@ export function AppShell() {
                       }}
                     />
                   </span>.
+                    </>
+                  )}
                 </h2>
                 <p
                   style={{
@@ -1148,25 +1166,6 @@ export function AppShell() {
                         </button>
                       </div>
                     )}
-                    <button
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "5px 11px",
-                        borderRadius: 8,
-                        fontSize: 12.5,
-                        color: "#9aa0b4",
-                        background: "rgba(255, 255, 255, 0.05)",
-                        border: "1px solid rgba(255, 255, 255, 0.08)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <Sparkles size={13} style={{ color: "#a5b0fc" }} />
-                      <span>High</span>
-                      <ChevronDown size={13} style={{ color: "#6d7387" }} />
-                    </button>
-
                     {/* Abort button (visible during streaming) */}
                     {activeAgent?.status === "streaming" ? (
                       <button
