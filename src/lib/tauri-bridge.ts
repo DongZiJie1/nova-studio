@@ -36,6 +36,10 @@ export async function getAgentInfo(agentId: string): Promise<AgentInfo> {
   return invoke<AgentInfo>("get_agent_info", { agentId });
 }
 
+export async function activateAgent(agentId: string): Promise<AgentInfo> {
+  return invoke<AgentInfo>("activate_agent", { agentId });
+}
+
 export async function sendPrompt(
   agentId: string,
   message: string,

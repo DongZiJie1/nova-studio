@@ -179,6 +179,12 @@ export interface AgentInfo {
   last_error: string | null;
 }
 
+export interface PersistedRpcMessage {
+  role?: string;
+  content?: string | Array<{ type?: string; text?: string }>;
+  timestamp?: number | string;
+}
+
 // ─── Tauri event payload (from Rust backend via emit) ───
 
 export interface AgentEventPayload {

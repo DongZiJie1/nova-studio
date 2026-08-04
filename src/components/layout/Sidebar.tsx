@@ -50,7 +50,7 @@ export function Sidebar({ onCreateAgent, onOpenSettings }: SidebarProps) {
                         : "bg-text-muted"
                 }`}
               />
-              <span className="truncate">{agent.name ?? agent.id}</span>
+              <span className="truncate">{agent.name ?? "Nova"}</span>
             </button>
           ))}
         </div>

@@ -16,6 +16,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Determine the path to the nova CLI
             // Priority: env var > bundled sidecar (prod) > global npm > dev paths
@@ -55,7 +56,15 @@ pub fn run() {
             }
 
             // Create the central AgentManager
-            let manager = Arc::new(AgentManager::new(cli_path));
+            let state_path = app.handle().path().app_data_dir()?.join("agents.json");
+            let manager = Arc::new(AgentManager::new(cli_path, state_path));
+
+            let restore_manager = manager.clone();
+            tauri::async_runtime::block_on(async move {
+                if let Err(error) = restore_manager.restore().await {
+                    log::error!("Failed to restore Studio state: {}", error);
+                }
+            });
 
             // Start the HTTP API server for agent tools
             let manager_clone = manager.clone();
@@ -101,6 +110,7 @@ pub fn run() {
             commands::stop_agent,
             commands::list_agents,
             commands::get_agent_info,
+            commands::activate_agent,
             commands::send_prompt,
             commands::abort_agent,
             commands::send_extension_ui_response,

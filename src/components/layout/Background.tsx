@@ -24,17 +24,17 @@ export function Background() {
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 135% 46% at 50% 60%, rgba(128, 138, 252, 0.15) 0%, rgba(102, 110, 235, 0.08) 35%, rgba(70, 74, 180, 0.03) 55%, transparent 72%)",
+            "radial-gradient(ellipse 135% 46% at 50% 66%, rgba(128, 138, 252, 0.15) 0%, rgba(102, 110, 235, 0.08) 35%, rgba(70, 74, 180, 0.03) 55%, transparent 72%)",
         }}
       />
 
       {/* Planet body — very wide, very tall ellipse; only its top rim shows.
           Sized in vw so the horizon curvature stays stable when the window
-          is resized; the apex sits at ~52% of the viewport height. */}
+          is resized; the apex sits at ~58% of the viewport height. */}
       <div
         className="absolute left-1/2"
         style={{
-          top: "52%",
+          top: "58%",
           transform: "translate(-50%, 0)",
           width: "260vw",
           height: "412vw",
@@ -44,11 +44,11 @@ export function Background() {
         }}
       />
 
-      {/* Horizon line — bright rim with layered glow, fading out at the edges */}
+      {/* Horizon line — bright rim with layered glow, brightest at center fading to edges */}
       <div
         className="absolute left-1/2"
         style={{
-          top: "52%",
+          top: "58%",
           transform: "translate(-50%, 0)",
           width: "260vw",
           height: "412vw",
@@ -62,27 +62,27 @@ export function Background() {
           ].join(", "),
           background: "transparent",
           WebkitMaskImage:
-            "linear-gradient(90deg, transparent 18%, black 38%, black 62%, transparent 82%)",
+            "linear-gradient(90deg, rgba(0,0,0,0.15) 10%, rgba(0,0,0,0.4) 25%, rgba(0,0,0,0.7) 38%, black 50%, rgba(0,0,0,0.7) 62%, rgba(0,0,0,0.4) 75%, rgba(0,0,0,0.15) 90%)",
           maskImage:
-            "linear-gradient(90deg, transparent 18%, black 38%, black 62%, transparent 82%)",
+            "linear-gradient(90deg, rgba(0,0,0,0.15) 10%, rgba(0,0,0,0.4) 25%, rgba(0,0,0,0.7) 38%, black 50%, rgba(0,0,0,0.7) 62%, rgba(0,0,0,0.4) 75%, rgba(0,0,0,0.15) 90%)",
         }}
       />
 
-      {/* Center bloom — the arc burns brightest at its midpoint */}
+      {/* Center bloom — the arc burns brightest at its midpoint, fading to left/right */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 34% 7% at 50% 52%, rgba(195, 202, 255, 0.4) 0%, rgba(140, 150, 255, 0.14) 45%, transparent 72%)",
+            "radial-gradient(ellipse 60% 7% at 50% 58%, rgba(195, 202, 255, 0.3) 0%, rgba(140, 150, 255, 0.12) 30%, transparent 55%)",
         }}
       />
 
-      {/* Wide faint halo hugging the horizon */}
+      {/* Wide faint halo hugging the horizon — brightest at center */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 70% 13% at 50% 54%, rgba(110, 118, 240, 0.06) 0%, transparent 70%)",
+            "radial-gradient(ellipse 80% 13% at 50% 60%, rgba(110, 118, 240, 0.06) 0%, transparent 60%)",
         }}
       />
 

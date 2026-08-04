@@ -2,7 +2,7 @@ use crate::rpc_types::{AgentMessage, AgentStatus, RpcCommand};
 use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex};
 
@@ -12,6 +12,7 @@ pub struct AgentProcess {
     pub parent_agent_id: Option<String>,
     pub cwd: String,
     pub model: Option<String>,
+    pub session_id: String,
     pub created_at: String,
     /// Display name: starts as "Nova", replaced by LLM-generated name on first prompt.
     pub name: Arc<Mutex<Option<String>>>,
@@ -25,6 +26,7 @@ pub struct AgentProcess {
     stdin_tx: tokio::sync::mpsc::UnboundedSender<String>,
     event_tx: broadcast::Sender<serde_json::Value>,
     _stdout_task: tokio::task::JoinHandle<()>,
+    _stderr_task: tokio::task::JoinHandle<()>,
     _stdin_task: tokio::task::JoinHandle<()>,
 }
 
@@ -41,6 +43,9 @@ impl AgentProcess {
         hub_url: String,
         hub_token: String,
         depth: u64,
+        session_id: String,
+        restored_name: Option<String>,
+        restored_created_at: Option<String>,
     ) -> Result<Self, String> {
         // Determine how to invoke the CLI:
         // - .js file → node <file> --mode rpc
@@ -53,6 +58,13 @@ impl AgentProcess {
         };
         args.push("--mode".to_string());
         args.push("rpc".to_string());
+        // `--session` already identifies the exact persisted conversation and
+        // Nova rejects combining it with `--session-id`.
+        let restores_exact_session = extra_args.iter().any(|arg| arg == "--session");
+        if !restores_exact_session {
+            args.push("--session-id".to_string());
+            args.push(session_id.clone());
+        }
 
         if let Some(m) = &model {
             args.push("--model".to_string());
@@ -108,7 +120,9 @@ impl AgentProcess {
         let status = Arc::new(Mutex::new(AgentStatus::Starting));
         let message_count = Arc::new(Mutex::new(0usize));
         let last_error = Arc::new(Mutex::new(None));
-        let name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("Nova".to_string())));
+        let name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(
+            restored_name.or_else(|| Some("Nova".to_string())),
+        ));
         let (event_tx, _) = broadcast::channel::<serde_json::Value>(256);
         let (stdin_tx, stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -247,6 +261,34 @@ impl AgentProcess {
 
         // Wait a bit for the process to start
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if let Some(exit_status) = child
+            .try_wait()
+            .map_err(|error| format!("Failed to inspect agent process: {error}"))?
+        {
+            let mut stderr_text = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut stderr_text).await;
+            }
+            let detail = stderr_text.trim();
+            return Err(if detail.is_empty() {
+                format!("Agent process exited during startup ({exit_status})")
+            } else {
+                format!("Agent process exited during startup: {detail}")
+            });
+        }
+
+        // Drain stderr for the lifetime of the process so a verbose CLI cannot
+        // fill the pipe and stall. Errors remain visible in the Studio log.
+        let stderr = child.stderr.take();
+        let stderr_id = id.clone();
+        let stderr_task = tokio::spawn(async move {
+            if let Some(stderr) = stderr {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    log::warn!("[process:{}] stderr: {}", stderr_id, truncate(&line, 500));
+                }
+            }
+        });
         *status.lock().await = AgentStatus::Idle;
 
         log::info!("[process:{}] ready, status=Idle", id);
@@ -256,7 +298,8 @@ impl AgentProcess {
             parent_agent_id,
             cwd,
             model,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            session_id,
+            created_at: restored_created_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
             name,
             status,
             message_count,
@@ -266,6 +309,7 @@ impl AgentProcess {
             stdin_tx,
             event_tx,
             _stdout_task: stdout_task,
+            _stderr_task: stderr_task,
             _stdin_task: stdin_task,
         })
     }
