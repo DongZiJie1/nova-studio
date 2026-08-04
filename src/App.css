@@ -213,11 +213,14 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  width: 100%;
   max-width: 82%;
+  min-width: 0;
 }
 
 .msg-row-user .msg-column {
   align-items: flex-end;
+  width: fit-content;
 }
 
 .msg-meta {

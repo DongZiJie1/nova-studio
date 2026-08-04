@@ -9,7 +9,13 @@ function formatTime(ts: number): string {
   });
 }
 
-export function ChatMessage({ message }: { message: ChatMessageData }) {
+export function ChatMessage({
+  message,
+  userLabel = "You",
+}: {
+  message: ChatMessageData;
+  userLabel?: string;
+}) {
   const isUser = message.role === "user";
 
   return (
@@ -21,7 +27,7 @@ export function ChatMessage({ message }: { message: ChatMessageData }) {
       )}
       <div className="msg-column">
         <div className="msg-meta">
-          <span className="msg-author">{isUser ? "You" : "Nova"}</span>
+          <span className="msg-author">{isUser ? userLabel : "Nova"}</span>
           <span className="msg-time">{formatTime(message.timestamp)}</span>
         </div>
         <div

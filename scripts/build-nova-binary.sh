@@ -54,10 +54,15 @@ fi
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-echo "Installing $PACKAGE_NAME from npm..."
+VERSION="${NOVA_VERSION:-}"
+if [ -n "$VERSION" ]; then
+  echo "Installing $PACKAGE_NAME@$VERSION from npm..."
+else
+  echo "Installing $PACKAGE_NAME@latest from npm..."
+fi
 cd "$TMPDIR"
 npm init -y > /dev/null 2>&1
-npm install "$PACKAGE_NAME"
+npm install "$PACKAGE_NAME${VERSION:+@$VERSION}"
 
 # Compile to single binary
 ENTRY="$TMPDIR/node_modules/$PACKAGE_NAME/dist/bun/cli.js"
@@ -73,11 +78,11 @@ $BUN_CMD build --compile "$ENTRY" --outfile "$TMPDIR/$BINARY_NAME-bin"
 BINARIES_DIR="$SCRIPT_DIR/../src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
-cp "$TMPDIR/$BINARY_NAME-bin" "$BINARIES_DIR/$BINARY_NAME-$TARGET"
-
-# On Windows, add .exe extension
+# On Windows, bun outputs .exe and Git Bash treats no-ext and .exe as same file
 if [[ "$TARGET" == *windows* ]]; then
-    mv "$BINARIES_DIR/$BINARY_NAME-$TARGET" "$BINARIES_DIR/$BINARY_NAME-$TARGET.exe"
+    cp "$TMPDIR/$BINARY_NAME-bin.exe" "$BINARIES_DIR/$BINARY_NAME-$TARGET.exe"
+else
+    cp "$TMPDIR/$BINARY_NAME-bin" "$BINARIES_DIR/$BINARY_NAME-$TARGET"
 fi
 
 # Copy resource files needed by the bun-compiled binary at runtime:

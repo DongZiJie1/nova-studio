@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -13,8 +17,10 @@ jobs:
         include:
           - platform: macos-latest
             target: aarch64-apple-darwin
+            bun_path: /Users/runner/.bun/bin/bun
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
+            bun_path: C:\Users\runner\.bun\bin\bun.exe
 
     runs-on: ${{ matrix.platform }}
 
@@ -42,10 +48,18 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build nova binary from npm
+      - name: Build nova binary (latest npm)
+        shell: bash
         run: npm run build:nova
         env:
-          BUN_CMD: ${{ runner.os == 'macOS' && '/Users/runner/.bun/bin/bun' || 'C:\Users\runner\.bun\bin\bun.exe' }}
+          BUN_CMD: ${{ matrix.bun_path }}
+
+      - name: Get bundled Nova version
+        id: nova
+        shell: bash
+        run: |
+          VER=$(npm view @dongzijie1/nova version 2>/dev/null || echo "unknown")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -53,8 +67,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
-          releaseBody: "See assets for installation packages."
+          releaseName: "Nova Studio ${{ github.ref_name }}"
+          releaseBody: |
+            ## Nova Studio ${{ github.ref_name }}
+
+            ### 安装说明
+            - **macOS**: 下载 `.dmg` 文件，拖入 Applications 即可
+            - **Windows**: 下载 `.exe` 安装包，双击运行
+
+            ### 内置版本
+            - Nova Agent v${{ steps.nova.outputs.version }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
