@@ -5,10 +5,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      nova_version:
-        description: "Nova Agent npm version (e.g. 1.1.0). Leave empty to use tag version."
-        required: false
 
 jobs:
   build:
@@ -46,26 +42,21 @@ jobs:
       - name: Install Bun
         run: curl -fsSL https://bun.sh/install | bash
 
-      - name: Resolve Nova version
-        id: version
-        shell: bash
-        run: |
-          if [ -n "${{ github.event.inputs.nova_version }}" ]; then
-            echo "nova_version=${{ github.event.inputs.nova_version }}" >> "$GITHUB_OUTPUT"
-          else
-            # Extract version from tag: v1.1.0 → 1.1.0
-            TAG="${{ github.ref_name }}"
-            echo "nova_version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build nova binary from npm
+      - name: Build nova binary (latest npm)
         run: npm run build:nova
         env:
-          NOVA_VERSION: ${{ steps.version.outputs.nova_version }}
           BUN_CMD: ${{ matrix.bun_path }}
+
+      - name: Get bundled Nova version
+        id: nova
+        shell: bash
+        run: |
+          # Build script installs to a temp dir, query npm directly
+          VER=$(npm view @dongzijie1/nova version 2>/dev/null || echo "unknown")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -82,7 +73,7 @@ jobs:
             - **Windows**: 下载 `.exe` 安装包，双击运行
 
             ### 内置版本
-            - Nova Agent v${{ steps.version.outputs.nova_version }}
+            - Nova Agent v${{ steps.nova.outputs.version }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
