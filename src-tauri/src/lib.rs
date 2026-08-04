@@ -39,9 +39,13 @@ pub fn run() {
                                     bundled_resource.display(),
                                     bin_resource.display()
                                 );
-                                if let Err(e) =
-                                    std::os::unix::fs::symlink(&bundled_resource, &bin_resource)
-                                {
+                                #[cfg(unix)]
+                                let link_result =
+                                    std::os::unix::fs::symlink(&bundled_resource, &bin_resource);
+                                #[cfg(windows)]
+                                let link_result =
+                                    std::os::windows::fs::symlink_dir(&bundled_resource, &bin_resource);
+                                if let Err(e) = link_result {
                                     log::warn!("Failed to symlink {}: {}", dir_name, e);
                                 }
                             } else {
@@ -159,7 +163,11 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
     }
 
     // 3. Try to find `nova` in PATH (user did npm i -g)
-    if let Ok(output) = std::process::Command::new("which").arg("nova").output() {
+    #[cfg(unix)]
+    let which_cmd = "which";
+    #[cfg(windows)]
+    let which_cmd = "where";
+    if let Ok(output) = std::process::Command::new(which_cmd).arg("nova").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             log::info!("Found nova in PATH: {}", path);
