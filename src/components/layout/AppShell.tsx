@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { activateAgent, listAgents, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
+import { abortAgent, activateAgent, listAgents, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChatMessage } from "../chat/ChatMessage";
@@ -260,7 +260,6 @@ export function AppShell() {
   const addUserMessage = useAgentStore((s) => s.addUserMessage);
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
-  const updateStatus = useAgentStore((s) => s.updateStatus);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
@@ -467,16 +466,27 @@ export function AppShell() {
     }
   };
 
-  const handleAbort = async () => {
+  const handleAbort = useCallback(async () => {
     if (!activeId) return;
     try {
-      updateStatus(activeId, "idle");
-      // Abort is a no-op at the Tauri level for now;
-      // the Rust backend would need to forward an abort command.
+      await abortAgent(activeId);
     } catch (err) {
-      console.error("Failed to abort:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("Failed to abort:", message);
+      setError(message);
     }
-  };
+  }, [activeId]);
+
+  useEffect(() => {
+    if (activeAgent?.status !== "streaming") return;
+    const abortOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      void handleAbort();
+    };
+    window.addEventListener("keydown", abortOnEscape);
+    return () => window.removeEventListener("keydown", abortOnEscape);
+  }, [activeAgent?.status, handleAbort]);
 
   const handleSelectAgent = (agentId: string) => {
     setActiveAgent(agentId);
