@@ -1,11 +1,11 @@
-import { Sparkles } from "lucide-react";
 import { Markdown } from "./Markdown";
+import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 
-export function StreamingText({ content }: { content: string }) {
+export function StreamingText({ content, avatarId }: { content: string; avatarId: AgentAvatarId }) {
   return (
     <div className="msg-row msg-row-assistant">
       <div className="msg-avatar msg-avatar-nova">
-        <Sparkles size={16} />
+        <img src={agentAvatarSrc(avatarId)} alt="Nova" />
       </div>
       <div className="msg-column">
         <div className="msg-meta">

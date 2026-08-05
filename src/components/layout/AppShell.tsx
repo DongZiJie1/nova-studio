@@ -8,6 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
+import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
 import {
   Paperclip,
   ArrowUp,
@@ -435,6 +436,7 @@ export function AppShell() {
           id: info.id,
           parentAgentId: info.parent_agent_id,
           name: null,
+          avatarId: getOrAssignAgentAvatar(info.id),
           status: info.status,
           cwd: info.cwd,
           model: info.model,
@@ -903,7 +905,11 @@ export function AppShell() {
                     id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
                     style={{ scrollMarginTop: 24 }}
                   >
-                    <ChatMessage message={msg} userLabel={conversationUserLabel} />
+                    <ChatMessage
+                      message={msg}
+                      userLabel={conversationUserLabel}
+                      avatarId={activeAgent.avatarId}
+                    />
                   </div>
                 ))}
 
@@ -921,7 +927,9 @@ export function AppShell() {
                   ))}
 
                 {/* Streaming text */}
-                {streamingText && <StreamingText content={streamingText} />}
+                {streamingText && activeAgent && (
+                  <StreamingText content={streamingText} avatarId={activeAgent.avatarId} />
+                )}
               </div>
             )}
           </div>

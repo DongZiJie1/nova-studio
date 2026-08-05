@@ -1,5 +1,6 @@
-import { Sparkles, User } from "lucide-react";
+import { User } from "lucide-react";
 import type { ChatMessage as ChatMessageData } from "../../stores/agent-store";
+import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
 
 function formatTime(ts: number): string {
@@ -12,9 +13,11 @@ function formatTime(ts: number): string {
 export function ChatMessage({
   message,
   userLabel = "You",
+  avatarId,
 }: {
   message: ChatMessageData;
   userLabel?: string;
+  avatarId: AgentAvatarId;
 }) {
   const isUser = message.role === "user";
 
@@ -22,7 +25,7 @@ export function ChatMessage({
     <div className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"}`}>
       {!isUser && (
         <div className="msg-avatar msg-avatar-nova">
-          <Sparkles size={16} />
+          <img src={agentAvatarSrc(avatarId)} alt="Nova" />
         </div>
       )}
       <div className="msg-column">
@@ -40,7 +43,7 @@ export function ChatMessage({
       </div>
       {isUser && (
         <div className="msg-avatar msg-avatar-user">
-          <User size={16} />
+          <User size={20} strokeWidth={2.25} />
         </div>
       )}
     </div>

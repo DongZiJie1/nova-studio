@@ -168,7 +168,7 @@ body {
 .msg-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 24px;
   animation: fadeInUp 0.25s ease-out;
 }
@@ -184,9 +184,9 @@ body {
 
 .msg-avatar {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -194,19 +194,29 @@ body {
 }
 
 .msg-avatar-nova {
-  background: linear-gradient(
-    135deg,
-    var(--color-accent-start),
-    var(--color-accent-end)
-  );
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(129, 140, 248, 0.3);
+  overflow: hidden;
+  background: #171743;
+  border: 1px solid rgba(165, 180, 252, 0.55);
+  box-shadow:
+    0 0 0 2px rgba(129, 140, 248, 0.12),
+    0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.msg-avatar-nova img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.75);
+  transform-origin: 50% 37%;
 }
 
 .msg-avatar-user {
-  background: rgba(129, 140, 248, 0.15);
-  color: #a5b4fc;
-  border: 1px solid rgba(129, 140, 248, 0.25);
+  background: linear-gradient(145deg, rgba(99, 102, 241, 0.28), rgba(139, 92, 246, 0.16));
+  color: #c7d2fe;
+  border: 1px solid rgba(165, 180, 252, 0.5);
+  box-shadow:
+    0 0 0 2px rgba(129, 140, 248, 0.08),
+    0 4px 12px rgba(49, 46, 129, 0.28);
 }
 
 .msg-column {

@@ -10,6 +10,10 @@ import {
   extractAssistantText,
   type ParsedEvent,
 } from "../lib/event-parser";
+import {
+  getOrAssignAgentAvatar,
+  type AgentAvatarId,
+} from "../lib/agent-avatars";
 
 // ─── Frontend-side types ───
 
@@ -33,6 +37,7 @@ export interface AgentState {
   id: string;
   parentAgentId: string | null;
   name: string | null;
+  avatarId: AgentAvatarId;
   status: AgentStatus;
   cwd: string;
   model: string | null;
@@ -80,6 +85,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     id: info.id,
     parentAgentId: info.parent_agent_id,
     name: info.name ?? "Nova",
+    avatarId: getOrAssignAgentAvatar(info.id),
     status: info.status,
     cwd: info.cwd,
     model: info.model,
