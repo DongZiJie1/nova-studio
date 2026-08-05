@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { User } from "lucide-react";
 import type { ChatMessage as ChatMessageData } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
@@ -10,7 +11,7 @@ function formatTime(ts: number): string {
   });
 }
 
-export function ChatMessage({
+export const ChatMessage = memo(function ChatMessage({
   message,
   userLabel = "You",
   avatarId,
@@ -48,4 +49,4 @@ export function ChatMessage({
       )}
     </div>
   );
-}
+});

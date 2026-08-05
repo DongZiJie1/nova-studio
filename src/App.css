@@ -204,6 +204,63 @@ body {
   text-align: right;
 }
 
+.file-mention-menu {
+  left: 12px;
+  right: 12px;
+}
+
+.file-mention-title {
+  padding: 5px 10px 7px;
+  color: #777e94;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.file-mention-option {
+  display: grid;
+  grid-template-columns: 18px minmax(90px, auto) minmax(0, 1fr);
+  width: 100%;
+  min-height: 35px;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #dfe2ed;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-mention-icon {
+  color: #929af0;
+}
+
+.file-mention-name {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: #e4e6f0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-mention-directory {
+  overflow: hidden;
+  font-size: 10.5px;
+  color: #777e94;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-mention-empty {
+  padding: 18px 12px;
+  color: #747b91;
+  font-size: 11px;
+  text-align: center;
+}
+
 @keyframes fadeInUp {
   from {
     opacity: 0;

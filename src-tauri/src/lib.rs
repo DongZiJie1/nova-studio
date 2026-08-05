@@ -121,6 +121,7 @@ pub fn run() {
             commands::send_prompt,
             commands::abort_agent,
             commands::send_extension_ui_response,
+            commands::list_project_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

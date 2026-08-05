@@ -1,10 +1,133 @@
 use crate::agent_manager::AgentManager;
 use crate::rpc_types::{AgentInfo, ImageContent, SpawnRequest};
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::State;
 
+const MAX_PROJECT_SCAN_ENTRIES: usize = 50_000;
+const MAX_PROJECT_FILE_RESULTS: usize = 200;
+const SKIPPED_PROJECT_DIRS: &[&str] = &[
+    ".git",
+    ".idea",
+    ".next",
+    ".turbo",
+    ".vite",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+];
+
 /// Managed state wrapper for AgentManager
 pub struct AgentManagerState(pub Arc<AgentManager>);
+
+fn expand_home(path: &str) -> PathBuf {
+    if path == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
+fn collect_project_files(cwd: &str, query: &str, limit: usize) -> Result<Vec<String>, String> {
+    let root = expand_home(cwd)
+        .canonicalize()
+        .map_err(|error| format!("Unable to open project directory: {error}"))?;
+    if !root.is_dir() {
+        return Err("Project path is not a directory".to_string());
+    }
+
+    let normalized_query = query.to_lowercase();
+    let mut directories = VecDeque::from([root.clone()]);
+    let mut matches = Vec::new();
+    let mut scanned = 0usize;
+
+    while let Some(directory) = directories.pop_front() {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            scanned += 1;
+            if scanned > MAX_PROJECT_SCAN_ENTRIES {
+                break;
+            }
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                if !SKIPPED_PROJECT_DIRS.iter().any(|skipped| name == *skipped) {
+                    directories.push_back(path);
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(&root) else {
+                continue;
+            };
+            let display = relative.to_string_lossy().replace('\\', "/");
+            if normalized_query.is_empty() || display.to_lowercase().contains(&normalized_query) {
+                matches.push(display);
+            }
+        }
+        if scanned > MAX_PROJECT_SCAN_ENTRIES {
+            break;
+        }
+    }
+
+    matches.sort_by(|left, right| {
+        let left_lower = left.to_lowercase();
+        let right_lower = right.to_lowercase();
+        let rank = |path: &str| {
+            let file_name = Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path);
+            if path.starts_with(&normalized_query) {
+                0
+            } else if file_name.starts_with(&normalized_query) {
+                1
+            } else {
+                2
+            }
+        };
+        rank(&left_lower)
+            .cmp(&rank(&right_lower))
+            .then_with(|| left_lower.cmp(&right_lower))
+    });
+    matches.truncate(limit.min(MAX_PROJECT_FILE_RESULTS));
+    Ok(matches)
+}
+
+#[tauri::command]
+pub async fn list_project_files(
+    cwd: String,
+    query: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        collect_project_files(
+            &cwd,
+            query.as_deref().unwrap_or_default(),
+            limit.unwrap_or(80),
+        )
+    })
+    .await
+    .map_err(|error| format!("Project file scan failed: {error}"))?
+}
 
 #[tauri::command]
 pub async fn spawn_agent(

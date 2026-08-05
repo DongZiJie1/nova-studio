@@ -52,6 +52,14 @@ export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
 }
 
+export async function listProjectFiles(
+  cwd: string,
+  query: string,
+  limit = 80,
+): Promise<string[]> {
+  return invoke<string[]>("list_project_files", { cwd, query, limit });
+}
+
 export async function sendExtensionUIResponse(
   agentId: string,
   response: ExtensionUIResponse,

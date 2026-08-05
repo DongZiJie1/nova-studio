@@ -2,15 +2,24 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { abortAgent, activateAgent, listAgents, spawnAgent, sendPrompt } from "../../lib/tauri-bridge";
+import {
+  abortAgent,
+  activateAgent,
+  listAgents,
+  listProjectFiles,
+  spawnAgent,
+  sendPrompt,
+} from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
+import { FileMentionMenu } from "../chat/FileMentionMenu";
 import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
 import { matchingSlashCommands, type SlashCommand } from "../../lib/slash-commands";
+import { findFileMention, insertFileMention } from "../../lib/file-mentions";
 import {
   Paperclip,
   ArrowUp,
@@ -271,6 +280,11 @@ export function AppShell() {
   const [input, setInput] = useState("");
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
   const [slashCommandMenuDismissed, setSlashCommandMenuDismissed] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [fileMentionMenuDismissed, setFileMentionMenuDismissed] = useState(false);
+  const [projectFiles, setProjectFiles] = useState<string[]>([]);
+  const [projectFilesLoading, setProjectFilesLoading] = useState(false);
+  const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -291,6 +305,7 @@ export function AppShell() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
+  const inputCardRef = useRef<HTMLDivElement>(null);
   const sidebarHoverModeRef = useRef(false);
   const sidebarHoverCloseTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -359,16 +374,48 @@ export function AppShell() {
   );
   const streamingText = activeAgent?.streamingText ?? "";
   const slashCommands = slashCommandMenuDismissed ? [] : matchingSlashCommands(input);
+  const fileMention = fileMentionMenuDismissed ? null : findFileMention(input, cursorPosition);
   const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
   const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
   const messagesSize = activeAgent?.messages.length ?? 0;
 
+  useEffect(() => {
+    if (!fileMention) {
+      setProjectFiles([]);
+      setProjectFilesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setProjectFilesLoading(true);
+    const timer = window.setTimeout(() => {
+      void listProjectFiles(inputProjectCwd, fileMention.query)
+        .then((files) => {
+          if (!cancelled) setProjectFiles(files);
+        })
+        .catch(() => {
+          if (!cancelled) setProjectFiles([]);
+        })
+        .finally(() => {
+          if (!cancelled) setProjectFilesLoading(false);
+        });
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [fileMention?.query, inputProjectCwd, fileMentionMenuDismissed]);
+
   // Follow the conversation: keep scrolled to the bottom as content streams in.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [messagesSize, streamingText, toolCallsSize]);
 
   useEffect(() => {
@@ -381,6 +428,18 @@ export function AppShell() {
     document.addEventListener("mousedown", closePicker);
     return () => document.removeEventListener("mousedown", closePicker);
   }, [projectPickerOpen]);
+
+  useEffect(() => {
+    if (slashCommands.length === 0 && !fileMention) return;
+    const dismissSlashCommands = (event: MouseEvent) => {
+      if (!inputCardRef.current?.contains(event.target as Node)) {
+        setSlashCommandMenuDismissed(true);
+        setFileMentionMenuDismissed(true);
+      }
+    };
+    document.addEventListener("mousedown", dismissSlashCommands);
+    return () => document.removeEventListener("mousedown", dismissSlashCommands);
+  }, [slashCommands.length, fileMention]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -482,6 +541,21 @@ export function AppShell() {
       autoResize();
     });
   }, [autoResize]);
+
+  const selectProjectFile = useCallback((path: string) => {
+    const mention = findFileMention(input, cursorPosition);
+    if (!mention) return;
+    const inserted = insertFileMention(input, mention, path);
+    setInput(inserted.value);
+    setCursorPosition(inserted.cursor);
+    setFileMentionMenuDismissed(true);
+    setSelectedProjectFileIndex(0);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+      autoResize();
+    });
+  }, [autoResize, cursorPosition, input]);
 
   const handleAbort = useCallback(async () => {
     if (!activeId) return;
@@ -901,7 +975,10 @@ export function AppShell() {
               </div>
             ) : (
               /* Messages view */
-              <div className="w-full max-w-3xl py-6">
+              <div
+                className="w-full max-w-3xl pt-6"
+                style={{ paddingBottom: 48 }}
+              >
                 {activeAgent && activeAgent.messages.length === 0 && (
                   <div
                     style={{
@@ -983,14 +1060,14 @@ export function AppShell() {
           <div
             style={{
               flexShrink: 0,
-              padding: "0 24px 56px",
+              padding: "20px 24px 56px",
               display: "flex",
               justifyContent: "center",
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
               {/* Input card */}
-              <div className="nova-input" style={{ overflow: "visible" }}>
+              <div ref={inputCardRef} className="nova-input" style={{ overflow: "visible" }}>
                 {slashCommands.length > 0 && (
                   <SlashCommandMenu
                     commands={slashCommands}
@@ -999,15 +1076,28 @@ export function AppShell() {
                     onSelect={selectSlashCommand}
                   />
                 )}
+                {fileMention && (
+                  <FileMentionMenu
+                    files={projectFiles}
+                    loading={projectFilesLoading}
+                    selectedIndex={Math.min(selectedProjectFileIndex, Math.max(0, projectFiles.length - 1))}
+                    onSelectedIndexChange={setSelectedProjectFileIndex}
+                    onSelect={selectProjectFile}
+                  />
+                )}
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => {
                     setInput(e.target.value);
+                    setCursorPosition(e.currentTarget.selectionStart);
                     setSlashCommandMenuDismissed(false);
+                    setFileMentionMenuDismissed(false);
                     setSelectedSlashCommandIndex(0);
+                    setSelectedProjectFileIndex(0);
                     autoResize();
                   }}
+                  onSelect={(e) => setCursorPosition(e.currentTarget.selectionStart)}
                   onKeyDown={(e) => {
                     if (
                       isComposingRef.current ||
@@ -1040,6 +1130,31 @@ export function AppShell() {
                         setSlashCommandMenuDismissed(true);
                         return;
                       }
+                    }
+                    if (fileMention && projectFiles.length > 0) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setSelectedProjectFileIndex((index) => (index + 1) % projectFiles.length);
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setSelectedProjectFileIndex(
+                          (index) => (index - 1 + projectFiles.length) % projectFiles.length,
+                        );
+                        return;
+                      }
+                      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                        e.preventDefault();
+                        selectProjectFile(
+                          projectFiles[Math.min(selectedProjectFileIndex, projectFiles.length - 1)],
+                        );
+                        return;
+                      }
+                    }
+                    if (fileMention && e.key === "Escape") {
+                      setFileMentionMenuDismissed(true);
+                      return;
                     }
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
