@@ -10,16 +10,25 @@ if [[ "$*" == *"--session-id"* && "$*" == *"--session "* ]]; then
   printf '%s\n' 'Error: --session-id cannot be combined with --session' >&2
   exit 2
 fi
-reply="mock reply url=$NOVA_HUB_URL id=$NOVA_AGENT_ID token=$NOVA_HUB_TOKEN depth=$NOVA_ASK_DEPTH"
+last_depth=0
 while IFS= read -r line; do
+  agent_id=$(printf '%s' "$line" | sed -n 's/.*"agentId":"\([^"]*\)".*/\1/p')
   case "$line" in
+    *'"type":"agent_create"'*)
+      last_depth=$(printf '%s' "$line" | sed -n 's/.*"depth":\([0-9]*\).*/\1/p')
+      printf '{"type":"response","command":"agent_create","success":true,"agentId":"%s"}\n' "$agent_id"
+      ;;
+    *'"type":"agent_stop"'*)
+      printf '{"type":"response","command":"agent_stop","success":true,"agentId":"%s"}\n' "$agent_id"
+      ;;
     *'"type":"get_messages"'*)
-      printf '{"type":"response","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":[{"type":"text","text":"restored question"}],"timestamp":1},{"role":"assistant","content":[{"type":"text","text":"restored answer"}],"timestamp":2}]}}\n'
+      printf '{"type":"response","command":"get_messages","success":true,"agentId":"%s","data":{"messages":[{"role":"user","content":[{"type":"text","text":"restored question"}],"timestamp":1},{"role":"assistant","content":[{"type":"text","text":"restored answer"}],"timestamp":2}]}}\n' "$agent_id"
       ;;
     *'"type":"prompt"'*)
-      printf '{"type":"message_start","message":{"role":"assistant"}}\n'
-      printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$reply"
-      printf '{"type":"agent_settled"}\n'
+      reply="mock reply url=$NOVA_HUB_URL id=$agent_id token=$NOVA_HUB_TOKEN depth=$last_depth"
+      printf '{"type":"message_start","agentId":"%s","message":{"role":"assistant"}}\n' "$agent_id"
+      printf '{"type":"message_end","agentId":"%s","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$agent_id" "$reply"
+      printf '{"type":"agent_settled","agentId":"%s"}\n' "$agent_id"
       ;;
   esac
 done

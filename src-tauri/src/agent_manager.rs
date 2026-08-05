@@ -1,10 +1,11 @@
 use crate::agent_process::AgentProcess;
+use crate::nova_host_process::NovaHostProcess;
 use crate::rpc_types::{AgentInfo, ImageContent, RpcCommand, SpawnRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
 
 /// Central manager for all agent processes.
@@ -20,6 +21,7 @@ pub struct AgentManager {
     hub_url: RwLock<String>,
     state_path: PathBuf,
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
+    host: Mutex<Option<Arc<NovaHostProcess>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +73,28 @@ impl AgentManager {
             hub_url: RwLock::new("http://127.0.0.1:9528".to_string()),
             state_path,
             records: Arc::new(RwLock::new(HashMap::new())),
+            host: Mutex::new(None),
         }
+    }
+
+    async fn ensure_host(&self, cwd: &str) -> Result<Arc<NovaHostProcess>, String> {
+        let mut host = self.host.lock().await;
+        if let Some(existing) = host.as_ref() {
+            if existing.is_alive().await {
+                return Ok(existing.clone());
+            }
+        }
+        let created = Arc::new(
+            NovaHostProcess::spawn(
+                self.cli_path.clone(),
+                cwd.to_string(),
+                self.hub_url.read().await.clone(),
+                self.hub_token.clone(),
+            )
+            .await?,
+        );
+        *host = Some(created.clone());
+        Ok(created)
     }
 
     pub async fn restore(&self) -> Result<(), String> {
@@ -304,23 +327,71 @@ impl AgentManager {
             }
         }
 
-        let hub_url = self.hub_url.read().await.clone();
-        let process = AgentProcess::spawn(
+        let host = self.ensure_host(&record.cwd).await?;
+        let process = AgentProcess::attach(
             agent_id.clone(),
             record.parent_agent_id.clone(),
             record.cwd.clone(),
-            self.cli_path.clone(),
             record.model.clone(),
-            record.provider.clone(),
-            extra_args,
-            hub_url,
-            self.hub_token.clone(),
-            record.depth,
             record.session_id.clone(),
+            record.depth,
             record.name.clone(),
             Some(record.created_at.clone()),
+            host.clone(),
         )
         .await?;
+
+        let session_path = extra_args
+            .windows(2)
+            .find(|pair| pair[0] == "--session")
+            .map(|pair| pair[1].clone());
+        let mut ready_events = process.subscribe();
+        host.send_host_command(serde_json::json!({
+            "type": "agent_create",
+            "agentId": agent_id,
+            "cwd": record.cwd,
+            "sessionId": record.session_id,
+            "sessionPath": session_path,
+            "parentSession": extra_args
+                .windows(2)
+                .find(|pair| pair[0] == "--parent-session")
+                .map(|pair| pair[1].clone()),
+            "depth": record.depth,
+        }))?;
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let event = ready_events
+                    .recv()
+                    .await
+                    .map_err(|_| "Nova host event stream closed".to_string())?;
+                if event.get("type").and_then(serde_json::Value::as_str) != Some("response")
+                    || event.get("command").and_then(serde_json::Value::as_str)
+                        != Some("agent_create")
+                {
+                    continue;
+                }
+                if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+                    return Ok(());
+                }
+                return Err(event
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Nova host failed to create agent")
+                    .to_string());
+            }
+        })
+        .await
+        .map_err(|_| "Timed out waiting for Nova host to create agent".to_string())?;
+        ready?;
+
+        if let (Some(provider), Some(model_id)) = (record.provider.as_ref(), record.model.as_ref())
+        {
+            process.send_command(&RpcCommand::SetModel {
+                id: None,
+                provider: provider.clone(),
+                model_id: model_id.clone(),
+            })?;
+        }
 
         let info = self.build_info(&agent_id, &record.cwd, &process).await;
 
