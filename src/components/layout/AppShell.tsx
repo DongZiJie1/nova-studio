@@ -8,7 +8,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
+import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
+import { matchingSlashCommands, type SlashCommand } from "../../lib/slash-commands";
 import {
   Paperclip,
   ArrowUp,
@@ -267,6 +269,8 @@ export function AppShell() {
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
 
   const [input, setInput] = useState("");
+  const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
+  const [slashCommandMenuDismissed, setSlashCommandMenuDismissed] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -354,6 +358,7 @@ export function AppShell() {
     ]),
   );
   const streamingText = activeAgent?.streamingText ?? "";
+  const slashCommands = slashCommandMenuDismissed ? [] : matchingSlashCommands(input);
   const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
@@ -467,6 +472,16 @@ export function AppShell() {
       setIsSending(false);
     }
   };
+
+  const selectSlashCommand = useCallback((command: SlashCommand) => {
+    setInput(`/${command.name} `);
+    setSlashCommandMenuDismissed(true);
+    setSelectedSlashCommandIndex(0);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      autoResize();
+    });
+  }, [autoResize]);
 
   const handleAbort = useCallback(async () => {
     if (!activeId) return;
@@ -976,11 +991,21 @@ export function AppShell() {
             <div style={{ width: "100%", maxWidth: 640 }}>
               {/* Input card */}
               <div className="nova-input" style={{ overflow: "visible" }}>
+                {slashCommands.length > 0 && (
+                  <SlashCommandMenu
+                    commands={slashCommands}
+                    selectedIndex={Math.min(selectedSlashCommandIndex, slashCommands.length - 1)}
+                    onSelectedIndexChange={setSelectedSlashCommandIndex}
+                    onSelect={selectSlashCommand}
+                  />
+                )}
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => {
                     setInput(e.target.value);
+                    setSlashCommandMenuDismissed(false);
+                    setSelectedSlashCommandIndex(0);
                     autoResize();
                   }}
                   onKeyDown={(e) => {
@@ -990,6 +1015,31 @@ export function AppShell() {
                       e.nativeEvent.keyCode === 229
                     ) {
                       return;
+                    }
+                    if (slashCommands.length > 0) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setSelectedSlashCommandIndex((index) => (index + 1) % slashCommands.length);
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setSelectedSlashCommandIndex(
+                          (index) => (index - 1 + slashCommands.length) % slashCommands.length,
+                        );
+                        return;
+                      }
+                      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                        e.preventDefault();
+                        selectSlashCommand(
+                          slashCommands[Math.min(selectedSlashCommandIndex, slashCommands.length - 1)],
+                        );
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        setSlashCommandMenuDismissed(true);
+                        return;
+                      }
                     }
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
