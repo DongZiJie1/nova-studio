@@ -285,6 +285,7 @@ export function AppShell() {
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [projectFilesLoading, setProjectFilesLoading] = useState(false);
   const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
+  const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -517,11 +518,15 @@ export function AppShell() {
 
       // Add user message to UI immediately
       addUserMessage(agentId, text);
+      const fileReferences = selectedFileReferences
+        .filter((path) => text.includes(`@${path}`))
+        .map((path) => ({ path }));
       setInput("");
+      setSelectedFileReferences([]);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
 
       // Send to agent via Tauri backend
-      await sendPrompt(agentId, text);
+      await sendPrompt(agentId, text, undefined, fileReferences.length > 0 ? fileReferences : undefined);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to send prompt:", msg);
@@ -547,6 +552,7 @@ export function AppShell() {
     if (!mention) return;
     const inserted = insertFileMention(input, mention, path);
     setInput(inserted.value);
+    setSelectedFileReferences((paths) => (paths.includes(path) ? paths : [...paths, path]));
     setCursorPosition(inserted.cursor);
     setFileMentionMenuDismissed(true);
     setSelectedProjectFileIndex(0);

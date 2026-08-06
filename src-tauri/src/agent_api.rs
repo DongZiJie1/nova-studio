@@ -1,5 +1,5 @@
 use crate::agent_manager::AgentManager;
-use crate::rpc_types::{AgentInfo, ImageContent, SpawnRequest};
+use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
 use axum::{
     extract::State as AxumState,
     http::{HeaderMap, StatusCode},
@@ -65,6 +65,8 @@ struct PromptBody {
     message: String,
     #[serde(default)]
     images: Option<Vec<ImageContent>>,
+    #[serde(default)]
+    file_references: Option<Vec<FileReference>>,
 }
 
 #[derive(Deserialize)]
@@ -138,7 +140,7 @@ async fn send_prompt(
     let _guard = process.prompt_lock.lock().await;
     state
         .manager
-        .send_prompt(&agent_id, body.message, body.images)
+        .send_prompt(&agent_id, body.message, body.images, body.file_references)
         .await
         .map_err(|e| (StatusCode::NOT_FOUND, Json(ApiError { error: e })))?;
     Ok(Json(serde_json::json!({ "ok": true })))

@@ -1,5 +1,5 @@
 use crate::agent_manager::AgentManager;
-use crate::rpc_types::{AgentInfo, ImageContent, SpawnRequest};
+use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -208,6 +208,7 @@ pub async fn send_prompt(
     agent_id: String,
     message: String,
     images: Option<Vec<ImageContent>>,
+    file_references: Option<Vec<FileReference>>,
 ) -> Result<(), String> {
     log::info!(
         "[cmd] send_prompt agent_id={} len={} images={:?}",
@@ -215,7 +216,10 @@ pub async fn send_prompt(
         message.len(),
         images.is_some()
     );
-    state.0.send_prompt(&agent_id, message, images).await
+    state
+        .0
+        .send_prompt(&agent_id, message, images, file_references)
+        .await
 }
 
 #[tauri::command]

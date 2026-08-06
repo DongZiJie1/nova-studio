@@ -13,8 +13,18 @@ export interface ImageContent {
   mimeType: string;
 }
 
+export interface FileReference {
+  path: string;
+}
+
 export type RpcCommand =
-  | { type: "prompt"; id?: string; message: string; images?: ImageContent[] }
+  | {
+      type: "prompt";
+      id?: string;
+      message: string;
+      images?: ImageContent[];
+      fileReferences?: FileReference[];
+    }
   | { type: "abort"; id?: string }
   | { type: "set_model"; id?: string; provider: string; modelId: string }
   | { type: "get_state"; id?: string }

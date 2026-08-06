@@ -1,6 +1,6 @@
 use crate::agent_process::AgentProcess;
 use crate::nova_host_process::NovaHostProcess;
-use crate::rpc_types::{AgentInfo, ImageContent, RpcCommand, SpawnRequest};
+use crate::rpc_types::{AgentInfo, FileReference, ImageContent, RpcCommand, SpawnRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -462,6 +462,7 @@ impl AgentManager {
         agent_id: &str,
         message: String,
         images: Option<Vec<ImageContent>>,
+        file_references: Option<Vec<FileReference>>,
     ) -> Result<(), String> {
         if self.get_process(agent_id).await.is_none() {
             self.activate(agent_id).await?;
@@ -477,6 +478,7 @@ impl AgentManager {
             id: None,
             message,
             images,
+            file_references,
         };
         agent.send_command(&cmd)
     }
@@ -514,6 +516,7 @@ impl AgentManager {
             id: None,
             message: question,
             images: None,
+            file_references: None,
         })?;
 
         let mut reply = String::new();

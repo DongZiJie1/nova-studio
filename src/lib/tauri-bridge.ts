@@ -12,6 +12,7 @@ import type {
   AgentEventPayload,
   AgentInfo,
   ExtensionUIResponse,
+  FileReference,
 } from "./rpc-types";
 
 // ─── Tauri Commands (frontend → Rust) ───
@@ -44,8 +45,9 @@ export async function sendPrompt(
   agentId: string,
   message: string,
   images?: string[],
+  fileReferences?: FileReference[],
 ): Promise<void> {
-  return invoke("send_prompt", { agentId, message, images });
+  return invoke("send_prompt", { agentId, message, images, fileReferences });
 }
 
 export async function abortAgent(agentId: string): Promise<void> {
