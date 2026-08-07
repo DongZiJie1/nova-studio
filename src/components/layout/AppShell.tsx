@@ -85,6 +85,193 @@ function formatTokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
+/** Animate a number toward its target value (rolling/ticking counter effect). */
+function useRollingNumber(target: number, duration = 400): number {
+  const [display, setDisplay] = useState(target);
+  const displayRef = useRef(target);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const from = displayRef.current;
+    const to = target;
+    if (from === to) return;
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      const current = from + (to - from) * eased;
+      displayRef.current = current;
+      setDisplay(current);
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        rafRef.current = null;
+      }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, [target, duration]);
+
+  return display;
+}
+
+/** Merged session usage + context stats chip with hover breakdown. */
+function SessionStats({ agent }: { agent: AgentState }) {
+  const [contextHoverOpen, setContextHoverOpen] = useState(false);
+  const su = agent.sessionUsage;
+  const cu = agent.contextUsage;
+  const live = agent.liveUsage;
+  const fmtK = (n: number) => (n >= 1000 ? (n / 1000).toFixed(0) + "k" : String(n));
+  const r = 7;
+  const circ = 2 * Math.PI * r;
+  const model = agent.modelMeta;
+
+  // Completed session totals + the in-flight turn's live usage.
+  // For providers that only report usage at the end of the stream, estimate the
+  // output tokens from the streamed text so the counter rolls live as tokens appear.
+  const estimatedLiveOutput = Math.round(agent.streamingText.length / 4);
+  const liveOutput = Math.max(live?.output ?? 0, estimatedLiveOutput);
+  const totalInput = (su?.input ?? 0) + (live?.input ?? 0);
+  const totalOutput = (su?.output ?? 0) + liveOutput;
+  const totalCacheRead = (su?.cacheRead ?? 0) + (live?.cacheRead ?? 0);
+  const totalCacheWrite = (su?.cacheWrite ?? 0) + (live?.cacheWrite ?? 0);
+
+  // Live context occupancy. cu.tokens already includes the last turn's output
+  // (input + output + cacheRead + cacheWrite); add the in-flight turn's new
+  // input + output so Used context grows in real time as tokens stream.
+  const baseContextTokens = cu?.tokens ?? 0;
+  const usedContextTokens = baseContextTokens + (live?.input ?? 0) + liveOutput;
+  const contextWindow = cu?.contextWindow ?? 0;
+  const pct = contextWindow > 0 ? (usedContextTokens / contextWindow) * 100 : null;
+  const color = pct == null ? "#8a90a4" : pct > 90 ? "#ef4444" : pct > 70 ? "#f59e0b" : "#818cf8";
+  const dash = pct != null ? (pct / 100) * circ : 0;
+
+  // Rolling token counters for ↑↓
+  const rollingInput = useRollingNumber(totalInput);
+  const rollingOutput = useRollingNumber(totalOutput);
+
+  const parts: string[] = [];
+  if (totalInput > 0) parts.push(`↑${formatTokens(Math.round(rollingInput))}`);
+  if (totalOutput > 0) parts.push(`↓${formatTokens(Math.round(rollingOutput))}`);
+
+  // Cache hit rate (no "CH" prefix) — shown inline and in the hover breakdown
+  const latestPromptTokens = totalInput + totalCacheRead + totalCacheWrite;
+  const cacheHitRate = latestPromptTokens > 0 ? (totalCacheRead / latestPromptTokens) * 100 : undefined;
+  const hasCache = totalCacheRead > 0 || totalCacheWrite > 0;
+  if (hasCache && cacheHitRate !== undefined) {
+    parts.push(`${cacheHitRate.toFixed(1)}%`);
+  }
+
+  const showRing = pct != null;
+  const showTokens = parts.length > 0;
+  if (!showRing && !showTokens) return null;
+  const statsText = parts.join(" ");
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 8px 4px 6px",
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.05)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        cursor: "default",
+        userSelect: "none",
+      }}
+      onMouseEnter={() => setContextHoverOpen(true)}
+      onMouseLeave={() => setContextHoverOpen(false)}
+    >
+      {showRing && (
+        <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
+          <circle cx="9" cy="9" r={r} fill="none" stroke={`${color}25`} strokeWidth="2" />
+          <circle
+            cx="9" cy="9" r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${circ - dash}`}
+            transform="rotate(-90 9 9)"
+          />
+        </svg>
+      )}
+      {pct != null && (
+        <span style={{ fontSize: 11, color, fontWeight: 500, whiteSpace: "nowrap" }}>
+          {pct.toFixed(1)}%
+        </span>
+      )}
+      {showTokens && (
+        <span style={{ fontSize: 11, color: "#8a90a4", whiteSpace: "nowrap" }}>{statsText}</span>
+      )}
+      {contextHoverOpen && cu && (
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            bottom: 36,
+            zIndex: 50,
+            width: 260,
+            padding: "12px 14px",
+            borderRadius: 10,
+            background: "rgba(18, 20, 31, 0.92)",
+            border: "1px solid rgba(151, 159, 204, 0.18)",
+            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
+            backdropFilter: "blur(16px)",
+            fontSize: 11.5,
+            color: "#c0c4d6",
+            lineHeight: 1.6,
+          }}
+        >
+          {model && (
+            <div style={{ color: "#e5e8ff", fontWeight: 600, marginBottom: 8, fontSize: 12 }}>
+              {model.name}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span>Used context</span>
+            <span style={{ color: color, fontWeight: 600 }}>
+              {fmtK(usedContextTokens)} / {fmtK(contextWindow)}
+            </span>
+          </div>
+          {hasCache && (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>Cache hit rate</span>
+                <span
+                  style={{
+                    color:
+                      cacheHitRate != null
+                        ? cacheHitRate > 90
+                          ? "#34d399"
+                          : cacheHitRate > 70
+                            ? "#f59e0b"
+                            : "#818cf8"
+                        : "#8a90a4",
+                    fontWeight: 600,
+                  }}
+                >
+                  {cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}
+                </span>
+              </div>
+            </>
+          )}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
+          <div style={{ display: "flex", justifyContent: "space-between", color: "#8a90a4" }}>
+            <span>Available</span>
+            <span>{fmtK(Math.max(0, contextWindow - usedContextTokens))}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
 }
@@ -473,7 +660,6 @@ export function AppShell() {
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
-  const [contextHoverOpen, setContextHoverOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
@@ -895,6 +1081,7 @@ export function AppShell() {
           lastTurnUsage: null,
           sessionUsage: null,
           autoCompactionEnabled: true,
+          liveUsage: null,
         };
         addAgent(newAgent);
         agentId = info.id;
@@ -944,6 +1131,21 @@ export function AppShell() {
       }
       setPendingAttachments([]);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
+
+      // Provisional input estimate so the token counter starts rolling the moment
+      // the message is sent (real usage arrives from message_update/end events).
+      const baseCtxTokens = activeAgent?.contextUsage?.tokens ?? 0;
+      const estTurnInput = Math.round(baseCtxTokens + finalMessage.length / 4);
+      useAgentStore.setState((s) => ({
+        agents: s.agents.map((a) =>
+          a.id === agentId
+            ? {
+                ...a,
+                liveUsage: { input: estTurnInput, output: 0, cacheRead: 0, cacheWrite: 0 },
+              }
+            : a,
+        ),
+      }));
 
       // Send to agent via Tauri backend
       await sendPrompt(
@@ -1874,140 +2076,7 @@ export function AppShell() {
                     }}
                   >
                     {/* Session usage + context (merged TUI-footer style) */}
-                    {activeAgent &&
-                      (activeAgent.sessionUsage ||
-                        (activeAgent.contextUsage && activeAgent.contextUsage.percent != null)) &&
-                      (() => {
-                        const su = activeAgent.sessionUsage;
-                        const cu = activeAgent.contextUsage;
-                        const pct = cu?.percent ?? null;
-                        const color = pct == null ? "#8a90a4" : pct > 90 ? "#ef4444" : pct > 70 ? "#f59e0b" : "#818cf8";
-                        const fmtK = (n: number) => (n >= 1000 ? (n / 1000).toFixed(0) + "k" : String(n));
-                        const r = 7;
-                        const circ = 2 * Math.PI * r;
-                        const dash = pct != null ? (pct / 100) * circ : 0;
-                        const model = activeAgent.modelMeta;
-                        const pctOf = (n: number) =>
-                          cu && cu.contextWindow > 0 ? ((n / cu.contextWindow) * 100).toFixed(1) : "0";
-
-                        // Token totals (↑↓R W CH) — only when present
-                        const parts: string[] = [];
-                        if (su && su.input > 0) parts.push(`↑${formatTokens(su.input)}`);
-                        if (su && su.output > 0) parts.push(`↓${formatTokens(su.output)}`);
-                        if (su && su.cacheRead > 0) parts.push(`R${formatTokens(su.cacheRead)}`);
-                        if (su && su.cacheWrite > 0) parts.push(`W${formatTokens(su.cacheWrite)}`);
-                        if (su) {
-                          const latestPromptTokens = su.input + su.cacheRead + su.cacheWrite;
-                          const hitRate =
-                            latestPromptTokens > 0 ? (su.cacheRead / latestPromptTokens) * 100 : undefined;
-                          if ((su.cacheRead > 0 || su.cacheWrite > 0) && hitRate !== undefined) {
-                            parts.push(`CH${hitRate.toFixed(1)}%`);
-                          }
-                        }
-
-                        const showRing = pct != null;
-                        const showTokens = parts.length > 0;
-                        if (!showRing && !showTokens) return null;
-                        const autoSuffix = activeAgent.autoCompactionEnabled ? " (auto)" : "";
-                        const statsText = parts.join(" ");
-
-                        return (
-                          <div
-                            style={{
-                              position: "relative",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              padding: "4px 8px 4px 6px",
-                              borderRadius: 8,
-                              background: "rgba(255,255,255,0.05)",
-                              border: "1px solid rgba(255,255,255,0.08)",
-                              cursor: "default",
-                              userSelect: "none",
-                            }}
-                            onMouseEnter={() => setContextHoverOpen(true)}
-                            onMouseLeave={() => setContextHoverOpen(false)}
-                          >
-                            {showRing && (
-                              <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
-                                <circle cx="9" cy="9" r={r} fill="none" stroke={`${color}25`} strokeWidth="2" />
-                                <circle
-                                  cx="9" cy="9" r={r}
-                                  fill="none"
-                                  stroke={color}
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeDasharray={`${dash} ${circ - dash}`}
-                                  transform="rotate(-90 9 9)"
-                                />
-                              </svg>
-                            )}
-                            {pct != null && (
-                              <span style={{ fontSize: 11, color, fontWeight: 500, whiteSpace: "nowrap" }}>
-                                {pct.toFixed(1)}%
-                              </span>
-                            )}
-                            {showTokens && (
-                              <span style={{ fontSize: 11, color: "#8a90a4", whiteSpace: "nowrap" }}>
-                                {statsText}
-                                {autoSuffix}
-                              </span>
-                            )}
-                            {contextHoverOpen && cu && (
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  right: 0,
-                                  bottom: 36,
-                                  zIndex: 50,
-                                  width: 260,
-                                  padding: "12px 14px",
-                                  borderRadius: 10,
-                                  background: "rgba(18, 20, 31, 0.92)",
-                                  border: "1px solid rgba(151, 159, 204, 0.18)",
-                                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
-                                  backdropFilter: "blur(16px)",
-                                  fontSize: 11.5,
-                                  color: "#c0c4d6",
-                                  lineHeight: 1.6,
-                                }}
-                              >
-                                {model && (
-                                  <div style={{ color: "#e5e8ff", fontWeight: 600, marginBottom: 8, fontSize: 12 }}>
-                                    {model.name}
-                                  </div>
-                                )}
-                                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                  <span>Used context</span>
-                                  <span style={{ color: color, fontWeight: 600 }}>
-                                    {cu.tokens != null ? fmtK(cu.tokens) : "?"} / {fmtK(cu.contextWindow)}
-                                  </span>
-                                </div>
-                                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
-                                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                  <span>System prompt</span>
-                                  <span>
-                                    {fmtK(cu.systemPromptTokens)}{" "}
-                                    <span style={{ color: "#6d7387" }}>({pctOf(cu.systemPromptTokens)}%)</span>
-                                  </span>
-                                </div>
-                                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                  <span>Tool results</span>
-                                  <span>
-                                    {fmtK(cu.toolResultTokens)}{" "}
-                                    <span style={{ color: "#6d7387" }}>({pctOf(cu.toolResultTokens)}%)</span>
-                                  </span>
-                                </div>
-                                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
-                                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a90a4" }}>
-                                  <span>Available</span>
-                                  <span>{fmtK(Math.max(0, cu.contextWindow - (cu.tokens ?? 0)))}</span>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                    {activeAgent && <SessionStats agent={activeAgent} />}
                     {/* Model selector - show on homepage (no active agent) or when models are loaded */}
                     {(availableModels.length > 0 || !activeId) && (
                       <div style={{ position: "relative" }}>
