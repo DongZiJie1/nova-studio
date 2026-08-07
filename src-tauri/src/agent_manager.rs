@@ -424,6 +424,9 @@ impl AgentManager {
 
         if let Some(agent) = self.get_process(&agent_id).await {
             let _ = agent.send_command(&RpcCommand::GetMessages { id: None });
+            let _ = agent.send_command(&RpcCommand::GetState { id: None });
+            let _ = agent.send_command(&RpcCommand::GetSessionStats { id: None });
+            let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
         }
 
         // Notify the frontend even when the agent was created through the
@@ -444,6 +447,9 @@ impl AgentManager {
             // The frontend can be reloaded while the process remains alive.
             // Always replay history when the user selects an existing process.
             agent.send_command(&RpcCommand::GetMessages { id: None })?;
+            let _ = agent.send_command(&RpcCommand::GetState { id: None });
+            let _ = agent.send_command(&RpcCommand::GetSessionStats { id: None });
+            let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
             return self.get_info(agent_id).await;
         }
         let record = self
@@ -489,6 +495,89 @@ impl AgentManager {
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         let cmd = RpcCommand::Abort { id: None };
         agent.send_command(&cmd)
+    }
+
+    /// Request session stats (context usage, token counts) from an agent
+    pub async fn request_session_stats(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetSessionStats { id: None })
+    }
+
+    /// Request available models from an agent
+    pub async fn request_available_models(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetAvailableModels { id: None })
+    }
+
+    /// Switch model for an agent
+    pub async fn set_model(&self, agent_id: &str, provider: String, model_id: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::SetModel { id: None, provider, model_id })
+    }
+
+    /// List all available models from nova CLI
+    pub async fn list_all_models(&self) -> Result<Vec<serde_json::Value>, String> {
+        let is_js_file = self.cli_path.ends_with(".js");
+        let mut command = if is_js_file {
+            let mut command = tokio::process::Command::new("node");
+            command.arg(&self.cli_path);
+            command
+        } else {
+            tokio::process::Command::new(&self.cli_path)
+        };
+        let output = command
+            .arg("--list-models")
+            .output()
+            .await
+            .map_err(|error| format!("Failed to list models: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Nova list-models failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        // Skip header line, parse remaining lines
+        let mut models = Vec::new();
+        for line in lines.iter().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let provider = parts[0];
+                let model_id = parts[1];
+                let context_window = parts[2];
+                let max_tokens = parts[3];
+                let thinking = parts.get(4).map(|s| *s == "yes").unwrap_or(false);
+                let images = parts.get(5).map(|s| *s == "yes").unwrap_or(false);
+                // Parse context window (e.g., "1M" -> 1000000, "200K" -> 200000)
+                let context_window_num = if context_window.ends_with('M') {
+                    context_window.trim_end_matches('M').parse::<f64>().unwrap_or(0.0) * 1_000_000.0
+                } else if context_window.ends_with('K') {
+                    context_window.trim_end_matches('K').parse::<f64>().unwrap_or(0.0) * 1_000.0
+                } else {
+                    context_window.parse::<f64>().unwrap_or(0.0)
+                };
+                // Parse max tokens
+                let max_tokens_num = if max_tokens.ends_with('K') {
+                    max_tokens.trim_end_matches('K').parse::<f64>().unwrap_or(0.0) * 1_000.0
+                } else {
+                    max_tokens.parse::<f64>().unwrap_or(0.0)
+                };
+                models.push(serde_json::json!({
+                    "id": model_id,
+                    "name": model_id,
+                    "provider": provider,
+                    "contextWindow": context_window_num as i64,
+                    "maxTokens": max_tokens_num as i64,
+                    "reasoning": thinking,
+                    "images": images,
+                }));
+            }
+        }
+        Ok(models)
     }
 
     /// Ask an agent a question and wait for its full reply.

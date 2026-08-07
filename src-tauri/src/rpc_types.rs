@@ -45,6 +45,8 @@ pub enum RpcCommand {
     GetMessages { id: Option<String> },
     #[serde(rename = "get_session_stats")]
     GetSessionStats { id: Option<String> },
+    #[serde(rename = "get_available_models")]
+    GetAvailableModels { id: Option<String> },
     #[serde(rename = "new_session")]
     NewSession { id: Option<String> },
     #[serde(rename = "set_thinking_level")]
@@ -144,7 +146,10 @@ pub enum AgentMessage {
     #[serde(rename = "turn_start")]
     TurnStart {},
     #[serde(rename = "turn_end")]
-    TurnEnd {},
+    TurnEnd {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
     #[serde(rename = "extension_ui_request")]
     ExtensionUIRequest {
         #[serde(flatten)]

@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Background } from "./Background";
-import { useAgentStore, type AgentState } from "../../stores/agent-store";
+import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import {
   abortAgent,
@@ -9,9 +9,16 @@ import {
   listProjectFiles,
   spawnAgent,
   sendPrompt,
+  setModel,
+  requestAvailableModels,
+  listAllModels,
+  fetchModelsViaShell,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
+import type { ImageContent } from "../../lib/rpc-types";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
@@ -35,6 +42,12 @@ import {
   X,
   ExternalLink,
   EyeOff,
+  FileText,
+  FileCode,
+  FileJson,
+  FileType,
+  Image,
+  File,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -51,6 +64,164 @@ interface ConversationPair {
   userMessageId: string;
   userText: string;
   assistantText: string;
+}
+
+interface PendingAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  data: string;        // base64 (images) or text content (text files)
+  isImage: boolean;
+  isText: boolean;
+  previewUrl?: string;  // blob URL for image thumbnails
+}
+
+/** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
+function formatTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1000000) return `${Math.round(count / 1000)}k`;
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+  return `${Math.round(count / 1000000)}M`;
+}
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/");
+}
+
+function isTextFile(file: File): boolean {
+  if (file.type.startsWith("text/")) return true;
+  const textExts = [".txt", ".md", ".json", ".xml", ".yaml", ".yml", ".csv", ".toml",
+    ".js", ".ts", ".jsx", ".tsx", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp",
+    ".h", ".css", ".html", ".sh", ".bash", ".zsh", ".sql", ".env", ".gitignore",
+    ".dockerfile", ".makefile", ".cfg", ".ini", ".conf", ".log", ".diff", ".patch"];
+  const name = file.name.toLowerCase();
+  return textExts.some((ext) => name.endsWith(ext));
+}
+
+type FileTypeIcon = {
+  icon: typeof FileText;
+  color: string;
+  label: string;
+};
+
+function getFileTypeIcon(name: string, mimeType: string): FileTypeIcon {
+  const lower = name.toLowerCase();
+  if (mimeType === "application/pdf" || lower.endsWith(".pdf")) {
+    return { icon: FileText, color: "#ef4444", label: "PDF" };
+  }
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return { icon: FileText, color: "#818cf8", label: "MD" };
+  }
+  if (lower.endsWith(".json")) {
+    return { icon: FileJson, color: "#f59e0b", label: "JSON" };
+  }
+  if (/\.(js|ts|jsx|tsx|mjs|cjs)$/.test(lower)) {
+    return { icon: FileCode, color: "#eab308", label: "JS/TS" };
+  }
+  if (/\.(py|rb|go|rs|java|c|cpp|h|swift|kt)$/.test(lower)) {
+    return { icon: FileCode, color: "#22c55e", label: "Code" };
+  }
+  if (/\.(html|css|scss|less|svg)$/.test(lower)) {
+    return { icon: FileCode, color: "#06b6d4", label: "Web" };
+  }
+  if (/\.(xml|yaml|yml|toml|ini|cfg|conf)$/.test(lower)) {
+    return { icon: FileType, color: "#a78bfa", label: "Config" };
+  }
+  if (/\.(txt|log|diff|patch|sh|bash|zsh)$/.test(lower)) {
+    return { icon: FileText, color: "#9ca3af", label: "Text" };
+  }
+  if (mimeType.startsWith("image/")) {
+    return { icon: Image, color: "#ec4899", label: "Image" };
+  }
+  return { icon: File, color: "#6b7280", label: "File" };
+}
+
+function fileToAttachment(file: File): Promise<PendingAttachment> {
+  const isImage = isImageFile(file);
+  const isText = !isImage && isTextFile(file);
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      let data: string;
+      if (isImage) {
+        // Strip the data URL prefix to get pure base64
+        data = result.includes(",") ? result.split(",")[1] : result;
+      } else if (isText) {
+        // Plain text content (readAsText gives us raw text)
+        data = result;
+      } else {
+        // Binary non-image: store as base64
+        data = result.includes(",") ? result.split(",")[1] : result;
+      }
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        data,
+        isImage,
+        isText,
+        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+      });
+    };
+    reader.onerror = reject;
+    if (isText) {
+      reader.readAsText(file);
+    } else {
+      reader.readAsDataURL(file);
+    }
+  });
+}
+
+/** Guess MIME type from file extension (for Tauri drag-drop paths which lack MIME) */
+function guessMimeType(name: string): string {
+  const ext = name.toLowerCase().split(".").pop() || "";
+  const map: Record<string, string> = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+    webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon",
+    pdf: "application/pdf",
+    json: "application/json", xml: "application/xml",
+    txt: "text/plain", md: "text/markdown", csv: "text/csv",
+    js: "text/javascript", ts: "text/typescript", jsx: "text/javascript", tsx: "text/typescript",
+    py: "text/x-python", rb: "text/x-ruby", go: "text/x-go", rs: "text/x-rust",
+    html: "text/html", css: "text/css", sh: "text/x-shellscript",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+/** Convert a Tauri file path to a PendingAttachment by reading its content via fs plugin */
+async function pathToAttachment(filePath: string): Promise<PendingAttachment> {
+  const name = filePath.split("/").pop() || filePath;
+  const mimeType = guessMimeType(name);
+  const isImage = mimeType.startsWith("image/");
+  const textMimes = ["text/", "application/json", "application/xml"];
+  const isText = !isImage && (textMimes.some((t) => mimeType.startsWith(t)) || isTextFile({ name, type: mimeType } as File));
+
+  let data: string;
+  let previewUrl: string | undefined;
+
+  if (isText) {
+    data = await readTextFile(filePath);
+  } else {
+    const bytes = await readFile(filePath);
+    // Convert Uint8Array to base64
+    const blob = new Blob([bytes]);
+    data = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.includes(",") ? result.split(",")[1] : result);
+      };
+      reader.readAsDataURL(blob);
+    });
+    if (isImage) {
+      previewUrl = URL.createObjectURL(blob);
+    }
+  }
+
+  return { id: crypto.randomUUID(), name, mimeType, data, isImage, isText, previewUrl };
 }
 
 function buildConversationPairs(messages: AgentState["messages"]): ConversationPair[] {
@@ -272,10 +443,14 @@ export function AppShell() {
   const addUserMessage = useAgentStore((s) => s.addUserMessage);
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
+  const availableModels = useAgentStore((s) => s.availableModels);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
+  const setDefaultModel = useSettingsStore((s) => s.setDefaultModel);
+  const setDefaultProvider = useSettingsStore((s) => s.setDefaultProvider);
+
 
   const [input, setInput] = useState("");
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
@@ -287,11 +462,19 @@ export function AppShell() {
   const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
   const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  // Keep ref in sync for cleanup on unmount
+  useEffect(() => { attachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [savedInput, setSavedInput] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [contextHoverOpen, setContextHoverOpen] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
   const [agentNames, setAgentNames] = useState<Record<string, string>>(
@@ -306,19 +489,46 @@ export function AppShell() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
+  const modelPickerRef = useRef<HTMLDivElement>(null);
   const inputCardRef = useRef<HTMLDivElement>(null);
+  const attachmentsRef = useRef<PendingAttachment[]>([]);
   const sidebarHoverModeRef = useRef(false);
   const sidebarHoverCloseTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
 
+  const userHistory = useMemo(() => {
+    if (!activeId) return [];
+    const agent = agents.find(a => a.id === activeId);
+    if (!agent) return [];
+    return agent.messages
+      .filter(m => m.role === "user")
+      .map(m => m.content)
+      .reverse();
+  }, [activeId, agents]);
+
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, []);
+    const hasFiles = pendingAttachments.length > 0;
+    const maxHeight = 200;
+    if (hasFiles) {
+      // Files attached (icons occupy space) → allow growing
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+      el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+    } else {
+      // No files → keep fixed height, never grow; scroll inside instead
+      el.style.height = "";
+      el.style.overflowY = "auto";
+    }
+  }, [pendingAttachments.length]);
+
+  // Re-apply textarea height when attachments change (fixed when none, growable when files present)
+  useEffect(() => {
+    autoResize();
+  }, [autoResize, pendingAttachments]);
 
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
   const isAgentHidden = (agent: AgentState): boolean => {
@@ -333,6 +543,16 @@ export function AppShell() {
   const visibleAgents = agents.filter((agent) => !isAgentHidden(agent));
   const visibleAgentsById = new Map(visibleAgents.map((agent) => [agent.id, agent]));
   const activeAgent = visibleAgents.find((a) => a.id === activeId);
+  // Source of truth for the model shown in the picker. Prefer the agent's
+  // modelMeta (from get_state, reflects the actual session model) over the
+  // possibly-stale `model` field that list_agents reports from spawn time.
+  const activeModelId = activeAgent
+    ? (activeAgent.modelMeta?.id ?? activeAgent.model)
+    : defaultModel;
+  const activeModelName = useMemo(
+    () => availableModels.find((m) => m.id === activeModelId)?.name ?? activeModelId ?? "Model",
+    [availableModels, activeModelId],
+  );
   const childrenByParent = new Map<string, AgentState[]>();
   for (const agent of visibleAgents) {
     if (!agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId)) continue;
@@ -431,6 +651,17 @@ export function AppShell() {
   }, [projectPickerOpen]);
 
   useEffect(() => {
+    if (!modelPickerOpen) return;
+    const closePicker = (event: MouseEvent) => {
+      if (!modelPickerRef.current?.contains(event.target as Node)) {
+        setModelPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [modelPickerOpen]);
+
+  useEffect(() => {
     if (slashCommands.length === 0 && !fileMention) return;
     const dismissSlashCommands = (event: MouseEvent) => {
       if (!inputCardRef.current?.contains(event.target as Node)) {
@@ -469,15 +700,164 @@ export function AppShell() {
     [],
   );
 
+  // Auto-select a default model when models are loaded and none is configured yet
+  useEffect(() => {
+    if (availableModels.length === 0) return;
+    if (defaultModel) return;
+
+    const pick = (pool: AvailableModel[]): AvailableModel | undefined => {
+      // Prefer non-dated flagship ids (no -YYYYMMDD suffix)
+      const flagships = pool.filter((m) => !/-\d{8}$/.test(m.id));
+      const candidates = flagships.length > 0 ? flagships : pool;
+      // Prefer vision-capable models, then largest context window
+      const vision = candidates.filter((m) => m.images);
+      const bestPool = vision.length > 0 ? vision : candidates;
+      return [...bestPool].sort((a, b) => b.contextWindow - a.contextWindow)[0];
+    };
+
+    const byProvider = defaultProvider
+      ? availableModels.filter((m) => m.provider === defaultProvider)
+      : [];
+    const chosen = pick(byProvider.length > 0 ? byProvider : availableModels) ?? availableModels[0];
+    if (chosen) {
+      setDefaultModel(chosen.id);
+      setDefaultProvider(chosen.provider);
+    }
+  }, [availableModels, defaultModel, defaultProvider, setDefaultModel, setDefaultProvider]);
+
   // Load agents on mount
   useEffect(() => {
     listAgents()
       .then((infos) => {
         syncAgents(infos);
         setAgentsLoaded(true);
+        // If there's a running agent, get models from it
+        if (infos.length > 0) {
+          void requestAvailableModels(infos[0].id).catch(() => {});
+        }
       })
       .catch(() => setAgentsLoaded(true));
+
+    // Always fetch all models via the Rust command (uses absolute CLI path,
+    // works without a running agent). Populates the homepage model picker.
+    void listAllModels()
+      .then((models) => {
+        const mapped: AvailableModel[] = (models ?? []).map((m) => ({
+          id: String(m.id ?? ""),
+          name: String(m.name ?? ""),
+          provider: String(m.provider ?? ""),
+          contextWindow: Number(m.contextWindow ?? 0),
+          maxTokens: Number(m.maxTokens ?? 0),
+          reasoning: Boolean(m.reasoning),
+          images: Boolean(m.images),
+        }));
+        if (mapped.length > 0) {
+          useAgentStore.setState({ availableModels: mapped });
+        } else {
+          // Fallback: try via shell
+          void fetchModelsViaShell()
+            .then((shellModels) => {
+              const mapped2: AvailableModel[] = (shellModels ?? []).map((m) => ({
+                id: String(m.id ?? ""),
+                name: String(m.name ?? ""),
+                provider: String(m.provider ?? ""),
+                contextWindow: Number(m.contextWindow ?? 0),
+                maxTokens: Number(m.maxTokens ?? 0),
+                reasoning: Boolean(m.reasoning),
+                images: Boolean(m.images),
+              }));
+              if (mapped2.length > 0) {
+                useAgentStore.setState({ availableModels: mapped2 });
+              }
+            })
+            .catch((err) =>
+              console.error("Failed to fetch models via shell:", err)
+            );
+        }
+      })
+      .catch((err) => {
+        console.error("[AppShell] listAllModels failed:", err);
+        void fetchModelsViaShell()
+          .then((shellModels) => {
+            const mapped2: AvailableModel[] = (shellModels ?? []).map((m) => ({
+              id: String(m.id ?? ""),
+              name: String(m.name ?? ""),
+              provider: String(m.provider ?? ""),
+              contextWindow: Number(m.contextWindow ?? 0),
+              maxTokens: Number(m.maxTokens ?? 0),
+              reasoning: Boolean(m.reasoning),
+              images: Boolean(m.images),
+            }));
+            if (mapped2.length > 0) {
+              useAgentStore.setState({ availableModels: mapped2 });
+            }
+          })
+          .catch((err2) =>
+            console.error("Failed to fetch models via shell:", err2)
+          );
+      });
   }, []);
+
+  // Cleanup blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      for (const att of attachmentsRef.current) {
+        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      }
+    };
+  }, []);
+
+  const addFiles = useCallback(async (files: FileList | File[]) => {
+    const newAttachments: PendingAttachment[] = await Promise.all(
+      Array.from(files).map(fileToAttachment),
+    );
+    setPendingAttachments((prev) => [...prev, ...newAttachments]);
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => {
+      const att = prev.find((a) => a.id === id);
+      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
+  // Tauri native drag-drop — register once via ref, dedup by path
+  const dropUnlistenRef = useRef<(() => void) | null>(null);
+  const droppedPathsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (dropUnlistenRef.current) return; // already registered
+    getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setIsDragOver(true);
+      } else if (event.payload.type === "leave") {
+        setIsDragOver(false);
+      } else if (event.payload.type === "drop") {
+        setIsDragOver(false);
+        console.log("[drop] raw paths:", event.payload.paths, "already loaded:", [...droppedPathsRef.current]);
+        const paths = event.payload.paths.filter((p) => !droppedPathsRef.current.has(p));
+        console.log("[drop] new paths:", paths);
+        if (paths.length === 0) return;
+        paths.forEach((p) => droppedPathsRef.current.add(p));
+        Promise.all(paths.map(pathToAttachment))
+          .then((loaded) => setPendingAttachments((prev) => [...prev, ...loaded]))
+          .catch((err) => console.error("[drag-drop] failed:", err));
+      }
+    }).then((fn) => { dropUnlistenRef.current = fn; });
+  }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const fileItems = Array.from(items).filter((item) => item.kind === "file");
+    if (fileItems.length === 0) return;
+    e.preventDefault();
+    const files = fileItems
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (files.length > 0) addFiles(files);
+  }, [addFiles]);
 
   const handleSubmit = async () => {
     const text = input.trim();
@@ -510,23 +890,68 @@ export function AppShell() {
           messageCount: info.message_count,
           streamingText: "",
           activeToolCalls: new Map(),
+          modelMeta: null,
+          contextUsage: null,
+          lastTurnUsage: null,
+          sessionUsage: null,
+          autoCompactionEnabled: true,
         };
         addAgent(newAgent);
         agentId = info.id;
         setPendingProjectCwd(null);
+        // Request available models for the new agent
+        void requestAvailableModels(info.id).catch((err) =>
+          console.error("Failed to request available models:", err)
+        );
       }
 
       // Add user message to UI immediately
-      addUserMessage(agentId, text);
+      const msgAttachments = pendingAttachments.map((att) => ({
+        name: att.name,
+        mimeType: att.mimeType,
+        isImage: att.isImage,
+      }));
+      addUserMessage(agentId, text, msgAttachments.length > 0 ? msgAttachments : undefined);
       const fileReferences = selectedFileReferences
         .filter((path) => text.includes(`@${path}`))
         .map((path) => ({ path }));
+
+      // Build ImageContent[] from image attachments
+      const images: ImageContent[] = pendingAttachments
+        .filter((att) => att.isImage)
+        .map((att) => ({
+          type: "image" as const,
+          data: att.data,
+          mimeType: att.mimeType,
+        }));
+
+      // Append text file content as context to the message
+      const textFiles = pendingAttachments.filter((att) => att.isText);
+      let finalMessage = text;
+      if (textFiles.length > 0) {
+        const fileContexts = textFiles
+          .map((att) => `\n\n--- Attached file: ${att.name} ---\n${att.data}`)
+          .join("");
+        finalMessage = text + fileContexts;
+      }
+
+      // Clear input and attachments
       setInput("");
+      setHistoryIndex(-1);
       setSelectedFileReferences([]);
+      for (const att of pendingAttachments) {
+        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      }
+      setPendingAttachments([]);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
 
       // Send to agent via Tauri backend
-      await sendPrompt(agentId, text, undefined, fileReferences.length > 0 ? fileReferences : undefined);
+      await sendPrompt(
+        agentId,
+        finalMessage,
+        images.length > 0 ? images : undefined,
+        fileReferences.length > 0 ? fileReferences : undefined,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to send prompt:", msg);
@@ -595,6 +1020,10 @@ export function AppShell() {
           model: info.model,
           messageCount: Math.max(info.message_count, agentsById.get(agentId)?.messageCount ?? 0),
         });
+        // Request available models for the activated agent
+        void requestAvailableModels(agentId).catch((err) =>
+          console.error("Failed to request available models:", err)
+        );
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -645,6 +1074,41 @@ export function AppShell() {
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-bg-primary">
       <Background />
+
+      {/* Full-window drag overlay */}
+      {isDragOver && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9990,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(99, 102, 241, 0.08)",
+            backdropFilter: "blur(4px)",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 12,
+              padding: "32px 48px",
+              borderRadius: 16,
+              border: "2px dashed #818cf8",
+              background: "rgba(129, 140, 248, 0.1)",
+            }}
+          >
+            <Paperclip size={32} color="#818cf8" />
+            <span style={{ color: "#818cf8", fontSize: 15, fontWeight: 500 }}>
+              Drop files here
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (
@@ -1066,14 +1530,137 @@ export function AppShell() {
           <div
             style={{
               flexShrink: 0,
-              padding: "20px 24px 56px",
+              padding: "60px 24px 56px",
               display: "flex",
               justifyContent: "center",
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
               {/* Input card */}
-              <div ref={inputCardRef} className="nova-input" style={{ overflow: "visible" }}>
+              <div
+                ref={inputCardRef}
+                className="nova-input"
+                style={{
+                  overflow: "visible",
+                  ...(isDragOver ? {
+                    outline: "2px dashed #818cf8",
+                    outlineOffset: -2,
+                    background: "rgba(129, 140, 248, 0.06)",
+                  } : {}),
+                }}
+              >
+                {/* Attachment previews */}
+                {pendingAttachments.length > 0 && (() => {
+                  const MAX_VISIBLE = 6; // ~2 rows of 3
+                  const visible = pendingAttachments.slice(0, MAX_VISIBLE);
+                  const hiddenCount = pendingAttachments.length - MAX_VISIBLE;
+                  return (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      padding: "10px 12px 0",
+                      maxHeight: 136,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {visible.map((att) => {
+                      const typeInfo = getFileTypeIcon(att.name, att.mimeType);
+                      const IconComp = typeInfo.icon;
+                      return (
+                      <div
+                        key={att.id}
+                        style={{
+                          position: "relative",
+                          width: att.isImage ? 64 : "auto",
+                          maxWidth: 200,
+                          borderRadius: 8,
+                          overflow: "hidden",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          background: "rgba(255,255,255,0.05)",
+                        }}
+                      >
+                        {att.isImage && att.previewUrl ? (
+                          <img
+                            src={att.previewUrl}
+                            alt={att.name}
+                            style={{
+                              width: 64,
+                              height: 64,
+                              objectFit: "cover",
+                              display: "block",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "6px 10px",
+                              fontSize: 11,
+                              color: "#d1d5db",
+                            }}
+                          >
+                            <IconComp size={14} color={typeInfo.color} style={{ flexShrink: 0 }} />
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                maxWidth: 120,
+                              }}
+                            >
+                              {att.name}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 9,
+                                color: typeInfo.color,
+                                background: `${typeInfo.color}18`,
+                                padding: "1px 4px",
+                                borderRadius: 4,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {typeInfo.label}
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => removeAttachment(att.id)}
+                          style={{
+                            position: "absolute",
+                            top: 2,
+                            right: 2,
+                            width: 18,
+                            height: 18,
+                            borderRadius: "50%",
+                            background: "rgba(0,0,0,0.7)",
+                            border: "none",
+                            color: "#fff",
+                            fontSize: 10,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: 0,
+                          }}
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                      );
+                    })}
+                    {hiddenCount > 0 && (
+                      <span style={{ fontSize: 11, color: "#6b7280", alignSelf: "center" }}>
+                        +{hiddenCount} more
+                      </span>
+                    )}
+                  </div>
+                  );
+                })()}
                 {slashCommands.length > 0 && (
                   <SlashCommandMenu
                     commands={slashCommands}
@@ -1096,6 +1683,7 @@ export function AppShell() {
                   value={input}
                   onChange={(e) => {
                     setInput(e.target.value);
+                    setHistoryIndex(-1);
                     setCursorPosition(e.currentTarget.selectionStart);
                     setSlashCommandMenuDismissed(false);
                     setFileMentionMenuDismissed(false);
@@ -1104,6 +1692,7 @@ export function AppShell() {
                     autoResize();
                   }}
                   onSelect={(e) => setCursorPosition(e.currentTarget.selectionStart)}
+                  onPaste={handlePaste}
                   onKeyDown={(e) => {
                     if (
                       isComposingRef.current ||
@@ -1161,6 +1750,51 @@ export function AppShell() {
                     if (fileMention && e.key === "Escape") {
                       setFileMentionMenuDismissed(true);
                       return;
+                    }
+                    if (userHistory.length > 0) {
+                      if (e.key === "ArrowUp") {
+                        const textarea = textareaRef.current;
+                        if (textarea) {
+                          const cursorPos = textarea.selectionStart;
+                          const textBeforeCursor = input.substring(0, cursorPos);
+                          const isFirstLine = !textBeforeCursor.includes("\n");
+                          if (isFirstLine) {
+                            e.preventDefault();
+                            if (historyIndex === -1) {
+                              setSavedInput(input);
+                            }
+                            const newIndex = Math.min(historyIndex + 1, userHistory.length - 1);
+                            setHistoryIndex(newIndex);
+                            setInput(userHistory[newIndex]);
+                            setTimeout(() => {
+                              if (textareaRef.current) {
+                                textareaRef.current.selectionStart = textareaRef.current.value.length;
+                                textareaRef.current.selectionEnd = textareaRef.current.value.length;
+                              }
+                            }, 0);
+                            return;
+                          }
+                        }
+                      }
+                      if (e.key === "ArrowDown") {
+                        if (historyIndex >= 0) {
+                          e.preventDefault();
+                          const newIndex = historyIndex - 1;
+                          setHistoryIndex(newIndex);
+                          if (newIndex === -1) {
+                            setInput(savedInput);
+                          } else {
+                            setInput(userHistory[newIndex]);
+                          }
+                          setTimeout(() => {
+                            if (textareaRef.current) {
+                              textareaRef.current.selectionStart = textareaRef.current.value.length;
+                              textareaRef.current.selectionEnd = textareaRef.current.value.length;
+                            }
+                          }, 0);
+                          return;
+                        }
+                      }
                     }
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
@@ -1225,11 +1859,10 @@ export function AppShell() {
                     onChange={(e) => {
                       const files = e.target.files;
                       if (files && files.length > 0) {
-                        console.log(
-                          "selected files:",
-                          Array.from(files).map((f) => f.name),
-                        );
+                        addFiles(files);
                       }
+                      // Reset so same file can be selected again
+                      e.target.value = "";
                     }}
                   />
                   <div
@@ -1240,6 +1873,265 @@ export function AppShell() {
                       position: "relative",
                     }}
                   >
+                    {/* Session usage + context (merged TUI-footer style) */}
+                    {activeAgent &&
+                      (activeAgent.sessionUsage ||
+                        (activeAgent.contextUsage && activeAgent.contextUsage.percent != null)) &&
+                      (() => {
+                        const su = activeAgent.sessionUsage;
+                        const cu = activeAgent.contextUsage;
+                        const pct = cu?.percent ?? null;
+                        const color = pct == null ? "#8a90a4" : pct > 90 ? "#ef4444" : pct > 70 ? "#f59e0b" : "#818cf8";
+                        const fmtK = (n: number) => (n >= 1000 ? (n / 1000).toFixed(0) + "k" : String(n));
+                        const r = 7;
+                        const circ = 2 * Math.PI * r;
+                        const dash = pct != null ? (pct / 100) * circ : 0;
+                        const model = activeAgent.modelMeta;
+                        const pctOf = (n: number) =>
+                          cu && cu.contextWindow > 0 ? ((n / cu.contextWindow) * 100).toFixed(1) : "0";
+
+                        // Token totals (↑↓R W CH) — only when present
+                        const parts: string[] = [];
+                        if (su && su.input > 0) parts.push(`↑${formatTokens(su.input)}`);
+                        if (su && su.output > 0) parts.push(`↓${formatTokens(su.output)}`);
+                        if (su && su.cacheRead > 0) parts.push(`R${formatTokens(su.cacheRead)}`);
+                        if (su && su.cacheWrite > 0) parts.push(`W${formatTokens(su.cacheWrite)}`);
+                        if (su) {
+                          const latestPromptTokens = su.input + su.cacheRead + su.cacheWrite;
+                          const hitRate =
+                            latestPromptTokens > 0 ? (su.cacheRead / latestPromptTokens) * 100 : undefined;
+                          if ((su.cacheRead > 0 || su.cacheWrite > 0) && hitRate !== undefined) {
+                            parts.push(`CH${hitRate.toFixed(1)}%`);
+                          }
+                        }
+
+                        const showRing = pct != null;
+                        const showTokens = parts.length > 0;
+                        if (!showRing && !showTokens) return null;
+                        const autoSuffix = activeAgent.autoCompactionEnabled ? " (auto)" : "";
+                        const statsText = parts.join(" ");
+
+                        return (
+                          <div
+                            style={{
+                              position: "relative",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "4px 8px 4px 6px",
+                              borderRadius: 8,
+                              background: "rgba(255,255,255,0.05)",
+                              border: "1px solid rgba(255,255,255,0.08)",
+                              cursor: "default",
+                              userSelect: "none",
+                            }}
+                            onMouseEnter={() => setContextHoverOpen(true)}
+                            onMouseLeave={() => setContextHoverOpen(false)}
+                          >
+                            {showRing && (
+                              <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
+                                <circle cx="9" cy="9" r={r} fill="none" stroke={`${color}25`} strokeWidth="2" />
+                                <circle
+                                  cx="9" cy="9" r={r}
+                                  fill="none"
+                                  stroke={color}
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeDasharray={`${dash} ${circ - dash}`}
+                                  transform="rotate(-90 9 9)"
+                                />
+                              </svg>
+                            )}
+                            {pct != null && (
+                              <span style={{ fontSize: 11, color, fontWeight: 500, whiteSpace: "nowrap" }}>
+                                {pct.toFixed(1)}%
+                              </span>
+                            )}
+                            {showTokens && (
+                              <span style={{ fontSize: 11, color: "#8a90a4", whiteSpace: "nowrap" }}>
+                                {statsText}
+                                {autoSuffix}
+                              </span>
+                            )}
+                            {contextHoverOpen && cu && (
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  right: 0,
+                                  bottom: 36,
+                                  zIndex: 50,
+                                  width: 260,
+                                  padding: "12px 14px",
+                                  borderRadius: 10,
+                                  background: "rgba(18, 20, 31, 0.92)",
+                                  border: "1px solid rgba(151, 159, 204, 0.18)",
+                                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
+                                  backdropFilter: "blur(16px)",
+                                  fontSize: 11.5,
+                                  color: "#c0c4d6",
+                                  lineHeight: 1.6,
+                                }}
+                              >
+                                {model && (
+                                  <div style={{ color: "#e5e8ff", fontWeight: 600, marginBottom: 8, fontSize: 12 }}>
+                                    {model.name}
+                                  </div>
+                                )}
+                                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span>Used context</span>
+                                  <span style={{ color: color, fontWeight: 600 }}>
+                                    {cu.tokens != null ? fmtK(cu.tokens) : "?"} / {fmtK(cu.contextWindow)}
+                                  </span>
+                                </div>
+                                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
+                                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span>System prompt</span>
+                                  <span>
+                                    {fmtK(cu.systemPromptTokens)}{" "}
+                                    <span style={{ color: "#6d7387" }}>({pctOf(cu.systemPromptTokens)}%)</span>
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span>Tool results</span>
+                                  <span>
+                                    {fmtK(cu.toolResultTokens)}{" "}
+                                    <span style={{ color: "#6d7387" }}>({pctOf(cu.toolResultTokens)}%)</span>
+                                  </span>
+                                </div>
+                                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
+                                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a90a4" }}>
+                                  <span>Available</span>
+                                  <span>{fmtK(Math.max(0, cu.contextWindow - (cu.tokens ?? 0)))}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    {/* Model selector - show on homepage (no active agent) or when models are loaded */}
+                    {(availableModels.length > 0 || !activeId) && (
+                      <div style={{ position: "relative" }}>
+                        <button
+                          type="button"
+                          onClick={() => setModelPickerOpen((open) => !open)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "5px 10px",
+                            borderRadius: 8,
+                            fontSize: 11.5,
+                            color: modelPickerOpen ? "#d5d9ff" : "#8a90a4",
+                            background: modelPickerOpen ? "rgba(129, 140, 248, 0.12)" : "rgba(255, 255, 255, 0.05)",
+                            border: "1px solid rgba(255, 255, 255, 0.08)",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            maxWidth: 180,
+                            overflow: "hidden",
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!modelPickerOpen) {
+                              e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)";
+                              e.currentTarget.style.color = "#b9c1ff";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!modelPickerOpen) {
+                              e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                              e.currentTarget.style.color = "#8a90a4";
+                            }
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                            <path d="M2 12h20" />
+                          </svg>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {activeModelName}
+                          </span>
+                        </button>
+                        {modelPickerOpen && (
+                          <div
+                            ref={modelPickerRef}
+                            style={{
+                              position: "absolute",
+                              right: 0,
+                              bottom: 36,
+                              zIndex: 50,
+                              width: 280,
+                              maxHeight: 360,
+                              overflowY: "auto",
+                              padding: 4,
+                              borderRadius: 12,
+                              background: "rgba(20, 22, 34, 0.6)",
+                              border: "1px solid rgba(255, 255, 255, 0.12)",
+                              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+                              backdropFilter: "blur(24px) saturate(150%)",
+                              WebkitBackdropFilter: "blur(24px) saturate(150%)",
+                            }}
+                          >
+                            {(() => {
+                              const grouped = new Map<string, AvailableModel[]>();
+                              for (const m of availableModels) {
+                                const arr = grouped.get(m.provider) ?? [];
+                                arr.push(m);
+                                grouped.set(m.provider, arr);
+                              }
+                              return Array.from(grouped.entries()).map(([provider, models]) => (
+                                <div key={provider}>
+                                  <div style={{ padding: "6px 10px 3px", fontSize: 10, color: "#5a6078", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                                    {provider}
+                                  </div>
+                                  {models.map((m) => {
+                                    const isActive = activeModelId === m.id;
+                                    return (
+                                      <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => {
+                                          if (activeAgent) {
+                                            setModel(activeAgent.id, m.provider, m.id);
+                                            updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
+                                          } else {
+                                            // On homepage, save as default model for new agents
+                                            setDefaultModel(m.id);
+                                            setDefaultProvider(m.provider);
+                                          }
+                                          setModelPickerOpen(false);
+                                        }}
+                                        style={{
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "space-between",
+                                          width: "100%",
+                                          padding: "6px 10px",
+                                          borderRadius: 7,
+                                          fontSize: 12,
+                                          color: isActive ? "#e5e8ff" : "#a2a8bb",
+                                          background: isActive ? "rgba(124, 133, 224, 0.14)" : "transparent",
+                                          border: "none",
+                                          cursor: "pointer",
+                                          textAlign: "left",
+                                          transition: "all 0.12s ease",
+                                        }}
+                                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)"; }}
+                                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                                      >
+                                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                        <span style={{ fontSize: 10, color: "#5a6078", flexShrink: 0, marginLeft: 8 }}>
+                                          {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => setProjectPickerOpen((open) => !open)}
@@ -1287,10 +2179,10 @@ export function AppShell() {
                           zIndex: 40,
                           padding: 4,
                           borderRadius: 10,
-                          background: "rgba(18, 20, 31, 0.98)",
-                          border: "1px solid rgba(151, 159, 204, 0.18)",
-                          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.42)",
-                          backdropFilter: "blur(18px)",
+                          background: "rgba(18, 20, 31, 0.45)",
+                          border: "1px solid rgba(151, 159, 204, 0.2)",
+                          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.3)",
+                          backdropFilter: "blur(24px) saturate(1.4)",
                           minWidth: 240,
                           width: "max-content",
                           maxWidth: 500,

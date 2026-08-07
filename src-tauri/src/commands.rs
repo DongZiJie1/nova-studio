@@ -252,3 +252,36 @@ pub async fn send_extension_ui_response(
         .send_extension_ui_response(&agent_id, id, value, confirmed, cancelled)
         .await
 }
+
+#[tauri::command]
+pub async fn request_session_stats(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    state.0.request_session_stats(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn request_available_models(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    state.0.request_available_models(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn list_all_models(
+    state: State<'_, AgentManagerState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    state.0.list_all_models().await
+}
+
+#[tauri::command]
+pub async fn set_model(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    provider: String,
+    model_id: String,
+) -> Result<(), String> {
+    state.0.set_model(&agent_id, provider, model_id).await
+}
