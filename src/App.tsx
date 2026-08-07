@@ -3,14 +3,64 @@ import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
 import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
 import { listAgents, onAgentEvent } from "./lib/tauri-bridge";
+import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
+
+const STREAM_FLUSH_INTERVAL_MS = 50;
+
+interface PendingTextDelta {
+  payload: AgentEventPayload;
+  delta: string;
+}
 
 function App() {
   const handleAgentEvent = useAgentStore((s) => s.handleAgentEvent);
   const syncAgents = useAgentStore((s) => s.syncAgents);
 
   useEffect(() => {
+    const pendingTextDeltas = new Map<string, PendingTextDelta>();
+    const flushTimers = new Map<string, number>();
+
+    const flushTextDelta = (agentId: string) => {
+      const pending = pendingTextDeltas.get(agentId);
+      pendingTextDeltas.delete(agentId);
+      const timer = flushTimers.get(agentId);
+      if (timer !== undefined) window.clearTimeout(timer);
+      flushTimers.delete(agentId);
+      if (!pending || pending.payload.event.type !== "message_update") return;
+
+      const streamEvent = pending.payload.event.assistantMessageEvent;
+      if (!streamEvent) return;
+      handleAgentEvent({
+        ...pending.payload,
+        event: {
+          ...pending.payload.event,
+          assistantMessageEvent: { ...streamEvent, delta: pending.delta },
+        },
+      });
+    };
+
     const unlisten = onAgentEvent((payload) => {
+      const streamEvent = payload.event.type === "message_update"
+        ? payload.event.assistantMessageEvent
+        : undefined;
+      if (streamEvent?.type === "text_delta" && streamEvent.delta) {
+        const pending = pendingTextDeltas.get(payload.agentId);
+        pendingTextDeltas.set(payload.agentId, {
+          payload,
+          delta: (pending?.delta ?? "") + streamEvent.delta,
+        });
+        if (!flushTimers.has(payload.agentId)) {
+          flushTimers.set(
+            payload.agentId,
+            window.setTimeout(() => flushTextDelta(payload.agentId), STREAM_FLUSH_INTERVAL_MS),
+          );
+        }
+        return;
+      }
+
+      // Preserve event order: a message_end must never overtake buffered text.
+      flushTextDelta(payload.agentId);
       handleAgentEvent(payload);
     });
 
@@ -20,7 +70,12 @@ function App() {
       .then(syncAgents)
       .catch((error) => console.error("Failed to sync agents:", error));
 
-    return unlisten;
+    return () => {
+      unlisten();
+      for (const timer of flushTimers.values()) window.clearTimeout(timer);
+      flushTimers.clear();
+      pendingTextDeltas.clear();
+    };
   }, [handleAgentEvent, syncAgents]);
 
   return (

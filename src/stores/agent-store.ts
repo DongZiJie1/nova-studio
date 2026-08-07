@@ -3,13 +3,22 @@ import type {
   AgentStatus,
   AgentEventPayload,
   AgentInfo,
+  ContextUsage,
+  ModelMeta,
   PersistedRpcMessage,
+  SessionUsage,
 } from "../lib/rpc-types";
 import {
   parseAgentEvent,
   extractAssistantText,
   type ParsedEvent,
+  type TurnUsage,
 } from "../lib/event-parser";
+import {
+  getOrAssignAgentAvatar,
+  type AgentAvatarId,
+} from "../lib/agent-avatars";
+import { requestSessionStats } from "../lib/tauri-bridge";
 
 // ─── Frontend-side types ───
 
@@ -21,18 +30,26 @@ export interface ToolCall {
   result?: unknown;
 }
 
+export interface MessageAttachment {
+  name: string;
+  mimeType: string;
+  isImage: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
+  attachments?: MessageAttachment[];
 }
 
 export interface AgentState {
   id: string;
   parentAgentId: string | null;
   name: string | null;
+  avatarId: AgentAvatarId;
   status: AgentStatus;
   cwd: string;
   model: string | null;
@@ -43,13 +60,34 @@ export interface AgentState {
   streamingText: string;
   /** Active tool calls in the current turn */
   activeToolCalls: Map<string, ToolCall>;
+  /** Model metadata from get_state */
+  modelMeta: ModelMeta | null;
+  /** Context window usage from get_session_stats */
+  contextUsage: ContextUsage | null;
+  /** Token usage for the last completed turn */
+  lastTurnUsage: TurnUsage | null;
+  /** Cumulative token/cost totals across the session (from get_session_stats) */
+  sessionUsage: SessionUsage | null;
+  /** Auto-compaction enabled (from get_state) */
+  autoCompactionEnabled: boolean;
 }
 
 // ─── Store ───
 
+export interface AvailableModel {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  images: boolean;
+}
+
 interface AgentStoreState {
   agents: AgentState[];
   activeAgentId: string | null;
+  availableModels: AvailableModel[];
 
   // Agent CRUD
   addAgent: (agent: AgentState) => void;
@@ -58,9 +96,10 @@ interface AgentStoreState {
   setActiveAgent: (id: string | null) => void;
   updateAgent: (id: string, update: Partial<AgentState>) => void;
   getAgent: (id: string) => AgentState | undefined;
+  setAvailableModels: (models: AvailableModel[]) => void;
 
   // Message management
-  addUserMessage: (agentId: string, content: string) => void;
+  addUserMessage: (agentId: string, content: string, attachments?: MessageAttachment[]) => void;
   finalizeAssistantMessage: (agentId: string, content: string) => void;
 
   // Status
@@ -80,6 +119,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     id: info.id,
     parentAgentId: info.parent_agent_id,
     name: info.name ?? "Nova",
+    avatarId: getOrAssignAgentAvatar(info.id),
     status: info.status,
     cwd: info.cwd,
     model: info.model,
@@ -88,6 +128,11 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     messageCount: info.message_count,
     streamingText: "",
     activeToolCalls: new Map(),
+    modelMeta: null,
+    contextUsage: null,
+    lastTurnUsage: null,
+    sessionUsage: null,
+    autoCompactionEnabled: true,
   };
 }
 
@@ -117,20 +162,66 @@ function messageText(message: PersistedRpcMessage): string {
     .join("");
 }
 
+/** Guess MIME type from file extension */
+function guessMimeType(name: string): string {
+  const ext = name.toLowerCase().split(".").pop() || "";
+  const map: Record<string, string> = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+    webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon",
+    pdf: "application/pdf",
+    json: "application/json", xml: "application/xml",
+    txt: "text/plain", md: "text/markdown", csv: "text/csv",
+    js: "text/javascript", ts: "text/typescript", jsx: "text/javascript", tsx: "text/typescript",
+    py: "text/x-python", rb: "text/x-ruby", go: "text/x-go", rs: "text/x-rust",
+    html: "text/html", css: "text/css", sh: "text/x-shellscript",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+/** Parse attached file names from message content (sent as "--- Attached file: xxx ---") */
+function parseAttachmentsFromContent(content: string): { attachments: MessageAttachment[] | undefined; cleanContent: string } {
+  const attachments: MessageAttachment[] = [];
+  // Match with flexible newlines: \r?\n\r?\n before, \r?\n after
+  const regex = /\r?\n\r?\n--- Attached file: (.+?) ---\r?\n/g;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    const fileName = match[1].trim();
+    if (fileName) {
+      attachments.push({
+        name: fileName,
+        mimeType: guessMimeType(fileName),
+        isImage: guessMimeType(fileName).startsWith("image/"),
+      });
+    }
+  }
+  // Remove attachment markers from content
+  const cleanContent = content.replace(/\r?\n\r?\n--- Attached file: .+? ---\r?\n/g, '');
+  return { attachments: attachments.length > 0 ? attachments : undefined, cleanContent };
+}
+
 function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
   return messages.flatMap((message) => {
     if (message.role !== "user" && message.role !== "assistant") return [];
-    const content = messageText(message);
-    if (!content) return [];
+    const rawContent = messageText(message);
+    if (!rawContent) return [];
     const parsedTimestamp =
       typeof message.timestamp === "number"
         ? message.timestamp
         : Date.parse(message.timestamp ?? "");
+    // For user messages, try to parse attached files from content
+    let content = rawContent;
+    let attachments: MessageAttachment[] | undefined;
+    if (message.role === "user") {
+      const result = parseAttachmentsFromContent(rawContent);
+      content = result.cleanContent;
+      attachments = result.attachments;
+    }
     return [{
       id: nextId(),
       role: message.role,
       content,
       timestamp: Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now(),
+      attachments,
     }];
   });
 }
@@ -138,6 +229,7 @@ function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
 export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   agents: [],
   activeAgentId: null,
+  availableModels: [],
 
   addAgent: (agent) =>
     set((s) => {
@@ -179,6 +271,8 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
 
   setActiveAgent: (id) => set({ activeAgentId: id }),
 
+  setAvailableModels: (models) => set({ availableModels: models }),
+
   updateAgent: (id, update) =>
     set((s) => ({
       agents: s.agents.map((a) => (a.id === id ? { ...a, ...update } : a)),
@@ -186,12 +280,13 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
 
   getAgent: (id) => get().agents.find((a) => a.id === id),
 
-  addUserMessage: (agentId, content) => {
+  addUserMessage: (agentId, content, attachments) => {
     const msg: ChatMessage = {
       id: nextId(),
       role: "user",
       content,
       timestamp: Date.now(),
+      attachments: attachments?.length ? attachments : undefined,
     };
     set((s) => ({
       agents: s.agents.map((a) =>
@@ -294,9 +389,8 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           // A newly spawned agent asks for history before its first prompt.
           // That empty response can arrive after the optimistic user message,
           // so never replace messages already rendered.
-          const hydrated = agent.messages.length > 0
-            ? agent.messages
-            : hydrateMessages(messages);
+          if (agent.messages.length > 0) return agent;
+          const hydrated = hydrateMessages(messages);
           return {
             ...agent,
             messages: hydrated,
@@ -307,15 +401,113 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       return;
     }
 
-    const parsed = parseAgentEvent(event);
-    console.log(`[event] agent=${agentId} type=${event.type} → kind=${parsed.kind}`);
+    if (
+      event.type === "response" &&
+      event.command === "get_state" &&
+      event.success &&
+      event.data?.model
+    ) {
+      const m = event.data.model as Record<string, unknown>;
+      const meta: ModelMeta = {
+        id: String(m.id ?? ""),
+        name: String(m.name ?? ""),
+        contextWindow: Number(m.contextWindow ?? 0),
+        maxTokens: Number(m.maxTokens ?? 0),
+        reasoning: Boolean(m.reasoning),
+        images: Array.isArray(m.input) ? (m.input as string[]).includes("image") : Boolean(m.images),
+      };
+      const autoCompactionEnabled = Boolean(event.data.autoCompactionEnabled ?? true);
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, modelMeta: meta, autoCompactionEnabled } : agent,
+        ),
+      }));
+      return;
+    }
 
+    if (
+      event.type === "response" &&
+      event.command === "get_session_stats" &&
+      event.success &&
+      event.data
+    ) {
+      const d = event.data as Record<string, unknown>;
+      const cu = d.contextUsage as Record<string, unknown> | undefined;
+      const tokens = (d.tokens ?? {}) as Record<string, unknown>;
+      const sessionUsage: SessionUsage | null =
+        typeof tokens.input === "number" ||
+        typeof tokens.output === "number" ||
+        typeof tokens.cacheRead === "number" ||
+        typeof tokens.cacheWrite === "number"
+          ? {
+              input: Number(tokens.input ?? 0),
+              output: Number(tokens.output ?? 0),
+              cacheRead: Number(tokens.cacheRead ?? 0),
+              cacheWrite: Number(tokens.cacheWrite ?? 0),
+              total: Number(tokens.total ?? 0),
+              cost: Number(d.cost ?? 0),
+            }
+          : null;
+      set((s) => ({
+        agents: s.agents.map((agent) => {
+          if (agent.id !== agentId) return agent;
+          if (!cu) return { ...agent, contextUsage: null, sessionUsage };
+          const totalTokens = cu.tokens != null ? Number(cu.tokens) : null;
+          const contextWindow = Number(cu.contextWindow ?? 0);
+          const percent = cu.percent != null ? Number(cu.percent) : null;
+          // Calculate tool result tokens from messages
+          let toolResultTokens = 0;
+          let visibleMessageTokens = 0;
+          for (const msg of agent.messages) {
+            const est = Math.ceil(msg.content.length / 4);
+            visibleMessageTokens += est;
+            if (msg.role === "tool") toolResultTokens += est;
+          }
+          // System prompt + skills = total input - visible messages
+          const systemPromptTokens = totalTokens != null
+            ? Math.max(0, totalTokens - visibleMessageTokens)
+            : 0;
+          return {
+            ...agent,
+            contextUsage: { tokens: totalTokens, contextWindow, percent, toolResultTokens, systemPromptTokens },
+            sessionUsage,
+          };
+        }),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_available_models" &&
+      event.success &&
+      Array.isArray(event.data?.models)
+    ) {
+      const models: AvailableModel[] = (event.data.models as Record<string, unknown>[]).map((m) => ({
+        id: String(m.id ?? ""),
+        name: String(m.name ?? ""),
+        provider: String(m.provider ?? ""),
+        contextWindow: Number(m.contextWindow ?? 0),
+        maxTokens: Number(m.maxTokens ?? 0),
+        reasoning: Boolean(m.reasoning),
+        images: Boolean(m.images),
+      }));
+      set({ availableModels: models });
+      return;
+    }
+
+    const parsed = parseAgentEvent(event);
     set((s) => ({
       agents: s.agents.map((agent) => {
         if (agent.id !== agentId) return agent;
         return applyEvent(agent, parsed);
       }),
     }));
+
+    // Refresh context usage after each turn completes
+    if (event.type === "turn_end" || event.type === "agent_settled") {
+      void requestSessionStats(agentId);
+    }
   },
 }));
 
@@ -335,19 +527,23 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
         return { ...agent, status: "streaming" as const };
       }
       if (event.phase === "end") {
-        console.log("[message_end] full message:", JSON.stringify(event.message));
         const text = extractAssistantText(event.message);
-        console.log("[message_end] extracted text:", text?.substring(0, 200));
-        console.log("[message_end] current streamingText length:", agent.streamingText.length);
-        console.log("[message_end] current messages count:", agent.messages.length);
-        if (text) {
+
+        // Check for provider error (e.g. 400 from model API)
+        const msg = event.message;
+        const stopReason = msg ? (msg as Record<string, unknown>).stopReason : undefined;
+        const errorMessage = msg ? (msg as Record<string, unknown>).errorMessage : undefined;
+        const isError = stopReason === "error" && errorMessage;
+
+        const displayText = text || (isError ? `Error: ${errorMessage}` : null);
+
+        if (displayText) {
           // Deduplicate: agent may send message_end twice with the same content.
           // If the last message already has identical content, skip adding.
           const lastMsg = agent.messages[agent.messages.length - 1];
           const isDuplicate =
-            lastMsg?.role === "assistant" && lastMsg.content === text;
+            lastMsg?.role === "assistant" && lastMsg.content === displayText;
           if (isDuplicate) {
-            console.log("[message_end] duplicate detected, skipping");
             return { ...agent, streamingText: "" };
           }
           return {
@@ -357,12 +553,13 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
               {
                 id: nextId(),
                 role: "assistant",
-                content: text,
+                content: displayText,
                 timestamp: Date.now(),
               },
             ],
             messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
             streamingText: "",
+            status: isError ? ("error" as const) : agent.status,
           };
         }
         return { ...agent, streamingText: "" };
@@ -397,11 +594,8 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "agent_status": {
       if (event.status === "settled") {
-        console.log("[agent_settled] streamingText length:", agent.streamingText.length);
-        console.log("[agent_settled] messages count:", agent.messages.length);
         // Flush any remaining streaming text
         if (agent.streamingText) {
-          console.log("[agent_settled] flushing streamingText as assistant message");
           return {
             ...agent,
             status: "idle" as const,
@@ -431,7 +625,11 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "turn_lifecycle": {
       if (event.phase === "end") {
-        return { ...agent, activeToolCalls: new Map() };
+        return {
+          ...agent,
+          activeToolCalls: new Map(),
+          lastTurnUsage: event.usage ?? null,
+        };
       }
       return agent;
     }

@@ -39,10 +39,19 @@ export interface ParsedAgentStatus {
   status: string;
 }
 
+export interface TurnUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
 export interface ParsedTurnLifecycle {
   kind: "turn_lifecycle";
   /** "start" | "end" */
   phase: string;
+  usage?: TurnUsage;
 }
 
 export interface ParsedResponse {
@@ -138,8 +147,25 @@ export function parseAgentEvent(msg: AgentMessage): ParsedEvent {
     case "turn_start":
       return { kind: "turn_lifecycle", phase: "start" };
 
-    case "turn_end":
+    case "turn_end": {
+      const message = msg.message as Record<string, unknown> | undefined;
+      const usage = message?.usage as Record<string, number> | undefined;
+      if (usage) {
+        const total = (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+        return {
+          kind: "turn_lifecycle",
+          phase: "end",
+          usage: {
+            input: usage.input ?? 0,
+            output: usage.output ?? 0,
+            cacheRead: usage.cacheRead ?? 0,
+            cacheWrite: usage.cacheWrite ?? 0,
+            total,
+          },
+        };
+      }
       return { kind: "turn_lifecycle", phase: "end" };
+    }
 
     case "response":
       return {

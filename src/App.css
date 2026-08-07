@@ -101,6 +101,7 @@ body {
 }
 
 .nova-input {
+  position: relative;
   background: rgba(11, 13, 26, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 20px;
@@ -126,6 +127,138 @@ body {
 
 .nova-input textarea::placeholder {
   color: #767d92;
+}
+
+.slash-command-menu {
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 10px);
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid rgba(151, 159, 204, 0.2);
+  border-radius: 14px;
+  background: linear-gradient(
+    145deg,
+    rgba(17, 20, 38, 0.82),
+    rgba(8, 10, 22, 0.74)
+  );
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.48),
+    0 0 28px rgba(99, 102, 241, 0.1);
+  backdrop-filter: blur(24px) saturate(135%);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+}
+
+.slash-command-menu-scroll {
+  max-height: 252px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.slash-command-option {
+  display: grid;
+  grid-template-columns: minmax(118px, 0.7fr) minmax(0, 1.5fr);
+  width: 100%;
+  min-height: 35px;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #dfe2ed;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.slash-command-option-selected {
+  border-color: rgba(139, 147, 245, 0.58);
+  background: linear-gradient(100deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.1));
+  box-shadow: inset 0 0 18px rgba(129, 140, 248, 0.07);
+}
+
+.slash-command-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f0f1fa;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-command-description {
+  overflow: hidden;
+  font-size: 11px;
+  color: #8f95aa;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-command-hint {
+  padding: 6px 10px 3px;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  color: #60677d;
+  font-size: 9.5px;
+  text-align: right;
+}
+
+.file-mention-menu {
+  left: 12px;
+  right: 12px;
+}
+
+.file-mention-title {
+  padding: 5px 10px 7px;
+  color: #777e94;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.file-mention-option {
+  display: grid;
+  grid-template-columns: 18px minmax(90px, auto) minmax(0, 1fr);
+  width: 100%;
+  min-height: 35px;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #dfe2ed;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-mention-icon {
+  color: #929af0;
+}
+
+.file-mention-name {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: #e4e6f0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-mention-directory {
+  overflow: hidden;
+  font-size: 10.5px;
+  color: #777e94;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-mention-empty {
+  padding: 18px 12px;
+  color: #747b91;
+  font-size: 11px;
+  text-align: center;
 }
 
 @keyframes fadeInUp {
@@ -168,7 +301,7 @@ body {
 .msg-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 24px;
   animation: fadeInUp 0.25s ease-out;
 }
@@ -184,9 +317,9 @@ body {
 
 .msg-avatar {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -194,19 +327,29 @@ body {
 }
 
 .msg-avatar-nova {
-  background: linear-gradient(
-    135deg,
-    var(--color-accent-start),
-    var(--color-accent-end)
-  );
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(129, 140, 248, 0.3);
+  overflow: hidden;
+  background: #171743;
+  border: 1px solid rgba(165, 180, 252, 0.55);
+  box-shadow:
+    0 0 0 2px rgba(129, 140, 248, 0.12),
+    0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.msg-avatar-nova img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.75);
+  transform-origin: 50% 37%;
 }
 
 .msg-avatar-user {
-  background: rgba(129, 140, 248, 0.15);
-  color: #a5b4fc;
-  border: 1px solid rgba(129, 140, 248, 0.25);
+  background: linear-gradient(145deg, rgba(99, 102, 241, 0.28), rgba(139, 92, 246, 0.16));
+  color: #c7d2fe;
+  border: 1px solid rgba(165, 180, 252, 0.5);
+  box-shadow:
+    0 0 0 2px rgba(129, 140, 248, 0.08),
+    0 4px 12px rgba(49, 46, 129, 0.28);
 }
 
 .msg-column {

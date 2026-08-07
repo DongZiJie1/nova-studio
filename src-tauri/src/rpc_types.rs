@@ -11,6 +11,11 @@ pub struct ImageContent {
     pub mime_type: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileReference {
+    pub path: String,
+}
+
 /// Commands sent from the bridge to the agent process (stdin)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -21,6 +26,9 @@ pub enum RpcCommand {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         images: Option<Vec<ImageContent>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "fileReferences")]
+        file_references: Option<Vec<FileReference>>,
     },
     #[serde(rename = "abort")]
     Abort { id: Option<String> },
@@ -37,6 +45,8 @@ pub enum RpcCommand {
     GetMessages { id: Option<String> },
     #[serde(rename = "get_session_stats")]
     GetSessionStats { id: Option<String> },
+    #[serde(rename = "get_available_models")]
+    GetAvailableModels { id: Option<String> },
     #[serde(rename = "new_session")]
     NewSession { id: Option<String> },
     #[serde(rename = "set_thinking_level")]
@@ -136,7 +146,10 @@ pub enum AgentMessage {
     #[serde(rename = "turn_start")]
     TurnStart {},
     #[serde(rename = "turn_end")]
-    TurnEnd {},
+    TurnEnd {
+        #[serde(flatten)]
+        data: serde_json::Value,
+    },
     #[serde(rename = "extension_ui_request")]
     ExtensionUIRequest {
         #[serde(flatten)]
@@ -202,6 +215,8 @@ pub struct PromptRequest {
     pub message: String,
     #[serde(default)]
     pub images: Option<Vec<ImageContent>>,
+    #[serde(default)]
+    pub file_references: Option<Vec<FileReference>>,
 }
 
 #[cfg(test)]
@@ -244,12 +259,16 @@ mod tests {
                 data: "aGVsbG8=".into(),
                 mime_type: "image/png".into(),
             }]),
+            file_references: Some(vec![FileReference {
+                path: "src/main.rs".into(),
+            }]),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"mimeType\":\"image/png\""));
         assert!(json.contains("\"data\":\"aGVsbG8=\""));
         assert!(json.contains("\"type\":\"image\""));
         assert!(!json.contains("mime_type"));
+        assert!(json.contains("\"fileReferences\":[{\"path\":\"src/main.rs\"}]"));
     }
 
     /// nova emits extension_ui_request via createDialogPromise — rpc-mode.ts

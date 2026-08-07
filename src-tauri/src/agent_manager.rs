@@ -1,10 +1,11 @@
 use crate::agent_process::AgentProcess;
-use crate::rpc_types::{AgentInfo, ImageContent, RpcCommand, SpawnRequest};
+use crate::nova_host_process::NovaHostProcess;
+use crate::rpc_types::{AgentInfo, FileReference, ImageContent, RpcCommand, SpawnRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
 
 /// Central manager for all agent processes.
@@ -20,6 +21,7 @@ pub struct AgentManager {
     hub_url: RwLock<String>,
     state_path: PathBuf,
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
+    host: Mutex<Option<Arc<NovaHostProcess>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +73,28 @@ impl AgentManager {
             hub_url: RwLock::new("http://127.0.0.1:9528".to_string()),
             state_path,
             records: Arc::new(RwLock::new(HashMap::new())),
+            host: Mutex::new(None),
         }
+    }
+
+    async fn ensure_host(&self, cwd: &str) -> Result<Arc<NovaHostProcess>, String> {
+        let mut host = self.host.lock().await;
+        if let Some(existing) = host.as_ref() {
+            if existing.is_alive().await {
+                return Ok(existing.clone());
+            }
+        }
+        let created = Arc::new(
+            NovaHostProcess::spawn(
+                self.cli_path.clone(),
+                cwd.to_string(),
+                self.hub_url.read().await.clone(),
+                self.hub_token.clone(),
+            )
+            .await?,
+        );
+        *host = Some(created.clone());
+        Ok(created)
     }
 
     pub async fn restore(&self) -> Result<(), String> {
@@ -304,23 +327,71 @@ impl AgentManager {
             }
         }
 
-        let hub_url = self.hub_url.read().await.clone();
-        let process = AgentProcess::spawn(
+        let host = self.ensure_host(&record.cwd).await?;
+        let process = AgentProcess::attach(
             agent_id.clone(),
             record.parent_agent_id.clone(),
             record.cwd.clone(),
-            self.cli_path.clone(),
             record.model.clone(),
-            record.provider.clone(),
-            extra_args,
-            hub_url,
-            self.hub_token.clone(),
-            record.depth,
             record.session_id.clone(),
+            record.depth,
             record.name.clone(),
             Some(record.created_at.clone()),
+            host.clone(),
         )
         .await?;
+
+        let session_path = extra_args
+            .windows(2)
+            .find(|pair| pair[0] == "--session")
+            .map(|pair| pair[1].clone());
+        let mut ready_events = process.subscribe();
+        host.send_host_command(serde_json::json!({
+            "type": "agent_create",
+            "agentId": agent_id,
+            "cwd": record.cwd,
+            "sessionId": record.session_id,
+            "sessionPath": session_path,
+            "parentSession": extra_args
+                .windows(2)
+                .find(|pair| pair[0] == "--parent-session")
+                .map(|pair| pair[1].clone()),
+            "depth": record.depth,
+        }))?;
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let event = ready_events
+                    .recv()
+                    .await
+                    .map_err(|_| "Nova host event stream closed".to_string())?;
+                if event.get("type").and_then(serde_json::Value::as_str) != Some("response")
+                    || event.get("command").and_then(serde_json::Value::as_str)
+                        != Some("agent_create")
+                {
+                    continue;
+                }
+                if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+                    return Ok(());
+                }
+                return Err(event
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Nova host failed to create agent")
+                    .to_string());
+            }
+        })
+        .await
+        .map_err(|_| "Timed out waiting for Nova host to create agent".to_string())?;
+        ready?;
+
+        if let (Some(provider), Some(model_id)) = (record.provider.as_ref(), record.model.as_ref())
+        {
+            process.send_command(&RpcCommand::SetModel {
+                id: None,
+                provider: provider.clone(),
+                model_id: model_id.clone(),
+            })?;
+        }
 
         let info = self.build_info(&agent_id, &record.cwd, &process).await;
 
@@ -353,6 +424,9 @@ impl AgentManager {
 
         if let Some(agent) = self.get_process(&agent_id).await {
             let _ = agent.send_command(&RpcCommand::GetMessages { id: None });
+            let _ = agent.send_command(&RpcCommand::GetState { id: None });
+            let _ = agent.send_command(&RpcCommand::GetSessionStats { id: None });
+            let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
         }
 
         // Notify the frontend even when the agent was created through the
@@ -373,6 +447,9 @@ impl AgentManager {
             // The frontend can be reloaded while the process remains alive.
             // Always replay history when the user selects an existing process.
             agent.send_command(&RpcCommand::GetMessages { id: None })?;
+            let _ = agent.send_command(&RpcCommand::GetState { id: None });
+            let _ = agent.send_command(&RpcCommand::GetSessionStats { id: None });
+            let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
             return self.get_info(agent_id).await;
         }
         let record = self
@@ -391,6 +468,7 @@ impl AgentManager {
         agent_id: &str,
         message: String,
         images: Option<Vec<ImageContent>>,
+        file_references: Option<Vec<FileReference>>,
     ) -> Result<(), String> {
         if self.get_process(agent_id).await.is_none() {
             self.activate(agent_id).await?;
@@ -406,6 +484,7 @@ impl AgentManager {
             id: None,
             message,
             images,
+            file_references,
         };
         agent.send_command(&cmd)
     }
@@ -416,6 +495,89 @@ impl AgentManager {
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         let cmd = RpcCommand::Abort { id: None };
         agent.send_command(&cmd)
+    }
+
+    /// Request session stats (context usage, token counts) from an agent
+    pub async fn request_session_stats(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetSessionStats { id: None })
+    }
+
+    /// Request available models from an agent
+    pub async fn request_available_models(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetAvailableModels { id: None })
+    }
+
+    /// Switch model for an agent
+    pub async fn set_model(&self, agent_id: &str, provider: String, model_id: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::SetModel { id: None, provider, model_id })
+    }
+
+    /// List all available models from nova CLI
+    pub async fn list_all_models(&self) -> Result<Vec<serde_json::Value>, String> {
+        let is_js_file = self.cli_path.ends_with(".js");
+        let mut command = if is_js_file {
+            let mut command = tokio::process::Command::new("node");
+            command.arg(&self.cli_path);
+            command
+        } else {
+            tokio::process::Command::new(&self.cli_path)
+        };
+        let output = command
+            .arg("--list-models")
+            .output()
+            .await
+            .map_err(|error| format!("Failed to list models: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Nova list-models failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        // Skip header line, parse remaining lines
+        let mut models = Vec::new();
+        for line in lines.iter().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let provider = parts[0];
+                let model_id = parts[1];
+                let context_window = parts[2];
+                let max_tokens = parts[3];
+                let thinking = parts.get(4).map(|s| *s == "yes").unwrap_or(false);
+                let images = parts.get(5).map(|s| *s == "yes").unwrap_or(false);
+                // Parse context window (e.g., "1M" -> 1000000, "200K" -> 200000)
+                let context_window_num = if context_window.ends_with('M') {
+                    context_window.trim_end_matches('M').parse::<f64>().unwrap_or(0.0) * 1_000_000.0
+                } else if context_window.ends_with('K') {
+                    context_window.trim_end_matches('K').parse::<f64>().unwrap_or(0.0) * 1_000.0
+                } else {
+                    context_window.parse::<f64>().unwrap_or(0.0)
+                };
+                // Parse max tokens
+                let max_tokens_num = if max_tokens.ends_with('K') {
+                    max_tokens.trim_end_matches('K').parse::<f64>().unwrap_or(0.0) * 1_000.0
+                } else {
+                    max_tokens.parse::<f64>().unwrap_or(0.0)
+                };
+                models.push(serde_json::json!({
+                    "id": model_id,
+                    "name": model_id,
+                    "provider": provider,
+                    "contextWindow": context_window_num as i64,
+                    "maxTokens": max_tokens_num as i64,
+                    "reasoning": thinking,
+                    "images": images,
+                }));
+            }
+        }
+        Ok(models)
     }
 
     /// Ask an agent a question and wait for its full reply.
@@ -443,6 +605,7 @@ impl AgentManager {
             id: None,
             message: question,
             images: None,
+            file_references: None,
         })?;
 
         let mut reply = String::new();

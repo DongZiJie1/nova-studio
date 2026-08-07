@@ -2,6 +2,7 @@ mod agent_api;
 mod agent_manager;
 mod agent_process;
 mod commands;
+mod nova_host_process;
 mod rpc_types;
 
 use agent_manager::AgentManager;
@@ -17,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // Determine the path to the nova CLI
             // Priority: env var > bundled sidecar (prod) > global npm > dev paths
@@ -43,8 +45,10 @@ pub fn run() {
                                 let link_result =
                                     std::os::unix::fs::symlink(&bundled_resource, &bin_resource);
                                 #[cfg(windows)]
-                                let link_result =
-                                    std::os::windows::fs::symlink_dir(&bundled_resource, &bin_resource);
+                                let link_result = std::os::windows::fs::symlink_dir(
+                                    &bundled_resource,
+                                    &bin_resource,
+                                );
                                 if let Err(e) = link_result {
                                     log::warn!("Failed to symlink {}: {}", dir_name, e);
                                 }
@@ -118,6 +122,11 @@ pub fn run() {
             commands::send_prompt,
             commands::abort_agent,
             commands::send_extension_ui_response,
+            commands::list_project_files,
+            commands::request_session_stats,
+            commands::request_available_models,
+            commands::list_all_models,
+            commands::set_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -135,6 +144,24 @@ fn resolve_cli_path(app_handle: &tauri::AppHandle) -> String {
     if let Ok(path) = std::env::var("NOVA_CLI_PATH") {
         if std::path::Path::new(&path).exists() {
             log::info!("Using nova CLI from NOVA_CLI_PATH: {}", path);
+            return path;
+        }
+    }
+
+    // Cross-repository features must use the matching local Nova build in dev.
+    // Falling back to an older globally installed CLI can leave Studio waiting
+    // for RPC commands that version does not implement.
+    #[cfg(dev)]
+    {
+        let local_nova = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../nova/packages/nova/dist/cli.js");
+        if local_nova.exists() {
+            let path = local_nova
+                .canonicalize()
+                .unwrap_or(local_nova)
+                .to_string_lossy()
+                .into_owned();
+            log::info!("Using workspace Nova build: {}", path);
             return path;
         }
     }

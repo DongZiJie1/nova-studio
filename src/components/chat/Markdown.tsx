@@ -1,4 +1,4 @@
-import { Children, isValidElement, type ReactNode } from "react";
+import { Children, isValidElement, memo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -37,18 +37,19 @@ function PreBlock({ children }: { children?: ReactNode }) {
 
 interface MarkdownProps {
   content: string;
+  highlightCode?: boolean;
 }
 
-export function Markdown({ content }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ content, highlightCode = true }: MarkdownProps) {
   return (
     <div className="md-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={highlightCode ? [rehypeHighlight] : []}
         components={{ pre: PreBlock }}
       >
         {content}
       </ReactMarkdown>
     </div>
   );
-}
+});

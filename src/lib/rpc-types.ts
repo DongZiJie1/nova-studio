@@ -13,8 +13,18 @@ export interface ImageContent {
   mimeType: string;
 }
 
+export interface FileReference {
+  path: string;
+}
+
 export type RpcCommand =
-  | { type: "prompt"; id?: string; message: string; images?: ImageContent[] }
+  | {
+      type: "prompt";
+      id?: string;
+      message: string;
+      images?: ImageContent[];
+      fileReferences?: FileReference[];
+    }
   | { type: "abort"; id?: string }
   | { type: "set_model"; id?: string; provider: string; modelId: string }
   | { type: "get_state"; id?: string }
@@ -158,6 +168,37 @@ export interface ExtensionUIResponse {
   value?: string;
   confirmed?: boolean;
   cancelled?: boolean;
+}
+
+// ─── Model metadata (from get_state response) ───
+
+export interface ModelMeta {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  images: boolean;
+}
+
+export interface ContextUsage {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+  /** Tokens used by tool call results (calculated from messages) */
+  toolResultTokens: number;
+  /** Tokens used by system prompt + skills (estimated: total input - visible messages) */
+  systemPromptTokens: number;
+}
+
+/** Cumulative token/cost totals across the whole session (from get_session_stats). */
+export interface SessionUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  cost: number;
 }
 
 // ─── Agent status ───

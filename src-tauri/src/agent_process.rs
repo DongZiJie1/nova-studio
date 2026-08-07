@@ -1,3 +1,4 @@
+use crate::nova_host_process::NovaHostProcess;
 use crate::rpc_types::{AgentMessage, AgentStatus, RpcCommand};
 use serde_json;
 use std::process::Stdio;
@@ -13,6 +14,7 @@ pub struct AgentProcess {
     pub cwd: String,
     pub model: Option<String>,
     pub session_id: String,
+    pub depth: u64,
     pub created_at: String,
     /// Display name: starts as "Nova", replaced by LLM-generated name on first prompt.
     pub name: Arc<Mutex<Option<String>>>,
@@ -22,7 +24,8 @@ pub struct AgentProcess {
     /// Serializes prompt/ask interactions coming from the hub API so
     /// concurrent collaborators can't interleave messages in one session.
     pub prompt_lock: Arc<Mutex<()>>,
-    child: Arc<Mutex<Child>>,
+    child: Option<Arc<Mutex<Child>>>,
+    host: Option<Arc<NovaHostProcess>>,
     stdin_tx: tokio::sync::mpsc::UnboundedSender<String>,
     event_tx: broadcast::Sender<serde_json::Value>,
     _stdout_task: tokio::task::JoinHandle<()>,
@@ -31,6 +34,81 @@ pub struct AgentProcess {
 }
 
 impl AgentProcess {
+    /// Attach a logical agent to a shared Nova host process.
+    pub async fn attach(
+        id: String,
+        parent_agent_id: Option<String>,
+        cwd: String,
+        model: Option<String>,
+        session_id: String,
+        depth: u64,
+        restored_name: Option<String>,
+        restored_created_at: Option<String>,
+        host: Arc<NovaHostProcess>,
+    ) -> Result<Self, String> {
+        let event_tx = host.register_agent(&id).await;
+        let status = Arc::new(Mutex::new(AgentStatus::Starting));
+        let message_count = Arc::new(Mutex::new(0usize));
+        let last_error = Arc::new(Mutex::new(None));
+        let name = Arc::new(Mutex::new(
+            restored_name.or_else(|| Some("Nova".to_string())),
+        ));
+        let mut events = event_tx.subscribe();
+        let status_events = status.clone();
+        let count_events = message_count.clone();
+        let error_events = last_error.clone();
+        let name_events = name.clone();
+        let stdout_task = tokio::spawn(async move {
+            while let Ok(event) = events.recv().await {
+                match event.get("type").and_then(serde_json::Value::as_str) {
+                    Some("agent_settled") => *status_events.lock().await = AgentStatus::Idle,
+                    Some("message_start") => *status_events.lock().await = AgentStatus::Streaming,
+                    Some("message_end") => *count_events.lock().await += 1,
+                    Some("agent_name_update") => {
+                        if let Some(value) = event.get("name").and_then(serde_json::Value::as_str) {
+                            *name_events.lock().await = Some(value.to_string());
+                        }
+                    }
+                    Some("response")
+                        if event.get("success").and_then(serde_json::Value::as_bool)
+                            == Some(false) =>
+                    {
+                        *status_events.lock().await = AgentStatus::Error;
+                        *error_events.lock().await = event
+                            .get("error")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string);
+                    }
+                    _ => {}
+                }
+            }
+            *status_events.lock().await = AgentStatus::Stopped;
+        });
+        *status.lock().await = AgentStatus::Idle;
+        let (stdin_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        Ok(Self {
+            id,
+            parent_agent_id,
+            cwd,
+            model,
+            session_id,
+            depth,
+            created_at: restored_created_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            name,
+            status,
+            message_count,
+            last_error,
+            prompt_lock: Arc::new(Mutex::new(())),
+            child: None,
+            host: Some(host),
+            stdin_tx,
+            event_tx,
+            _stdout_task: stdout_task,
+            _stderr_task: tokio::spawn(async {}),
+            _stdin_task: tokio::spawn(async {}),
+        })
+    }
+
     /// Spawn a new agent process
     pub async fn spawn(
         id: String,
@@ -299,13 +377,15 @@ impl AgentProcess {
             cwd,
             model,
             session_id,
+            depth,
             created_at: restored_created_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
             name,
             status,
             message_count,
             last_error,
             prompt_lock: Arc::new(Mutex::new(())),
-            child: Arc::new(Mutex::new(child)),
+            child: Some(Arc::new(Mutex::new(child))),
+            host: None,
             stdin_tx,
             event_tx,
             _stdout_task: stdout_task,
@@ -316,6 +396,9 @@ impl AgentProcess {
 
     /// Send a command to the agent process
     pub fn send_command(&self, cmd: &RpcCommand) -> Result<(), String> {
+        if let Some(host) = &self.host {
+            return host.send_command(&self.id, cmd);
+        }
         let json = serde_json::to_string(cmd)
             .map_err(|e| format!("Failed to serialize command: {}", e))?;
         self.stdin_tx
@@ -336,19 +419,33 @@ impl AgentProcess {
     /// Stop the agent process
     pub async fn stop(&self) -> Result<(), String> {
         log::info!("[process:{}] stopping", self.id);
-        let mut child = self.child.lock().await;
-        child
-            .kill()
-            .await
-            .map_err(|e| format!("Failed to kill agent process: {}", e))?;
+        if let Some(host) = &self.host {
+            host.send_host_command(serde_json::json!({
+                "type": "agent_stop",
+                "agentId": self.id,
+            }))?;
+            host.unregister_agent(&self.id).await;
+        } else if let Some(child) = &self.child {
+            child
+                .lock()
+                .await
+                .kill()
+                .await
+                .map_err(|e| format!("Failed to kill agent process: {}", e))?;
+        }
         *self.status.lock().await = AgentStatus::Stopped;
         Ok(())
     }
 
     /// Check if the process is still alive
     pub async fn is_alive(&self) -> bool {
-        let mut child = self.child.lock().await;
-        child.try_wait().ok().flatten().is_none()
+        if let Some(host) = &self.host {
+            return host.is_alive().await;
+        }
+        let Some(child) = &self.child else {
+            return false;
+        };
+        child.lock().await.try_wait().ok().flatten().is_none()
     }
 }
 
