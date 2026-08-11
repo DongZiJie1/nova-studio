@@ -72,6 +72,8 @@ export interface AgentState {
   autoCompactionEnabled: boolean;
   /** Live usage of the in-flight turn, streamed from message_update events */
   liveUsage: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
+  /** Accumulated output tokens since the last user message */
+  outputSinceLastUserInput: number;
 }
 
 // ─── Store ───
@@ -136,6 +138,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     sessionUsage: null,
     autoCompactionEnabled: true,
     liveUsage: null,
+    outputSinceLastUserInput: 0,
   };
 }
 
@@ -298,6 +301,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               ...a,
               messages: [...a.messages, msg],
               messageCount: Math.max(a.messageCount, a.messages.length + 1),
+              outputSinceLastUserInput: 0,
             }
           : a,
       ),
@@ -646,10 +650,12 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "turn_lifecycle": {
       if (event.phase === "end") {
+        const turnOutput = event.usage?.output ?? 0;
         return {
           ...agent,
           activeToolCalls: new Map(),
           lastTurnUsage: event.usage ?? null,
+          outputSinceLastUserInput: agent.outputSinceLastUserInput + turnOutput,
         };
       }
       return agent;

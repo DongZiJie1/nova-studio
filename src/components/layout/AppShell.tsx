@@ -135,9 +135,10 @@ function SessionStats({ agent }: { agent: AgentState }) {
   const estimatedLiveOutput = Math.round(agent.streamingText.length / 4);
   const liveOutput = Math.max(live?.output ?? 0, estimatedLiveOutput);
   const totalInput = (su?.input ?? 0) + (live?.input ?? 0);
-  const totalOutput = (su?.output ?? 0) + liveOutput;
   const totalCacheRead = (su?.cacheRead ?? 0) + (live?.cacheRead ?? 0);
   const totalCacheWrite = (su?.cacheWrite ?? 0) + (live?.cacheWrite ?? 0);
+  // ↓ shows output since last user input, not cumulative session output
+  const outputSinceLastUserInput = agent.outputSinceLastUserInput + liveOutput;
 
   // Live context occupancy. cu.tokens already includes the last turn's output
   // (input + output + cacheRead + cacheWrite); add the in-flight turn's new
@@ -151,11 +152,11 @@ function SessionStats({ agent }: { agent: AgentState }) {
 
   // Rolling token counters for ↑↓
   const rollingInput = useRollingNumber(totalInput);
-  const rollingOutput = useRollingNumber(totalOutput);
+  const rollingOutput = useRollingNumber(outputSinceLastUserInput);
 
   const parts: string[] = [];
   if (totalInput > 0) parts.push(`↑${formatTokens(Math.round(rollingInput))}`);
-  if (totalOutput > 0) parts.push(`↓${formatTokens(Math.round(rollingOutput))}`);
+  if (outputSinceLastUserInput > 0) parts.push(`↓${formatTokens(Math.round(rollingOutput))}`);
 
   // Cache hit rate (no "CH" prefix) — shown inline and in the hover breakdown
   const latestPromptTokens = totalInput + totalCacheRead + totalCacheWrite;
