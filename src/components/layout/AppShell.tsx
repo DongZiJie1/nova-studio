@@ -22,6 +22,7 @@ import type { ImageContent } from "../../lib/rpc-types";
 import { ChatMessage } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ToolCallCard } from "../chat/ToolCallCard";
+import { ThinkingCard } from "../chat/ThinkingCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
 import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
@@ -786,8 +787,6 @@ export function AppShell() {
   const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
-  const toolCallsSize = activeAgent?.activeToolCalls.size ?? 0;
-  const messagesSize = activeAgent?.messages.length ?? 0;
 
   useEffect(() => {
     if (!fileMention) {
@@ -816,15 +815,6 @@ export function AppShell() {
       window.clearTimeout(timer);
     };
   }, [fileMention?.query, inputProjectCwd, fileMentionMenuDismissed]);
-
-  // Follow the conversation: keep scrolled to the bottom as content streams in.
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const el = scrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [messagesSize, streamingText, toolCallsSize]);
 
   useEffect(() => {
     if (!projectPickerOpen) return;
@@ -1076,6 +1066,7 @@ export function AppShell() {
           createdAt: info.created_at,
           messageCount: info.message_count,
           streamingText: "",
+          streamingThinking: "",
           activeToolCalls: new Map(),
           modelMeta: null,
           contextUsage: null,
@@ -1083,6 +1074,7 @@ export function AppShell() {
           sessionUsage: null,
           autoCompactionEnabled: true,
           liveUsage: null,
+          outputSinceLastUserInput: 0,
         };
         addAgent(newAgent);
         agentId = info.id;
@@ -1690,6 +1682,12 @@ export function AppShell() {
                       />
                     </div>
                   ))}
+
+                {activeAgent?.streamingThinking && (
+                  <div className="msg-row msg-row-special">
+                    <ThinkingCard content={activeAgent.streamingThinking} streaming />
+                  </div>
+                )}
 
                 {/* Streaming text */}
                 {streamingText && activeAgent && (

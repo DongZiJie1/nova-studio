@@ -311,8 +311,17 @@ body {
 }
 
 .msg-row-tool {
+  display: block;
+  margin-left: 54px;
   margin-bottom: 14px;
   animation: none;
+}
+
+.msg-row-special {
+  display: block;
+  margin-left: 54px;
+  margin-bottom: 14px;
+  animation: fadeInUp 0.2s ease-out;
 }
 
 .msg-avatar {
@@ -473,61 +482,109 @@ body {
   }
 }
 
-/* ─── Tool call cards ─── */
+/* ─── Thinking and tool activity rows ─── */
 
-.tool-card {
-  border: 1px solid var(--color-border-glass);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  overflow: hidden;
-  width: fit-content;
-  max-width: 100%;
+.activity-item {
+  width: 100%;
+  color: var(--color-text-muted);
 }
 
-.tool-card-row {
+.activity-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 2px;
   border: none;
   background: none;
   cursor: pointer;
   font-family: inherit;
-  font-size: 12.5px;
-  color: var(--color-text-secondary);
-  width: 100%;
+  font-size: 12px;
+  color: var(--color-text-muted);
   text-align: left;
 }
 
-.tool-card-row:hover {
-  background: rgba(129, 140, 248, 0.08);
+.activity-row:hover {
+  color: var(--color-text-secondary);
 }
 
-.tool-card-icon {
+.activity-toggle-icon {
+  position: relative;
   display: inline-flex;
-  color: var(--color-accent-start);
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
 }
 
-.tool-card-name {
+.activity-kind-icon,
+.activity-chevron {
+  position: absolute;
+  transition: opacity 120ms ease;
+}
+
+.activity-kind-icon {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+.activity-chevron {
+  color: var(--color-text-secondary);
+  opacity: 0;
+}
+
+.activity-row:hover .activity-kind-icon,
+.activity-item-open .activity-kind-icon {
+  opacity: 0;
+}
+
+.activity-row:hover .activity-chevron,
+.activity-item-open .activity-chevron {
+  opacity: 1;
+}
+
+.activity-kind {
+  flex: 0 0 auto;
   font-weight: 500;
-  font-family: var(--font-mono);
-  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
-.tool-card-status {
+.activity-separator {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+}
+
+.activity-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-status,
+.activity-spinner {
   display: inline-flex;
+  flex: 0 0 auto;
   margin-left: auto;
 }
 
-.tool-card-running .tool-card-status {
+.tool-card-running .activity-status {
   color: var(--color-accent-start);
 }
 
-.tool-card-done .tool-card-status {
+.tool-card-done .activity-status {
   color: var(--color-success);
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 
-.tool-card-error .tool-card-status {
+.tool-card-done:hover .activity-status {
+  opacity: 0.65;
+}
+
+.tool-card-error .activity-status {
   color: var(--color-error);
 }
 
@@ -541,15 +598,14 @@ body {
   }
 }
 
-.tool-card-chevron {
-  display: inline-flex;
-  color: var(--color-text-muted);
+.activity-detail {
+  margin: 2px 0 6px 24px;
 }
 
 .tool-card-detail {
-  border-top: 1px solid var(--color-border-glass);
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.15);
+  padding: 8px 11px;
+  border-left: 2px solid rgba(129, 140, 248, 0.3);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .tool-card-detail-label {
@@ -571,6 +627,39 @@ body {
 }
 
 .tool-card-detail-pre:last-child {
+  margin-bottom: 0;
+}
+
+/* ─── Model thinking detail ─── */
+
+.thinking-message {
+  padding: 6px 11px;
+  border-left: 2px solid rgba(129, 140, 248, 0.55);
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.thinking-message .md-body,
+.thinking-message .md-body p,
+.thinking-message .md-body li,
+.thinking-message .md-body table {
+  font-size: 9.5px;
+}
+
+.thinking-message .md-body h1,
+.thinking-message .md-body h2,
+.thinking-message .md-body h3,
+.thinking-message .md-body h4,
+.thinking-message .md-body h5 {
+  font-size: 10px;
+}
+
+.thinking-message p:first-child {
+  margin-top: 0;
+}
+
+.thinking-message p:last-child {
   margin-bottom: 0;
 }
 

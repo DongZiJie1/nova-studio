@@ -38,7 +38,7 @@ export interface MessageAttachment {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "thinking" | "tool";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
@@ -58,6 +58,8 @@ export interface AgentState {
   messageCount: number;
   /** Accumulated streaming text for the current assistant turn */
   streamingText: string;
+  /** Accumulated reasoning for the current assistant turn */
+  streamingThinking: string;
   /** Active tool calls in the current turn */
   activeToolCalls: Map<string, ToolCall>;
   /** Model metadata from get_state */
@@ -131,6 +133,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     createdAt: info.created_at,
     messageCount: info.message_count,
     streamingText: "",
+    streamingThinking: "",
     activeToolCalls: new Map(),
     modelMeta: null,
     contextUsage: null,
@@ -544,6 +547,24 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
       if (event.streamType === "text" && event.delta) {
         return { ...agent, streamingText: agent.streamingText + event.delta };
       }
+      if (event.streamType === "thinking") {
+        if (event.phase === "start") return { ...agent, streamingThinking: "" };
+        if (event.delta) {
+          return { ...agent, streamingThinking: agent.streamingThinking + event.delta };
+        }
+        if (event.phase === "end" && agent.streamingThinking) {
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "thinking",
+              content: agent.streamingThinking,
+              timestamp: Date.now(),
+            }],
+            streamingThinking: "",
+          };
+        }
+      }
       return agent;
     }
 
@@ -606,11 +627,23 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
       if (event.phase === "end") {
         const existing = calls.get(event.toolCallId);
         if (existing) {
-          calls.set(event.toolCallId, {
+          const completed: ToolCall = {
             ...existing,
             status: event.isError ? "error" : "done",
             result: event.result,
-          });
+          };
+          calls.delete(event.toolCallId);
+          return {
+            ...agent,
+            activeToolCalls: calls,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "tool",
+              content: "",
+              timestamp: Date.now(),
+              toolCalls: [completed],
+            }],
+          };
         }
         return { ...agent, activeToolCalls: calls };
       }
