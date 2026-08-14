@@ -232,6 +232,32 @@ pub async fn abort_agent(
 }
 
 #[tauri::command]
+pub async fn new_session(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    state.0.new_session(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn compact_session(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    instructions: Option<String>,
+) -> Result<(), String> {
+    state.0.compact(&agent_id, instructions).await
+}
+
+#[tauri::command]
+pub async fn set_session_name(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    name: String,
+) -> Result<(), String> {
+    state.0.set_session_name(&agent_id, name).await
+}
+
+#[tauri::command]
 pub async fn send_extension_ui_response(
     state: State<'_, AgentManagerState>,
     agent_id: String,

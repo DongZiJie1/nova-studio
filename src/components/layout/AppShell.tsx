@@ -11,8 +11,12 @@ import {
   sendPrompt,
   setModel,
   requestAvailableModels,
+  requestSessionStats,
   listAllModels,
   fetchModelsViaShell,
+  startNewSession,
+  compactSession,
+  setSessionName,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -26,7 +30,11 @@ import { ThinkingCard } from "../chat/ThinkingCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
 import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
-import { matchingSlashCommands, type SlashCommand } from "../../lib/slash-commands";
+import {
+  BUILTIN_SLASH_COMMANDS,
+  matchingSlashCommands,
+  type SlashCommand,
+} from "../../lib/slash-commands";
 import { findFileMention, insertFileMention } from "../../lib/file-mentions";
 import {
   Paperclip,
@@ -1037,6 +1045,60 @@ export function AppShell() {
   }, [addFiles]);
 
   const handleSubmit = async () => {
+    const text = input.trim();
+    if (!text || isSending) return;
+
+    const slashMatch = text.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+    if (slashMatch) {
+      const command = slashMatch[1].toLowerCase();
+      const args = slashMatch[2]?.trim() ?? "";
+      try {
+        if (command === "model") {
+          setModelPickerOpen(true);
+        } else {
+          if (!activeId) throw new Error(`/${command} 需要先创建一个会话`);
+          if (command === "new") {
+            await startNewSession(activeId);
+          } else if (command === "compact") {
+            await compactSession(activeId, args || undefined);
+          } else if (command === "name") {
+            if (!args) throw new Error("用法：/name <会话名称>");
+            await setSessionName(activeId, args);
+            setAgentNames((names) => {
+              const next = { ...names, [activeId]: args };
+              localStorage.setItem(AGENT_NAMES_KEY, JSON.stringify(next));
+              return next;
+            });
+          } else if (command === "session") {
+            await requestSessionStats(activeId);
+          } else if (command === "copy") {
+            const lastReply = [...(activeAgent?.messages ?? [])]
+              .reverse()
+              .find((message) => message.role === "assistant")?.content;
+            if (!lastReply) throw new Error("当前会话还没有可复制的 Nova 回复");
+            await navigator.clipboard.writeText(lastReply);
+          } else if (BUILTIN_SLASH_COMMANDS.some((item) => item.name === command)) {
+            throw new Error(`/${command} 尚未在 Studio 中实现，请暂时在 Nova CLI 中使用`);
+          } else {
+            // Extension commands, prompt templates and skills are executed by Nova's prompt RPC.
+            return void sendRegularPrompt();
+          }
+        }
+        setInput("");
+        setSlashCommandMenuDismissed(false);
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        setTimeout(() => setError(null), 8000);
+        return;
+      }
+    }
+
+    await sendRegularPrompt();
+  };
+
+  const sendRegularPrompt = async () => {
     const text = input.trim();
     if (!text || isSending) return;
 

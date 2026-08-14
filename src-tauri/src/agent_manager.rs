@@ -511,6 +511,36 @@ impl AgentManager {
         agent.send_command(&RpcCommand::GetAvailableModels { id: None })
     }
 
+    /// Start a fresh session in an existing Studio agent process.
+    pub async fn new_session(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::NewSession { id: None })?;
+        agent.send_command(&RpcCommand::GetMessages { id: None })?;
+        agent.send_command(&RpcCommand::GetState { id: None })
+    }
+
+    /// Compact the current session, optionally using caller-provided instructions.
+    pub async fn compact(
+        &self,
+        agent_id: &str,
+        instructions: Option<String>,
+    ) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::Compact {
+            id: None,
+            custom_instructions: instructions,
+        })
+    }
+
+    /// Set the display name stored in Nova's session metadata.
+    pub async fn set_session_name(&self, agent_id: &str, name: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::SetSessionName { id: None, name })
+    }
+
     /// Switch model for an agent
     pub async fn set_model(&self, agent_id: &str, provider: String, model_id: String) -> Result<(), String> {
         let agents = self.agents.read().await;

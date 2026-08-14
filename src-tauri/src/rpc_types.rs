@@ -58,6 +58,8 @@ pub enum RpcCommand {
         #[serde(rename = "customInstructions")]
         custom_instructions: Option<String>,
     },
+    #[serde(rename = "set_session_name")]
+    SetSessionName { id: Option<String>, name: String },
     #[serde(rename = "extension_ui_response")]
     ExtensionUIResponse {
         id: String,
