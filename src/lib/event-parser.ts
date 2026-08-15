@@ -11,6 +11,7 @@ export interface ParsedStreamDelta {
   kind: "stream_delta";
   /** "text" | "thinking" | "toolcall" */
   streamType: string;
+  phase: "start" | "delta" | "end" | "other";
   delta: string;
   contentIndex?: number;
 }
@@ -187,9 +188,17 @@ export function parseAgentEvent(msg: AgentMessage): ParsedEvent {
 // ─── Stream event parser ───
 
 function parseStreamEvent(evt: StreamEvent): ParsedStreamDelta {
+  const phase = evt.type.endsWith("_start")
+    ? "start"
+    : evt.type.endsWith("_delta")
+      ? "delta"
+      : evt.type.endsWith("_end")
+        ? "end"
+        : "other";
   return {
     kind: "stream_delta",
     streamType: evt.type.replace(/_(start|delta|end)$/, ""),
+    phase,
     delta: evt.delta ?? "",
     contentIndex: evt.contentIndex,
   };
@@ -200,8 +209,10 @@ function parseStreamEvent(evt: StreamEvent): ParsedStreamDelta {
 export function extractAssistantText(message?: Record<string, unknown>): string | null {
   if (!message) return null;
 
-  // Skip user messages — only extract assistant content
-  if (message.role === "user") return null;
+  // Only assistant messages belong in the assistant chat stream. In particular,
+  // custom messages may contain hidden LLM context (`display: false`) and must
+  // never be rendered as assistant replies.
+  if (message.role !== "assistant") return null;
 
   const content = message.content;
   if (typeof content === "string") return content;

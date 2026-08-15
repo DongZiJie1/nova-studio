@@ -38,7 +38,7 @@ export interface MessageAttachment {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "thinking" | "tool";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
@@ -58,6 +58,8 @@ export interface AgentState {
   messageCount: number;
   /** Accumulated streaming text for the current assistant turn */
   streamingText: string;
+  /** Accumulated reasoning for the current assistant turn */
+  streamingThinking: string;
   /** Active tool calls in the current turn */
   activeToolCalls: Map<string, ToolCall>;
   /** Model metadata from get_state */
@@ -70,6 +72,10 @@ export interface AgentState {
   sessionUsage: SessionUsage | null;
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
+  /** Live usage of the in-flight turn, streamed from message_update events */
+  liveUsage: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
+  /** Accumulated output tokens since the last user message */
+  outputSinceLastUserInput: number;
 }
 
 // ─── Store ───
@@ -127,12 +133,15 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     createdAt: info.created_at,
     messageCount: info.message_count,
     streamingText: "",
+    streamingThinking: "",
     activeToolCalls: new Map(),
     modelMeta: null,
     contextUsage: null,
     lastTurnUsage: null,
     sessionUsage: null,
     autoCompactionEnabled: true,
+    liveUsage: null,
+    outputSinceLastUserInput: 0,
   };
 }
 
@@ -295,6 +304,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               ...a,
               messages: [...a.messages, msg],
               messageCount: Math.max(a.messageCount, a.messages.length + 1),
+              outputSinceLastUserInput: 0,
             }
           : a,
       ),
@@ -451,7 +461,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       set((s) => ({
         agents: s.agents.map((agent) => {
           if (agent.id !== agentId) return agent;
-          if (!cu) return { ...agent, contextUsage: null, sessionUsage };
+          if (!cu) return { ...agent, contextUsage: null, sessionUsage, liveUsage: null };
           const totalTokens = cu.tokens != null ? Number(cu.tokens) : null;
           const contextWindow = Number(cu.contextWindow ?? 0);
           const percent = cu.percent != null ? Number(cu.percent) : null;
@@ -471,6 +481,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
             ...agent,
             contextUsage: { tokens: totalTokens, contextWindow, percent, toolResultTokens, systemPromptTokens },
             sessionUsage,
+            liveUsage: null,
           };
         }),
       }));
@@ -500,7 +511,24 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     set((s) => ({
       agents: s.agents.map((agent) => {
         if (agent.id !== agentId) return agent;
-        return applyEvent(agent, parsed);
+        let next = applyEvent(agent, parsed);
+        // Live token usage streamed during the current turn
+        if (event.type === "message_update") {
+          const msg = event.message as Record<string, unknown> | undefined;
+          const usage = (msg?.usage ?? {}) as Record<string, unknown>;
+          if (typeof usage.input === "number" || typeof usage.output === "number") {
+            next = {
+              ...next,
+              liveUsage: {
+                input: Number(usage.input ?? 0),
+                output: Number(usage.output ?? 0),
+                cacheRead: Number(usage.cacheRead ?? 0),
+                cacheWrite: Number(usage.cacheWrite ?? 0),
+              },
+            };
+          }
+        }
+        return next;
       }),
     }));
 
@@ -518,6 +546,24 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
     case "stream_delta": {
       if (event.streamType === "text" && event.delta) {
         return { ...agent, streamingText: agent.streamingText + event.delta };
+      }
+      if (event.streamType === "thinking") {
+        if (event.phase === "start") return { ...agent, streamingThinking: "" };
+        if (event.delta) {
+          return { ...agent, streamingThinking: agent.streamingThinking + event.delta };
+        }
+        if (event.phase === "end" && agent.streamingThinking) {
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "thinking",
+              content: agent.streamingThinking,
+              timestamp: Date.now(),
+            }],
+            streamingThinking: "",
+          };
+        }
       }
       return agent;
     }
@@ -581,11 +627,23 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
       if (event.phase === "end") {
         const existing = calls.get(event.toolCallId);
         if (existing) {
-          calls.set(event.toolCallId, {
+          const completed: ToolCall = {
             ...existing,
             status: event.isError ? "error" : "done",
             result: event.result,
-          });
+          };
+          calls.delete(event.toolCallId);
+          return {
+            ...agent,
+            activeToolCalls: calls,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "tool",
+              content: "",
+              timestamp: Date.now(),
+              toolCalls: [completed],
+            }],
+          };
         }
         return { ...agent, activeToolCalls: calls };
       }
@@ -625,10 +683,12 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "turn_lifecycle": {
       if (event.phase === "end") {
+        const turnOutput = event.usage?.output ?? 0;
         return {
           ...agent,
           activeToolCalls: new Map(),
           lastTurnUsage: event.usage ?? null,
+          outputSinceLastUserInput: agent.outputSinceLastUserInput + turnOutput,
         };
       }
       return agent;

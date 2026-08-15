@@ -3,6 +3,8 @@ import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File 
 import type { ChatMessage as ChatMessageData } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
+import { ThinkingCard } from "./ThinkingCard";
+import { ToolCallCard } from "./ToolCallCard";
 
 function getAttIcon(name: string, mimeType: string): { icon: typeof FileText; color: string } {
   const lower = name.toLowerCase();
@@ -33,6 +35,18 @@ export const ChatMessage = memo(function ChatMessage({
   userLabel?: string;
   avatarId: AgentAvatarId;
 }) {
+  if (message.role === "thinking") {
+    return <div className="msg-row msg-row-special"><ThinkingCard content={message.content} /></div>;
+  }
+  if (message.role === "tool") {
+    return (
+      <div className="msg-row msg-row-special">
+        {message.toolCalls?.map((tool) => (
+          <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
+        ))}
+      </div>
+    );
+  }
   const isUser = message.role === "user";
   const MAX_ICONS = 4;
 

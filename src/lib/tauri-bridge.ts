@@ -56,6 +56,18 @@ export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
 }
 
+export async function startNewSession(agentId: string): Promise<void> {
+  return invoke("new_session", { agentId });
+}
+
+export async function compactSession(agentId: string, instructions?: string): Promise<void> {
+  return invoke("compact_session", { agentId, instructions });
+}
+
+export async function setSessionName(agentId: string, name: string): Promise<void> {
+  return invoke("set_session_name", { agentId, name });
+}
+
 export async function requestSessionStats(agentId: string): Promise<void> {
   return invoke("request_session_stats", { agentId });
 }
