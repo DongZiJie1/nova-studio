@@ -74,6 +74,78 @@ function displayToolName(name: string): string {
   return name ? name[0].toUpperCase() + name.slice(1) : "Tool";
 }
 
+function objectString(value: unknown, ...keys: string[]): string {
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof record[key] === "string") return record[key] as string;
+  }
+  return "";
+}
+
+function resultText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
+          return (item as Record<string, unknown>).text as string;
+        }
+        return resultText(item);
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.content !== undefined) return resultText(record.content);
+    const direct = objectString(record, "output", "stdout", "text");
+    if (direct) return direct;
+  }
+  return value === undefined ? "" : prettyJson(value);
+}
+
+function ToolDetail({ name, args, result }: { name: string; args?: unknown; result?: unknown }) {
+  const normalizedName = name.toLowerCase();
+
+  if (normalizedName === "bash" || normalizedName === "shell") {
+    const command = objectString(args, "command", "cmd");
+    return (
+      <div className="activity-detail bash-detail">
+        {command && <div className="bash-command"><span>$</span> {command}</div>}
+        {result !== undefined && <pre className="bash-output">{resultText(result) || "(no output)"}</pre>}
+      </div>
+    );
+  }
+
+  if (normalizedName === "read") {
+    const path = objectString(args, "file_path", "path");
+    return (
+      <div className="activity-detail read-detail">
+        {path && <div className="read-detail-header"><FileText size={12} />{path}</div>}
+        {result !== undefined && <pre className="read-detail-content">{resultText(result)}</pre>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="activity-detail tool-card-detail">
+      {args !== undefined && (
+        <>
+          <div className="tool-card-detail-label">args</div>
+          <pre className="tool-card-detail-pre">{prettyJson(args)}</pre>
+        </>
+      )}
+      {result !== undefined && (
+        <>
+          <div className="tool-card-detail-label">result</div>
+          <pre className="tool-card-detail-pre">{resultText(result)}</pre>
+        </>
+      )}
+    </div>
+  );
+}
+
 interface ToolCallCardProps {
   name: string;
   status: "pending" | "running" | "done" | "error";
@@ -109,22 +181,7 @@ export function ToolCallCard({ name, status, args, result }: ToolCallCardProps) 
           )}
         </span>
       </button>
-      {open && hasDetail && (
-        <div className="activity-detail tool-card-detail">
-          {args !== undefined && (
-            <>
-              <div className="tool-card-detail-label">args</div>
-              <pre className="tool-card-detail-pre">{prettyJson(args)}</pre>
-            </>
-          )}
-          {result !== undefined && (
-            <>
-              <div className="tool-card-detail-label">result</div>
-              <pre className="tool-card-detail-pre">{prettyJson(result)}</pre>
-            </>
-          )}
-        </div>
-      )}
+      {open && hasDetail && <ToolDetail name={name} args={args} result={result} />}
     </div>
   );
 }
