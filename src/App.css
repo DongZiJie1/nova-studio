@@ -375,6 +375,10 @@ body {
   width: fit-content;
 }
 
+.msg-row-assistant .msg-column {
+  max-width: calc(100% - 54px);
+}
+
 .msg-meta {
   display: flex;
   align-items: center;
@@ -418,11 +422,12 @@ body {
 }
 
 .msg-bubble-assistant {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--color-border-glass);
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--color-text-primary);
-  border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 }
 
 .msg-cursor {
