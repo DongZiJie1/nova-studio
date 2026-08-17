@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
+import { useUiStore } from "../../stores/ui-store";
 import {
   abortAgent,
   activateAgent,
@@ -40,13 +41,11 @@ import {
   Paperclip,
   ArrowUp,
   Square,
-  Home,
   FolderOpen,
   Pencil,
   Sparkles,
   ChevronDown,
   ChevronRight,
-  PanelLeftClose,
   Plus,
   X,
   ExternalLink,
@@ -57,17 +56,24 @@ import {
   FileType,
   Image,
   File,
+  Moon,
+  Sun,
+  Settings,
+  Palette,
+  ArrowLeft,
+  MessageCircle,
+  Route,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
 const AGENT_NAMES_KEY = "nova-studio.agent-names";
 const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
-const SIDEBAR_LEFT = 56;
-const SIDEBAR_WIDTH = 340;
-const SIDEBAR_CONTENT_GAP = 20;
-const CHAT_COLUMN_MAX_WIDTH = 768;
-const PAGE_HORIZONTAL_PADDING = 24;
 const CONVERSATION_MINIMAP_PAIR_THRESHOLD = 6;
+
+function isTemporaryRuntimeProject(cwd: string): boolean {
+  const directoryName = cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
+  return directoryName.startsWith("pi-runtime");
+}
 
 interface ConversationPair {
   userMessageId: string;
@@ -92,6 +98,33 @@ function formatTokens(count: number): string {
   if (count < 1000000) return `${Math.round(count / 1000)}k`;
   if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
   return `${Math.round(count / 1000000)}M`;
+}
+
+async function loadBackgroundImage(path: string): Promise<string> {
+  const bytes = await readFile(path);
+  const sourceUrl = URL.createObjectURL(new Blob([bytes]));
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new window.Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("无法读取所选图片"));
+      element.src = sourceUrl;
+    });
+
+    const maxWidth = 1920;
+    const maxHeight = 1200;
+    const scale = Math.min(1, maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("无法处理所选图片");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
 }
 
 /** Animate a number toward its target value (rolling/ticking counter effect). */
@@ -440,16 +473,6 @@ function buildConversationPairs(messages: AgentState["messages"]): ConversationP
   return pairs;
 }
 
-function hasSidebarClearance(viewportWidth: number): boolean {
-  const contentWidth = Math.min(
-    CHAT_COLUMN_MAX_WIDTH,
-    Math.max(0, viewportWidth - PAGE_HORIZONTAL_PADDING * 2),
-  );
-  const contentLeft = (viewportWidth - contentWidth) / 2;
-  const sidebarRight = SIDEBAR_LEFT + SIDEBAR_WIDTH;
-  return sidebarRight + SIDEBAR_CONTENT_GAP <= contentLeft;
-}
-
 function loadProjectNames(): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(PROJECT_NAMES_KEY) ?? "{}");
@@ -491,25 +514,6 @@ function agentSubtitle(agent: AgentState): string {
   return agent.cwd;
 }
 
-function agentStatusMeta(status: AgentState["status"]): {
-  label: string;
-  className: string;
-  dot: string;
-} {
-  switch (status) {
-    case "streaming":
-      return { label: "Running", className: "running", dot: "#fbbf24" };
-    case "idle":
-      return { label: "Ready", className: "ready", dot: "#34d399" };
-    case "starting":
-      return { label: "Starting", className: "waiting", dot: "#60a5fa" };
-    case "error":
-      return { label: "Error", className: "error", dot: "#f87171" };
-    case "stopped":
-      return { label: "Stopped", className: "stopped", dot: "#6b7280" };
-  }
-}
-
 interface AgentTreeNodeProps {
   agent: AgentState;
   childrenByParent: Map<string, AgentState[]>;
@@ -535,7 +539,6 @@ function AgentTreeNode({
 }: AgentTreeNodeProps) {
   const children = childrenByParent.get(agent.id) ?? [];
   const [childrenExpanded, setChildrenExpanded] = useState(false);
-  const status = agentStatusMeta(agent.status);
   const isActive = agent.id === activeId;
   const isChild = depth > 0;
 
@@ -545,16 +548,6 @@ function AgentTreeNode({
         onClick={() => onSelect(agent.id)}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
       >
-        <span className="agent-tile">
-          <Sparkles
-            size={isChild ? 15 : 20}
-            style={{ color: isActive ? "#c4caff" : "#8d95c5" }}
-          />
-          <span
-            className={`agent-dot ${agent.status === "streaming" ? "animate-pulse" : ""}`}
-            style={{ background: status.dot }}
-          />
-        </span>
         <span className="agent-text">
           <span className="agent-name">{agentDisplayName(agent, agentNames)}</span>
           {!isChild && (
@@ -647,7 +640,10 @@ export function AppShell() {
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
   const setDefaultModel = useSettingsStore((s) => s.setDefaultModel);
   const setDefaultProvider = useSettingsStore((s) => s.setDefaultProvider);
-
+  const theme = useUiStore((s) => s.theme);
+  const setTheme = useUiStore((s) => s.setTheme);
+  const customBgUrl = useUiStore((s) => s.customBgUrl);
+  const setCustomBgUrl = useUiStore((s) => s.setCustomBgUrl);
 
   const [input, setInput] = useState("");
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
@@ -666,11 +662,11 @@ export function AppShell() {
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [savedInput, setSavedInput] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
   const [agentNames, setAgentNames] = useState<Record<string, string>>(
@@ -688,8 +684,6 @@ export function AppShell() {
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const inputCardRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
-  const sidebarHoverModeRef = useRef(false);
-  const sidebarHoverCloseTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
@@ -736,7 +730,9 @@ export function AppShell() {
     }
     return false;
   };
-  const visibleAgents = agents.filter((agent) => !isAgentHidden(agent));
+  const visibleAgents = agents.filter(
+    (agent) => !isAgentHidden(agent) && !isTemporaryRuntimeProject(agent.cwd),
+  );
   const visibleAgentsById = new Map(visibleAgents.map((agent) => [agent.id, agent]));
   const activeAgent = visibleAgents.find((a) => a.id === activeId);
   // Source of truth for the model shown in the picker. Prefer the agent's
@@ -771,9 +767,14 @@ export function AppShell() {
   // Home is a new conversation inside a concrete project, never a
   // project-less scratchpad. Prefer an explicitly selected/default project,
   // then the most recently used project, and finally the user's home folder.
+  const validPendingProjectCwd =
+    pendingProjectCwd && !isTemporaryRuntimeProject(pendingProjectCwd) ? pendingProjectCwd : "";
+  const validDefaultCwd = defaultCwd && !isTemporaryRuntimeProject(defaultCwd) ? defaultCwd : "";
   const welcomeProjectCwd =
-    pendingProjectCwd || defaultCwd || agents[0]?.cwd || "~";
+    validPendingProjectCwd || validDefaultCwd || visibleAgents[0]?.cwd || "~";
   const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
+  const inputProjectName =
+    projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd;
   const conversationParent = activeAgent?.parentAgentId
     ? agentsById.get(activeAgent.parentAgentId)
     : undefined;
@@ -785,14 +786,25 @@ export function AppShell() {
   const availableProjectCwds = Array.from(
     new Set([
       ...rootsByProject.keys(),
-      ...(defaultCwd ? [defaultCwd] : []),
+      ...(validDefaultCwd ? [validDefaultCwd] : []),
       inputProjectCwd,
-    ]),
+    ].filter((cwd) => !isTemporaryRuntimeProject(cwd))),
   );
   const streamingText = activeAgent?.streamingText ?? "";
   const slashCommands = slashCommandMenuDismissed ? [] : matchingSlashCommands(input);
   const fileMention = fileMentionMenuDismissed ? null : findFileMention(input, cursorPosition);
   const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
+  const trajectoryRequests = useMemo(() => {
+    const groups: Array<{ id: string; messages: AgentState["messages"] }> = [];
+    for (const message of activeAgent?.messages ?? []) {
+      if (message.role === "user" || groups.length === 0) {
+        groups.push({ id: message.id, messages: [message] });
+      } else {
+        groups[groups.length - 1].messages.push(message);
+      }
+    }
+    return groups;
+  }, [activeAgent?.messages]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
 
@@ -857,33 +869,6 @@ export function AppShell() {
     document.addEventListener("mousedown", dismissSlashCommands);
     return () => document.removeEventListener("mousedown", dismissSlashCommands);
   }, [slashCommands.length, fileMention]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setWindowWidth(window.innerWidth);
-      if (!hasSidebarClearance(window.innerWidth)) {
-        setSidebarOpen(false);
-        sidebarHoverModeRef.current = false;
-      }
-    };
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    const observer = new ResizeObserver(handleResize);
-    observer.observe(document.documentElement);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      observer.disconnect();
-    };
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (sidebarHoverCloseTimerRef.current !== null) {
-        window.clearTimeout(sidebarHoverCloseTimerRef.current);
-      }
-    },
-    [],
-  );
 
   // Auto-select a default model when models are loaded and none is configured yet
   useEffect(() => {
@@ -1268,6 +1253,8 @@ export function AppShell() {
   }, [activeAgent?.status, handleAbort]);
 
   const handleSelectAgent = (agentId: string) => {
+    setSettingsOpen(false);
+    setConversationView("chat");
     setActiveAgent(agentId);
     void activateAgent(agentId)
       .then((info) => {
@@ -1290,46 +1277,26 @@ export function AppShell() {
       });
   };
 
-  const handleToggleSidebar = () => {
-    const willOpen = !sidebarOpen;
-    if (willOpen && !hasSidebarClearance(window.innerWidth)) {
-      setSidebarOpen(false);
-      return;
-    }
-    setSidebarOpen(willOpen);
-    if (willOpen) {
-      void listAgents()
-        .then(syncAgents)
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error("Failed to refresh sessions:", message);
-          setError(message);
-        });
-    }
-  };
+  const handleChooseBackground = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    });
+    if (typeof selected !== "string") return;
 
-  const handleSidebarHoverEnter = () => {
-    if (sidebarHoverCloseTimerRef.current !== null) {
-      window.clearTimeout(sidebarHoverCloseTimerRef.current);
-      sidebarHoverCloseTimerRef.current = null;
+    try {
+      setCustomBgUrl(await loadBackgroundImage(selected));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "背景图片加载失败");
     }
-    if (!hasSidebarClearance(window.innerWidth)) {
-      sidebarHoverModeRef.current = true;
-      setSidebarOpen(true);
-    }
-  };
-
-  const handleSidebarHoverLeave = () => {
-    if (!sidebarHoverModeRef.current) return;
-    sidebarHoverCloseTimerRef.current = window.setTimeout(() => {
-      setSidebarOpen(false);
-      sidebarHoverModeRef.current = false;
-      sidebarHoverCloseTimerRef.current = null;
-    }, 100);
   };
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-bg-primary">
+    <div
+      className="relative h-screen w-screen overflow-hidden bg-bg-primary"
+      data-custom-background={customBgUrl ? "true" : "false"}
+    >
       <Background />
 
       {/* Full-window drag overlay */}
@@ -1407,118 +1374,58 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="relative z-10 flex h-full flex-col">
-        {/* Top nav bar */}
-        <div
-          style={{
-            flexShrink: 0,
-            width: "100%",
-            height: 64,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 18px 0 12px",
-            zIndex: 20,
-          }}
-        >
-          {/* Primary navigation stays at the far-left edge; branding follows it. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                fontSize: 15,
-                fontWeight: 600,
-                letterSpacing: "0.01em",
-                color: "#eef0f8",
-              }}
-            >
-              <Sparkles size={17} style={{ color: "#b9c1ff" }} />
-              Nova Studio
-            </div>
-            <nav
-              aria-label="Primary navigation"
-              style={{
-                position: "fixed",
-                zIndex: 32,
-                left: 8,
-                top: 72,
-                display: "flex",
-                width: 48,
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <button
-                onClick={() => setActiveAgent(null)}
-                title="Home"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 48,
-                  height: 42,
-                  padding: 0,
-                  borderRadius: 12,
-                  fontSize: 13,
-                  fontWeight: activeId === null ? 500 : 400,
-                  color: activeId === null ? "#eef0f8" : "#7b8197",
-                  background: activeId === null ? "rgba(255, 255, 255, 0.07)" : "transparent",
-                  border: "1px solid rgba(255, 255, 255, 0.09)",
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <Home size={15} />
-              </button>
-              <button
-                onClick={handleToggleSidebar}
-                onMouseEnter={handleSidebarHoverEnter}
-                onMouseLeave={handleSidebarHoverLeave}
-                title="Projects"
-                className={sidebarOpen ? "top-nav-active" : ""}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 48,
-                  height: 42,
-                  padding: 0,
-                  borderRadius: 12,
-                  fontSize: 13,
-                  color: sidebarOpen ? "#eef0f8" : "#7b8197",
-                  background: sidebarOpen ? "rgba(255, 255, 255, 0.07)" : "transparent",
-                  border: "1px solid rgba(255, 255, 255, 0.09)",
-                  cursor: "pointer",
-                }}
-              >
-                {sidebarOpen ? <PanelLeftClose size={15} /> : <FolderOpen size={15} />}
-              </button>
-            </nav>
-          </div>
-
-        </div>
-
+      <div className="relative z-10 flex h-full flex-col pt-3">
         {/* Body row: sidebar + main */}
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          onMouseEnter={handleSidebarHoverEnter}
-          onMouseLeave={handleSidebarHoverLeave}
-          className={`glass-panel absolute z-20 top-0 bottom-3 left-[56px] p-4 flex flex-col ${
-            sidebarOpen ? "w-[280px]" : "hidden"
-          }`}
-          style={!hasSidebarClearance(windowWidth) ? { backgroundColor: "rgba(10, 12, 24, 0.95)" } : undefined}
+          className="studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex w-[288px] shrink-0 flex-col"
         >
-          {sidebarOpen && (
+          {settingsOpen ? (
+            <div className="settings-sidebar-content">
+              <header className="settings-sidebar-header">
+                <button
+                  type="button"
+                  className="settings-back-button"
+                  onClick={() => setSettingsOpen(false)}
+                >
+                  <ArrowLeft size={16} />
+                  <span>返回</span>
+                </button>
+                <h1>设置</h1>
+              </header>
+              <nav className="settings-sidebar-nav" aria-label="设置分类">
+                <button type="button" className="settings-category-button settings-category-button-active">
+                  <Palette size={16} />
+                  <span>外观</span>
+                </button>
+              </nav>
+            </div>
+          ) : (
             <>
-              <div className="sidebar-section-title">
-                <span className="sidebar-section-icon">
-                  <FolderOpen size={14} />
-                </span>
-                <span>项目</span>
+              <header className="sidebar-header">
+                <div className="sidebar-brand">
+                  <span className="sidebar-brand-mark"><Sparkles size={18} /></span>
+                  <span>Nova</span>
+                  <span className="sidebar-brand-badge">STUDIO</span>
+                </div>
+                <button
+                  type="button"
+                  className="sidebar-new-session"
+                  onClick={() => {
+                    setPendingProjectCwd(null);
+                    setActiveAgent(null);
+                    setSettingsOpen(false);
+                    setConversationView("chat");
+                  }}
+                >
+                  <Plus size={16} />
+                  <span>新会话</span>
+                </button>
+              </header>
+
+              <div className="sidebar-workspace-heading">
+                <span>工作区</span>
                 <span className="sidebar-project-count">{rootsByProject.size}</span>
               </div>
               <div className="agent-tree flex-1 overflow-y-auto">
@@ -1607,20 +1514,162 @@ export function AppShell() {
                   </section>
                 ))}
               </div>
+              <footer className="sidebar-footer">
+                <button
+                  type="button"
+                  className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <Settings size={16} />
+                  <span>设置</span>
+                </button>
+              </footer>
             </>
           )}
         </aside>
 
         {/* Main */}
         <main className="relative w-full flex flex-col overflow-hidden">
+          {settingsOpen && (
+            <section className="settings-page">
+              <div className="settings-page-inner">
+                  <header className="settings-page-header">
+                    <h1>外观</h1>
+                    <p>调整 Nova Studio 的主题和桌面背景。</p>
+                  </header>
+
+                  <div className="settings-card">
+                    <div className="settings-card-copy">
+                      <h2>主题</h2>
+                      <p>选择界面的明暗风格。</p>
+                    </div>
+                    <div className="theme-switcher" data-active-theme={theme} role="group" aria-label="主题风格">
+                      <button
+                        type="button"
+                        className={`theme-switcher-option ${theme === "arctic-dawn" ? "theme-switcher-option-active" : ""}`}
+                        onClick={() => setTheme("arctic-dawn")}
+                        aria-pressed={theme === "arctic-dawn"}
+                      >
+                        <Sun size={16} /><span>明亮</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`theme-switcher-option ${theme === "midnight" ? "theme-switcher-option-active" : ""}`}
+                        onClick={() => setTheme("midnight")}
+                        aria-pressed={theme === "midnight"}
+                      >
+                        <Moon size={16} /><span>暗黑</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="settings-card">
+                    <div className="settings-card-copy">
+                      <h2>桌面背景</h2>
+                      <p>选择本地图片，或恢复主题默认背景。</p>
+                    </div>
+                    <div className="settings-background-actions">
+                      <button type="button" className="background-picker-button" onClick={() => void handleChooseBackground()}>
+                        <Image size={15} /><span>选择图片</span>
+                      </button>
+                      {customBgUrl && (
+                        <button type="button" className="settings-background-clear" onClick={() => setCustomBgUrl(null)}>
+                          <X size={14} /><span>清除背景</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+              </div>
+            </section>
+          )}
+          {!settingsOpen && activeAgent && (
+            <div className="conversation-view-switcher" data-active-view={conversationView}>
+              <button
+                type="button"
+                className={conversationView === "chat" ? "conversation-view-option-active" : ""}
+                onClick={() => setConversationView("chat")}
+              >
+                <MessageCircle size={14} />
+                <span>对话</span>
+              </button>
+              <button
+                type="button"
+                className={conversationView === "trajectory" ? "conversation-view-option-active" : ""}
+                onClick={() => setConversationView("trajectory")}
+              >
+                <Route size={14} />
+                <span>轨迹</span>
+              </button>
+            </div>
+          )}
           {/* Content area */}
           <div
             ref={scrollRef}
             className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
             }`}
+            style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
-            {!hasMessages ? (
+            {conversationView === "trajectory" && activeAgent ? (
+              <div className="trajectory-view">
+                {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
+                  <div className="trajectory-empty">当前会话还没有轨迹数据</div>
+                ) : (
+                  <div className="trajectory-list">
+                    {trajectoryRequests.map((request, requestIndex) => (
+                      <section key={request.id} className="trajectory-request">
+                        <div className="trajectory-request-events">
+                          {request.messages.map((message) => (
+                            <div key={message.id} className={`trajectory-row trajectory-row-${message.role}`}>
+                              <span className="trajectory-node" />
+                              <span className="trajectory-role">
+                                {message.role === "user" ? "USER" : message.role === "assistant" ? "ASSISTANT" : message.role === "thinking" ? "THINK" : "TOOL"}
+                              </span>
+                              <div className="trajectory-content">
+                                {message.role === "tool" && message.toolCalls?.length
+                                  ? message.toolCalls.map((tool) => (
+                                      <div key={tool.id} className="trajectory-tool-line">
+                                        <strong>{tool.name}</strong>
+                                        <span>{JSON.stringify(tool.args)}</span>
+                                        {tool.result !== undefined && <span>→ {String(tool.result)}</span>}
+                                      </div>
+                                    ))
+                                  : message.content || "—"}
+                              </div>
+                            </div>
+                          ))}
+                          {requestIndex === trajectoryRequests.length - 1 && activeAgent.streamingThinking && (
+                            <div className="trajectory-row trajectory-row-thinking trajectory-row-live">
+                              <span className="trajectory-node" />
+                              <span className="trajectory-role">THINK</span>
+                              <div className="trajectory-content">{activeAgent.streamingThinking}</div>
+                            </div>
+                          )}
+                          {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => (
+                            <div key={tool.id} className="trajectory-row trajectory-row-tool trajectory-row-live">
+                              <span className="trajectory-node" />
+                              <span className="trajectory-role">TOOL</span>
+                              <div className="trajectory-content trajectory-tool-line">
+                                <strong>{tool.name}</strong>
+                                <span>{JSON.stringify(tool.args)}</span>
+                                {tool.result !== undefined && <span>→ {String(tool.result)}</span>}
+                              </div>
+                            </div>
+                          ))}
+                          {requestIndex === trajectoryRequests.length - 1 && streamingText && (
+                            <div className="trajectory-row trajectory-row-assistant trajectory-row-live">
+                              <span className="trajectory-node" />
+                              <span className="trajectory-role">ASSISTANT</span>
+                              <div className="trajectory-content">{streamingText}</div>
+                            </div>
+                          )}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : !hasMessages ? (
               /* Empty state — tagline */
               <div
                 className="text-center max-w-4xl w-full animate-fade-in-up"
@@ -1649,43 +1698,48 @@ export function AppShell() {
                 <h2
                   className="hero-title"
                   style={{
-                    fontSize: 44,
+                    fontSize: "clamp(28px, 3.2vw, 44px)",
                     fontWeight: 700,
                     letterSpacing: "-0.02em",
                     lineHeight: 1.15,
                   }}
                 >
-                  Ship faster with Nova{agentsLoaded && (
+                  <span className="hero-title-prefix">
+                    Ship faster with Nova{agentsLoaded ? " in" : ""}
+                  </span>
+                  {agentsLoaded && (
                     <>
-                      {" in "}
                       <span
+                        className="hero-project-name"
+                        title={inputProjectName}
                         style={{
                           position: "relative",
-                          display: "inline-block",
                         }}
                       >
                         <span
+                          className="hero-project-name-text"
                           style={{
-                            background: "linear-gradient(135deg, #a78bfa, #818cf8, #60a5fa)",
+                            background: "linear-gradient(135deg, var(--color-accent-end), var(--color-accent-start), #60a5fa)",
                             WebkitBackgroundClip: "text",
                             WebkitTextFillColor: "transparent",
-                            textShadow: "0 0 40px rgba(129, 140, 248, 0.5)",
+                            textShadow: "0 0 40px var(--accent-shadow)",
                           }}
                         >
-                          {projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd}
+                          {inputProjectName}
                         </span>
-                    <span
-                      style={{
-                        position: "absolute",
-                        bottom: -2,
-                        left: 0,
-                        right: 0,
-                        height: 2,
-                        background: "linear-gradient(90deg, #818cf8, #60a5fa)",
-                        borderRadius: 1,
-                      }}
-                    />
-                  </span>.
+                        <span
+                          style={{
+                            position: "absolute",
+                            bottom: -2,
+                            left: 0,
+                            right: 0,
+                            height: 2,
+                            background: "linear-gradient(90deg, var(--color-accent-start), #60a5fa)",
+                            borderRadius: 1,
+                          }}
+                        />
+                      </span>
+                      <span>.</span>
                     </>
                   )}
                 </h2>
@@ -1693,7 +1747,7 @@ export function AppShell() {
                   style={{
                     marginTop: 16,
                     fontSize: 15,
-                    color: "#7d8398",
+                    color: "var(--color-text-secondary)",
                     letterSpacing: "0.01em",
                   }}
                 >
@@ -1710,7 +1764,7 @@ export function AppShell() {
                   <div
                     style={{
                       padding: "28px 0",
-                      color: "#7d8398",
+                      color: "var(--color-text-secondary)",
                       fontSize: 13,
                       textAlign: "center",
                     }}
@@ -1759,7 +1813,7 @@ export function AppShell() {
             )}
           </div>
 
-          {showConversationMinimap && (
+          {conversationView === "chat" && showConversationMinimap && (
             <nav
               className="conversation-minimap"
               aria-label="Conversation navigation"
@@ -1794,7 +1848,7 @@ export function AppShell() {
             style={{
               flexShrink: 0,
               padding: "60px 24px 56px",
-              display: "flex",
+              display: conversationView === "chat" ? "flex" : "none",
               justifyContent: "center",
             }}
           >
@@ -2079,7 +2133,7 @@ export function AppShell() {
                     background: "transparent",
                     padding: "18px 20px 8px",
                     fontSize: 15,
-                    color: "#eceef6",
+                    color: "var(--color-text-primary)",
                     outline: "none",
                     lineHeight: 1.6,
                     fontFamily: "inherit",
@@ -2106,7 +2160,7 @@ export function AppShell() {
                       width: 32,
                       height: 32,
                       borderRadius: 9,
-                      color: "#6d7387",
+                      color: "var(--color-text-muted)",
                       background: "none",
                       border: "none",
                       cursor: "pointer",
@@ -2143,6 +2197,7 @@ export function AppShell() {
                       <div style={{ position: "relative" }}>
                         <button
                           type="button"
+                          className="input-toolbar-control"
                           onClick={() => setModelPickerOpen((open) => !open)}
                           style={{
                             display: "flex",
@@ -2184,6 +2239,7 @@ export function AppShell() {
                         {modelPickerOpen && (
                           <div
                             ref={modelPickerRef}
+                            className="model-picker-popover"
                             style={{
                               position: "absolute",
                               right: 0,
@@ -2210,7 +2266,7 @@ export function AppShell() {
                               }
                               return Array.from(grouped.entries()).map(([provider, models]) => (
                                 <div key={provider}>
-                                  <div style={{ padding: "6px 10px 3px", fontSize: 10, color: "#5a6078", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, color: "#5a6078", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
                                     {provider}
                                   </div>
                                   {models.map((m) => {
@@ -2219,6 +2275,7 @@ export function AppShell() {
                                       <button
                                         key={m.id}
                                         type="button"
+                                        className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
                                         onClick={() => {
                                           if (activeAgent) {
                                             setModel(activeAgent.id, m.provider, m.id);
@@ -2249,7 +2306,7 @@ export function AppShell() {
                                         onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
                                       >
                                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                                        <span style={{ fontSize: 10, color: "#5a6078", flexShrink: 0, marginLeft: 8 }}>
+                                        <span className="model-picker-context" style={{ fontSize: 10, color: "#5a6078", flexShrink: 0, marginLeft: 8 }}>
                                           {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
                                         </span>
                                       </button>
@@ -2264,6 +2321,7 @@ export function AppShell() {
                     )}
                     <button
                       type="button"
+                      className="input-toolbar-control"
                       onClick={() => setProjectPickerOpen((open) => !open)}
                       title="切换项目"
                       style={{
@@ -2296,12 +2354,13 @@ export function AppShell() {
                     >
                       <FolderOpen size={12} style={{ flexShrink: 0 }} />
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd}
+                        {inputProjectName}
                       </span>
                     </button>
                     {projectPickerOpen && (
                       <div
                         ref={projectPickerRef}
+                        className="project-picker-popover"
                         style={{
                           position: "absolute",
                           left: 0,
@@ -2319,6 +2378,7 @@ export function AppShell() {
                         }}
                       >
                         <div
+                          className="project-picker-title"
                           style={{
                             padding: "4px 8px 5px",
                             color: "#6f758a",
