@@ -5,6 +5,7 @@ import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
 import { listAgents, onAgentEvent } from "./lib/tauri-bridge";
 import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
+import { useUiStore } from "./stores/ui-store";
 
 const STREAM_FLUSH_INTERVAL_MS = 50;
 
@@ -16,6 +17,12 @@ interface PendingTextDelta {
 function App() {
   const handleAgentEvent = useAgentStore((s) => s.handleAgentEvent);
   const syncAgents = useAgentStore((s) => s.syncAgents);
+  const theme = useUiStore((s) => s.theme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme === "arctic-dawn" ? "light" : "dark";
+  }, [theme]);
 
   useEffect(() => {
     const pendingTextDeltas = new Map<string, PendingTextDelta>();
