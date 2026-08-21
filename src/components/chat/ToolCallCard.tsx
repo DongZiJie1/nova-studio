@@ -5,11 +5,15 @@ import {
   ChevronRight,
   FilePlus2,
   FileText,
+  Database,
   FolderSearch,
+  FolderKanban,
   Loader2,
   PenLine,
   Search,
   Terminal,
+  MessagesSquare,
+  Trash2,
   Wrench,
   XCircle,
   type LucideIcon,
@@ -24,6 +28,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   grep: Search,
   glob: FolderSearch,
   ls: FolderSearch,
+  nova_data: Database,
 };
 
 function toolIcon(name: string): LucideIcon {
@@ -53,6 +58,15 @@ function toolSummary(name: string, args: unknown): string {
   };
 
   switch (name.toLowerCase()) {
+    case "nova_data": {
+      const action = pick("action");
+      const sessionIds = Array.isArray(values.session_ids) ? values.session_ids.length : 0;
+      if (action === "list_projects") return "查看项目";
+      if (action === "list_sessions") return "查看会话";
+      if (action === "read_session") return "读取会话内容";
+      if (action === "delete_session") return sessionIds > 1 ? `删除 ${sessionIds} 个会话` : "删除会话";
+      return "管理 Nova 数据";
+    }
     case "bash":
     case "shell":
       return pick("command", "cmd");
@@ -71,6 +85,7 @@ function toolSummary(name: string, args: unknown): string {
 }
 
 function displayToolName(name: string): string {
+  if (name.toLowerCase() === "nova_data") return "Nova 数据";
   return name ? name[0].toUpperCase() + name.slice(1) : "Tool";
 }
 
@@ -105,8 +120,71 @@ function resultText(value: unknown): string {
   return value === undefined ? "" : prettyJson(value);
 }
 
+function objectValue(value: unknown, key: string): unknown {
+  return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function novaDataResult(result: unknown): unknown {
+  const details = objectValue(result, "details");
+  const data = objectValue(details, "data");
+  if (data !== undefined) return data;
+  const text = resultText(result);
+  try {
+    return JSON.parse(text);
+  } catch {
+    return result;
+  }
+}
+
+function NovaDataDetail({ args, result }: { args?: unknown; result?: unknown }) {
+  const action = objectString(args, "action");
+  const data = novaDataResult(result);
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const actionMeta = action === "list_projects"
+    ? { icon: FolderKanban, label: "项目列表" }
+    : action === "list_sessions"
+      ? { icon: MessagesSquare, label: "会话列表" }
+      : action === "read_session"
+        ? { icon: MessagesSquare, label: "会话内容" }
+        : action === "delete_session"
+          ? { icon: Trash2, label: "删除结果" }
+          : { icon: Database, label: "Nova 数据" };
+  const ActionIcon = actionMeta.icon;
+  const projects = Array.isArray(record.projects) ? record.projects : [];
+  const sessions = Array.isArray(record.sessions) ? record.sessions : [];
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  const deleted = Array.isArray(record.deleted) ? record.deleted : record.deleted ? [record.deleted] : [];
+  const hasStructuredContent = projects.length > 0 || sessions.length > 0 || messages.length > 0 || deleted.length > 0;
+
+  return (
+    <div className="activity-detail nova-data-detail">
+      <div className="nova-data-heading">
+        <span className={`nova-data-action nova-data-action-${action || "unknown"}`}><ActionIcon size={13} />{actionMeta.label}</span>
+        {typeof record.total === "number" && <span>{record.total} 项</span>}
+        {typeof record.deletedCount === "number" && <span>{record.deletedCount} 个会话</span>}
+      </div>
+      {projects.length > 0 && <div className="nova-data-list">{projects.map((project, index) => (
+        <div className="nova-data-item" key={objectString(project, "path") || index}><FolderKanban size={14} /><div><strong>{objectString(project, "path") || "未知项目"}</strong><span>{String(objectValue(project, "sessionCount") ?? 0)} 个会话</span></div></div>
+      ))}</div>}
+      {sessions.length > 0 && <div className="nova-data-list">{sessions.map((session, index) => (
+        <div className="nova-data-item" key={objectString(session, "id") || index}><MessagesSquare size={14} /><div><strong>{objectString(session, "name", "firstMessage", "id") || "未命名会话"}</strong><span>{objectString(session, "projectPath")} · {String(objectValue(session, "messageCount") ?? 0)} 条消息</span></div></div>
+      ))}</div>}
+      {action === "read_session" && <div className="nova-session-detail">
+        <div className="nova-session-meta"><strong>{objectString(record, "name", "id") || "未命名会话"}</strong><span>{objectString(record, "projectPath")}</span></div>
+        {messages.map((message, index) => <div className={`nova-session-message nova-session-message-${objectString(message, "role")}`} key={index}><span>{objectString(message, "role") === "user" ? "USER" : "NOVA"}</span><p>{objectString(message, "text")}</p></div>)}
+      </div>}
+      {deleted.length > 0 && <div className="nova-data-list nova-data-deleted-list">{deleted.map((session, index) => (
+        <div className="nova-data-item" key={objectString(session, "id") || index}><CheckCircle2 size={14} /><div><strong>{objectString(session, "name", "id") || "未命名会话"}</strong><span>已移至系统废纸篓 · {objectString(session, "projectPath")}</span></div></div>
+      ))}</div>}
+      {!hasStructuredContent && <pre className="tool-card-detail-pre">{resultText(result) || prettyJson(args)}</pre>}
+    </div>
+  );
+}
+
 function ToolDetail({ name, args, result }: { name: string; args?: unknown; result?: unknown }) {
   const normalizedName = name.toLowerCase();
+
+  if (normalizedName === "nova_data") return <NovaDataDetail args={args} result={result} />;
 
   if (normalizedName === "bash" || normalizedName === "shell") {
     const command = objectString(args, "command", "cmd");

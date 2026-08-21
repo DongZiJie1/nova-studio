@@ -1,6 +1,6 @@
-import { memo } from "react";
-import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File } from "lucide-react";
-import type { ChatMessage as ChatMessageData } from "../../stores/agent-store";
+import { memo, useState } from "react";
+import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench } from "lucide-react";
+import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
 import { ThinkingCard } from "./ThinkingCard";
@@ -26,6 +26,39 @@ function formatTime(ts: number): string {
   });
 }
 
+export function ToolCallList({ tools }: { tools: ToolCall[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (tools.length <= 1) {
+    return tools.map((tool) => (
+      <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
+    ));
+  }
+
+  const runningCount = tools.filter((tool) => tool.status === "running" || tool.status === "pending").length;
+  const errorCount = tools.filter((tool) => tool.status === "error").length;
+  const names = [...new Set(tools.map((tool) => tool.name))];
+  return (
+    <div className={`tool-call-group ${expanded ? "tool-call-group-expanded" : ""}`}>
+      <button type="button" className="tool-call-group-summary" onClick={() => setExpanded((value) => !value)}>
+        <ChevronRight size={15} className="tool-call-group-chevron" />
+        <Wrench size={14} />
+        <strong>{tools.length} 个工具调用</strong>
+        <span className="tool-call-group-names">{names.slice(0, 3).join("、")}{names.length > 3 ? ` 等 ${names.length} 种工具` : ""}</span>
+        <span className={`tool-call-group-status ${errorCount ? "tool-call-group-status-error" : runningCount ? "tool-call-group-status-running" : ""}`}>
+          {errorCount ? `${errorCount} 个失败` : runningCount ? `${runningCount} 个执行中` : "已完成"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="tool-call-group-items">
+          {tools.map((tool) => (
+            <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const ChatMessage = memo(function ChatMessage({
   message,
   userLabel = "You",
@@ -41,9 +74,7 @@ export const ChatMessage = memo(function ChatMessage({
   if (message.role === "tool") {
     return (
       <div className="msg-row msg-row-special">
-        {message.toolCalls?.map((tool) => (
-          <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
-        ))}
+        <ToolCallList tools={message.toolCalls ?? []} />
       </div>
     );
   }

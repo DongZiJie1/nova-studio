@@ -24,9 +24,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
-import { ChatMessage } from "../chat/ChatMessage";
+import { ChatMessage, ToolCallList } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
-import { ToolCallCard } from "../chat/ToolCallCard";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
@@ -815,6 +814,21 @@ export function AppShell() {
       }
     }
     return groups;
+  }, [activeAgent?.messages]);
+  const chatMessages = useMemo(() => {
+    const grouped: AgentState["messages"] = [];
+    for (const message of activeAgent?.messages ?? []) {
+      const previous = grouped[grouped.length - 1];
+      if (message.role === "tool" && previous?.role === "tool") {
+        grouped[grouped.length - 1] = {
+          ...previous,
+          toolCalls: [...(previous.toolCalls ?? []), ...(message.toolCalls ?? [])],
+        };
+      } else {
+        grouped.push(message);
+      }
+    }
+    return grouped;
   }, [activeAgent?.messages]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
@@ -1917,7 +1931,7 @@ export function AppShell() {
                     Loading conversation…
                   </div>
                 )}
-                {activeAgent?.messages.map((msg) => (
+                {activeAgent && chatMessages.map((msg) => (
                   <div
                     key={msg.id}
                     id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
@@ -1932,17 +1946,11 @@ export function AppShell() {
                 ))}
 
                 {/* Active tool calls */}
-                {activeAgent &&
-                  Array.from(activeAgent.activeToolCalls.values()).map((tc) => (
-                    <div key={tc.id} className="msg-row msg-row-tool">
-                      <ToolCallCard
-                        name={tc.name}
-                        status={tc.status}
-                        args={tc.args}
-                        result={tc.result}
-                      />
-                    </div>
-                  ))}
+                {activeAgent && activeAgent.activeToolCalls.size > 0 && (
+                  <div className="msg-row msg-row-tool">
+                    <ToolCallList tools={Array.from(activeAgent.activeToolCalls.values())} />
+                  </div>
+                )}
 
                 {activeAgent?.streamingThinking && (
                   <div className="msg-row msg-row-special">
