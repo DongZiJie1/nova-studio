@@ -6,6 +6,44 @@ import { Markdown } from "./Markdown";
 import { ThinkingCard } from "./ThinkingCard";
 import { ToolCallCard } from "./ToolCallCard";
 
+export interface TurnFileChange {
+  path: string;
+  kind: "edit" | "write";
+  additions: number;
+  deletions: number;
+  patch?: string;
+}
+
+function FileChangesCard({ changes }: { changes: TurnFileChange[] }) {
+  const [open, setOpen] = useState(false);
+  const additions = changes.reduce((total, change) => total + change.additions, 0);
+  const deletions = changes.reduce((total, change) => total + change.deletions, 0);
+  const patches = changes.filter((change) => change.patch);
+  const visibleChanges = changes.length > 4 ? changes.slice(0, 3) : changes;
+  const hiddenChanges = changes.length > 4 ? changes.slice(3) : [];
+  return (
+    <div className={`turn-file-change ${open ? "turn-file-change-open" : ""}`}>
+      <div className="turn-file-change-summary">
+        <span className="turn-file-change-icon"><FileCode size={18} /></span>
+        <span className="turn-file-change-copy"><strong>{changes.length === 1 ? "已编辑 1 个文件" : `已编辑 ${changes.length} 个文件`}</strong><span className="turn-file-change-stats"><b>+{additions}</b><i>-{deletions}</i></span></span>
+        {patches.length > 0 && <button type="button" className="turn-file-change-review" onClick={() => setOpen((value) => !value)}>{open ? "收起" : "审核"}<ChevronRight size={14} /></button>}
+      </div>
+      <div className="turn-file-change-list">
+        {visibleChanges.map((change) => <div className="turn-file-change-row" key={change.path}><span title={change.path}>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></div>)}
+        {hiddenChanges.length > 0 && (
+          <div className="turn-file-change-overflow" tabIndex={0}>
+            <span>…</span><span>还有 {hiddenChanges.length} 个文件</span>
+            <div className="turn-file-change-tooltip" role="tooltip">
+              {hiddenChanges.map((change) => <div key={change.path}><span>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></div>)}
+            </div>
+          </div>
+        )}
+      </div>
+      {open && patches.length > 0 && <div className="turn-file-change-patches">{patches.map((change) => <section key={change.path}><strong>{change.path}</strong><pre>{change.patch}</pre></section>)}</div>}
+    </div>
+  );
+}
+
 function getAttIcon(name: string, mimeType: string): { icon: typeof FileText; color: string } {
   const lower = name.toLowerCase();
   if (mimeType.startsWith("image/")) return { icon: ImageIcon, color: "#ec4899" };
@@ -66,6 +104,7 @@ export const ChatMessage = memo(function ChatMessage({
   showActions = false,
   onFeedback,
   onFork,
+  fileChanges = [],
 }: {
   message: ChatMessageData;
   userLabel?: string;
@@ -73,6 +112,7 @@ export const ChatMessage = memo(function ChatMessage({
   showActions?: boolean;
   onFeedback?: (message: ChatMessageData, rating: "up" | "down" | null) => void;
   onFork?: (message: ChatMessageData) => void;
+  fileChanges?: TurnFileChange[];
 }) {
   const [copied, setCopied] = useState(false);
   if (message.role === "thinking") {
@@ -157,6 +197,11 @@ export const ChatMessage = memo(function ChatMessage({
         >
           {isUser ? message.content : <Markdown content={message.content} />}
         </div>
+        {!isUser && showActions && fileChanges.length > 0 && (
+          <div className="turn-file-changes" aria-label="本轮文件改动">
+            <FileChangesCard changes={fileChanges} />
+          </div>
+        )}
         {!isUser && showActions && (
           <div className="message-response-actions" aria-label="回复操作">
             <button type="button" title="复制回复" aria-label="复制回复" onClick={() => {

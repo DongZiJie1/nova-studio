@@ -618,6 +618,252 @@ body {
   transition: opacity 150ms ease;
 }
 
+.turn-file-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.turn-file-change {
+  position: relative;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 82%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-control) 48%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px) saturate(112%);
+  -webkit-backdrop-filter: blur(12px) saturate(112%);
+}
+
+.turn-file-change-summary {
+  display: grid;
+  width: 100%;
+  min-height: 66px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 11px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-glass) 68%, transparent);
+  color: var(--color-text-secondary);
+  background: transparent;
+  text-align: left;
+}
+
+.turn-file-change-icon {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-control) 76%, transparent);
+}
+
+.turn-file-change-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.turn-file-change-copy strong {
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-file-change-copy > .turn-file-change-stats {
+  font-size: 11px;
+}
+
+.turn-file-change-stats {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.turn-file-change-stats b {
+  color: #45a56a;
+  font-weight: 650;
+}
+
+.turn-file-change-stats i {
+  color: #df6571;
+  font-style: normal;
+}
+
+.turn-file-change-review {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 3px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 82%, transparent);
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-control) 42%, transparent);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.turn-file-change-review:hover {
+  color: var(--text-heading);
+  background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+}
+
+.turn-file-change-review svg {
+  transition: transform 170ms ease;
+}
+
+.turn-file-change-open .turn-file-change-review svg {
+  transform: rotate(90deg);
+}
+
+.turn-file-change-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 5px 0;
+}
+
+.turn-file-change-overflow {
+  position: relative;
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 15px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  outline: none;
+  cursor: default;
+}
+
+.turn-file-change-overflow > span:first-child {
+  color: var(--text-heading);
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+}
+
+.turn-file-change-overflow:hover,
+.turn-file-change-overflow:focus-visible {
+  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
+}
+
+.turn-file-change-tooltip {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 10px;
+  left: 10px;
+  display: flex;
+  visibility: hidden;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 88%, transparent);
+  border-radius: 10px;
+  opacity: 0;
+  background: color-mix(in srgb, var(--color-bg-primary) 86%, transparent);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(122%);
+  -webkit-backdrop-filter: blur(20px) saturate(122%);
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
+  pointer-events: none;
+}
+
+.turn-file-change-overflow:hover .turn-file-change-tooltip,
+.turn-file-change-overflow:focus-visible .turn-file-change-tooltip {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.turn-file-change-tooltip > div {
+  display: grid;
+  min-height: 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 7px;
+  border-radius: 7px;
+}
+
+.turn-file-change-tooltip > div:hover {
+  background: color-mix(in srgb, var(--surface-control) 58%, transparent);
+}
+
+.turn-file-change-tooltip > div > span:first-child {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-file-change-row {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 15px;
+}
+
+.turn-file-change-row:hover {
+  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
+}
+
+.turn-file-change-row > span:first-child {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-file-change-patches {
+  max-height: 300px;
+  overflow: auto;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-glass) 68%, transparent);
+  background: color-mix(in srgb, var(--color-bg-primary) 38%, transparent);
+}
+
+.turn-file-change-patches section + section {
+  border-top: 1px solid color-mix(in srgb, var(--color-border-glass) 54%, transparent);
+}
+
+.turn-file-change-patches section > strong {
+  display: block;
+  padding: 9px 14px 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.turn-file-change-patches pre {
+  margin: 0;
+  padding: 9px 14px 12px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
 .msg-row-assistant:hover .message-response-actions,
 .message-response-actions:focus-within {
   opacity: 1;

@@ -27,7 +27,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
-import { ChatMessage, ToolCallList } from "../chat/ChatMessage";
+import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
@@ -847,6 +847,42 @@ export function AppShell() {
     if (lastAssistantId && activeAgent?.status !== "streaming") ids.add(lastAssistantId);
     return ids;
   }, [chatMessages, activeAgent?.status]);
+  const turnFileChangesByAssistantId = useMemo(() => {
+    const result = new Map<string, TurnFileChange[]>();
+    for (const request of trajectoryRequests) {
+      const assistant = [...request.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
+      if (!assistant) continue;
+      const byPath = new Map<string, TurnFileChange>();
+      for (const message of request.messages) {
+        for (const tool of message.toolCalls ?? []) {
+          if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
+          const args = tool.args && typeof tool.args === "object" ? tool.args as Record<string, unknown> : {};
+          const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
+          if (!path) continue;
+          const resultRecord = tool.result && typeof tool.result === "object" ? tool.result as Record<string, unknown> : {};
+          const details = resultRecord.details && typeof resultRecord.details === "object" ? resultRecord.details as Record<string, unknown> : {};
+          const patch = typeof details.patch === "string" ? details.patch : undefined;
+          const patchLines = patch?.split("\n") ?? [];
+          const additions = tool.name === "write"
+            ? (typeof args.content === "string" && args.content ? args.content.split("\n").length : 0)
+            : patchLines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
+          const deletions = tool.name === "edit"
+            ? patchLines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
+            : 0;
+          const previous = byPath.get(path);
+          byPath.set(path, {
+            path,
+            kind: tool.name,
+            additions: (previous?.additions ?? 0) + additions,
+            deletions: (previous?.deletions ?? 0) + deletions,
+            patch: [previous?.patch, patch].filter(Boolean).join("\n\n") || undefined,
+          });
+        }
+      }
+      if (byPath.size > 0) result.set(assistant.id, Array.from(byPath.values()));
+    }
+    return result;
+  }, [trajectoryRequests]);
 
   const handleMessageFeedback = useCallback((message: AgentState["messages"][number], rating: "up" | "down" | null) => {
     if (!activeAgent || !message.entryId) return;
@@ -1987,6 +2023,7 @@ export function AppShell() {
                       showActions={actionableAssistantMessageIds.has(msg.id)}
                       onFeedback={handleMessageFeedback}
                       onFork={handleForkMessage}
+                      fileChanges={turnFileChangesByAssistantId.get(msg.id)}
                     />
                   </div>
                 ))}
