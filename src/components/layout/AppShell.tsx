@@ -644,6 +644,8 @@ export function AppShell() {
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
   const setCustomBgUrl = useUiStore((s) => s.setCustomBgUrl);
+  const backgroundBlur = useUiStore((s) => s.backgroundBlur);
+  const setBackgroundBlur = useUiStore((s) => s.setBackgroundBlur);
 
   const [input, setInput] = useState("");
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
@@ -908,64 +910,34 @@ export function AppShell() {
       })
       .catch(() => setAgentsLoaded(true));
 
-    // Always fetch all models via the Rust command (uses absolute CLI path,
-    // works without a running agent). Populates the homepage model picker.
-    void listAllModels()
-      .then((models) => {
-        const mapped: AvailableModel[] = (models ?? []).map((m) => ({
-          id: String(m.id ?? ""),
-          name: String(m.name ?? ""),
-          provider: String(m.provider ?? ""),
-          contextWindow: Number(m.contextWindow ?? 0),
-          maxTokens: Number(m.maxTokens ?? 0),
-          reasoning: Boolean(m.reasoning),
-          images: Boolean(m.images),
-        }));
-        if (mapped.length > 0) {
-          useAgentStore.setState({ availableModels: mapped });
-        } else {
-          // Fallback: try via shell
-          void fetchModelsViaShell()
-            .then((shellModels) => {
-              const mapped2: AvailableModel[] = (shellModels ?? []).map((m) => ({
-                id: String(m.id ?? ""),
-                name: String(m.name ?? ""),
-                provider: String(m.provider ?? ""),
-                contextWindow: Number(m.contextWindow ?? 0),
-                maxTokens: Number(m.maxTokens ?? 0),
-                reasoning: Boolean(m.reasoning),
-                images: Boolean(m.images),
-              }));
-              if (mapped2.length > 0) {
-                useAgentStore.setState({ availableModels: mapped2 });
-              }
-            })
-            .catch((err) =>
-              console.error("Failed to fetch models via shell:", err)
-            );
+    // Merge the bundled/absolute CLI catalog with the user's shell Nova.
+    // The latter includes newly-added models.json providers such as Ollama,
+    // while packaged Studio builds may point at an older bundled CLI.
+    void Promise.allSettled([listAllModels(), fetchModelsViaShell()]).then((results) => {
+      const merged = new Map<string, AvailableModel>();
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error("[AppShell] model catalog source failed:", result.reason);
+          continue;
         }
-      })
-      .catch((err) => {
-        console.error("[AppShell] listAllModels failed:", err);
-        void fetchModelsViaShell()
-          .then((shellModels) => {
-            const mapped2: AvailableModel[] = (shellModels ?? []).map((m) => ({
-              id: String(m.id ?? ""),
-              name: String(m.name ?? ""),
-              provider: String(m.provider ?? ""),
-              contextWindow: Number(m.contextWindow ?? 0),
-              maxTokens: Number(m.maxTokens ?? 0),
-              reasoning: Boolean(m.reasoning),
-              images: Boolean(m.images),
-            }));
-            if (mapped2.length > 0) {
-              useAgentStore.setState({ availableModels: mapped2 });
-            }
-          })
-          .catch((err2) =>
-            console.error("Failed to fetch models via shell:", err2)
-          );
-      });
+        for (const model of result.value ?? []) {
+          const mapped: AvailableModel = {
+            id: String(model.id ?? ""),
+            name: String(model.name ?? model.id ?? ""),
+            provider: String(model.provider ?? ""),
+            contextWindow: Number(model.contextWindow ?? 0),
+            maxTokens: Number(model.maxTokens ?? 0),
+            reasoning: Boolean(model.reasoning),
+            images: Boolean(model.images),
+          };
+          if (!mapped.id || !mapped.provider) continue;
+          merged.set(`${mapped.provider}:${mapped.id}`, mapped);
+        }
+      }
+      if (merged.size > 0) {
+        useAgentStore.setState({ availableModels: Array.from(merged.values()) });
+      }
+    });
   }, []);
 
   // Cleanup blob URLs on unmount
@@ -1563,21 +1535,40 @@ export function AppShell() {
                     </div>
                   </div>
 
-                  <div className="settings-card">
-                    <div className="settings-card-copy">
-                      <h2>桌面背景</h2>
-                      <p>选择本地图片，或恢复主题默认背景。</p>
-                    </div>
-                    <div className="settings-background-actions">
-                      <button type="button" className="background-picker-button" onClick={() => void handleChooseBackground()}>
-                        <Image size={15} /><span>选择图片</span>
-                      </button>
-                      {customBgUrl && (
-                        <button type="button" className="settings-background-clear" onClick={() => setCustomBgUrl(null)}>
-                          <X size={14} /><span>清除背景</span>
+                  <div className="settings-card settings-background-card">
+                    <div className="settings-background-main">
+                      <div className="settings-card-copy">
+                        <h2>桌面背景</h2>
+                        <p>选择本地图片，或恢复主题默认背景。</p>
+                      </div>
+                      <div className="settings-background-actions">
+                        <button type="button" className="background-picker-button" onClick={() => void handleChooseBackground()}>
+                          <Image size={15} /><span>选择图片</span>
                         </button>
-                      )}
+                        {customBgUrl && (
+                          <button type="button" className="settings-background-clear" onClick={() => setCustomBgUrl(null)}>
+                            <X size={14} /><span>清除背景</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
+                    <label className={`settings-blur-control ${customBgUrl ? "" : "settings-blur-control-disabled"}`}>
+                      <span className="settings-blur-label">
+                        <span>整体模糊</span>
+                        <output>{backgroundBlur === 0 ? "默认" : `${backgroundBlur}px`}</output>
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="18"
+                        step="1"
+                        value={backgroundBlur}
+                        disabled={!customBgUrl}
+                        onChange={(event) => setBackgroundBlur(Number(event.target.value))}
+                        aria-label="背景整体模糊强度"
+                      />
+                      <span className="settings-blur-scale"><span>清晰</span><span>模糊</span></span>
+                    </label>
                   </div>
               </div>
             </section>
@@ -1618,6 +1609,7 @@ export function AppShell() {
                   <div className="trajectory-list">
                     {trajectoryRequests.map((request, requestIndex) => (
                       <section key={request.id} className="trajectory-request">
+                        <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>
                         <div className="trajectory-request-events">
                           {request.messages.map((message) => (
                             <div key={message.id} className={`trajectory-row trajectory-row-${message.role}`}>

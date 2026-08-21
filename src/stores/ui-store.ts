@@ -8,12 +8,14 @@ interface UiState {
   theme: AppTheme;
   bgPreset: string;
   customBgUrl: string | null;
+  backgroundBlur: number;
   sidebarCollapsed: boolean;
 
   setTheme: (theme: AppTheme) => void;
   toggleTheme: () => void;
   setBgPreset: (preset: string) => void;
   setCustomBgUrl: (url: string | null) => void;
+  setBackgroundBlur: (blur: number) => void;
   toggleSidebar: () => void;
 }
 
@@ -23,6 +25,7 @@ export const useUiStore = create<UiState>()(
       theme: "arctic-dawn",
       bgPreset: "mesh-amber",
       customBgUrl: DEFAULT_BACKGROUND_URL,
+      backgroundBlur: 0,
       sidebarCollapsed: false,
 
       setTheme: (theme) => set({ theme }),
@@ -31,17 +34,18 @@ export const useUiStore = create<UiState>()(
       })),
       setBgPreset: (preset) => set({ bgPreset: preset }),
       setCustomBgUrl: (url) => set({ customBgUrl: url }),
+      setBackgroundBlur: (blur) => set({ backgroundBlur: Math.min(18, Math.max(0, blur)) }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
     }),
     {
       name: "nova-ui",
-      version: 1,
+      version: 2,
       migrate: (persistedState, version) => {
-        const state = persistedState as Partial<UiState>;
+        let state = persistedState as Partial<UiState>;
         if (version === 0 && !state.customBgUrl) {
-          return { ...state, customBgUrl: DEFAULT_BACKGROUND_URL } as UiState;
+          state = { ...state, customBgUrl: DEFAULT_BACKGROUND_URL };
         }
-        return state as UiState;
+        return { ...state, backgroundBlur: state.backgroundBlur ?? 0 } as UiState;
       },
     },
   ),
