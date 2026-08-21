@@ -821,8 +821,8 @@ export function AppShell() {
     setSelectedTrajectoryEntry(null);
   }, [activeId]);
 
-  const toggleTrajectoryEntry = useCallback((entry: SelectedTrajectoryEntry) => {
-    setSelectedTrajectoryEntry((current) => current?.id === entry.id ? null : entry);
+  const selectTrajectoryEntry = useCallback((entry: SelectedTrajectoryEntry) => {
+    setSelectedTrajectoryEntry(entry);
   }, []);
 
   useEffect(() => {
@@ -1634,11 +1634,11 @@ export function AppShell() {
                               role="button"
                               tabIndex={0}
                               aria-pressed={selectedTrajectoryEntry?.id === message.id}
-                              onClick={() => toggleTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message })}
+                              onClick={() => selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  toggleTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message });
+                                  selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message });
                                 }
                               }}
                             >
@@ -1664,11 +1664,11 @@ export function AppShell() {
                               className={`trajectory-row trajectory-row-thinking trajectory-row-live ${selectedTrajectoryEntry?.id === "live-thinking" ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
-                              onClick={() => toggleTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } })}
+                              onClick={() => selectTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  toggleTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } });
+                                  selectTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } });
                                 }
                               }}
                             >
@@ -1683,11 +1683,11 @@ export function AppShell() {
                               className={`trajectory-row trajectory-row-tool trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
-                              onClick={() => toggleTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } })}
+                              onClick={() => selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  toggleTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } });
+                                  selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } });
                                 }
                               }}
                             >
@@ -1705,11 +1705,11 @@ export function AppShell() {
                               className={`trajectory-row trajectory-row-assistant trajectory-row-live ${selectedTrajectoryEntry?.id === "live-assistant" ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
-                              onClick={() => toggleTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } })}
+                              onClick={() => selectTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  toggleTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } });
+                                  selectTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } });
                                 }
                               }}
                             >
