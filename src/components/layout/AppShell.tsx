@@ -43,7 +43,6 @@ import {
   Square,
   FolderOpen,
   Pencil,
-  Sparkles,
   ChevronDown,
   ChevronRight,
   Plus,
@@ -63,6 +62,8 @@ import {
   ArrowLeft,
   MessageCircle,
   Route,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -674,6 +675,7 @@ export function AppShell() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
@@ -1366,9 +1368,54 @@ export function AppShell() {
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className="studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex w-[288px] shrink-0 flex-col"
+          className={`studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
         >
-          {settingsOpen ? (
+          {sidebarCollapsed ? (
+            <nav className="sidebar-collapsed-nav" aria-label="折叠侧边栏">
+              <button
+                type="button"
+                className="sidebar-collapsed-logo"
+                onClick={() => setSidebarCollapsed(false)}
+                aria-label="展开侧边栏"
+                title="展开侧边栏"
+              >
+                <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
+                <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
+              </button>
+              <button
+                type="button"
+                className="sidebar-collapsed-action"
+                onClick={() => {
+                  setPendingProjectCwd(null);
+                  setActiveAgent(null);
+                  setSettingsOpen(false);
+                  setConversationView("chat");
+                }}
+                aria-label="新会话"
+                title="新会话"
+              >
+                <Plus size={20} />
+              </button>
+              <button
+                type="button"
+                className="sidebar-collapsed-action"
+                onClick={() => setSidebarCollapsed(false)}
+                aria-label="查看工作区"
+                title="查看工作区"
+              >
+                <FolderOpen size={19} />
+              </button>
+              <button
+                type="button"
+                className={`sidebar-collapsed-action sidebar-collapsed-settings ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
+                onClick={() => setSettingsOpen(true)}
+                aria-label="设置"
+                title="设置"
+              >
+                <Settings size={19} />
+              </button>
+            </nav>
+          ) : settingsOpen ? (
             <div className="settings-sidebar-content">
               <header className="settings-sidebar-header">
                 <button
@@ -1380,6 +1427,15 @@ export function AppShell() {
                   <span>返回</span>
                 </button>
                 <h1>设置</h1>
+                <button
+                  type="button"
+                  className="sidebar-collapse-button"
+                  onClick={() => setSidebarCollapsed(true)}
+                  aria-label="收起侧边栏"
+                  title="收起侧边栏"
+                >
+                  <PanelLeftClose size={18} />
+                </button>
               </header>
               <nav className="settings-sidebar-nav" aria-label="设置分类">
                 <button type="button" className="settings-category-button settings-category-button-active">
@@ -1392,9 +1448,20 @@ export function AppShell() {
             <>
               <header className="sidebar-header">
                 <div className="sidebar-brand">
-                  <span className="sidebar-brand-mark"><Sparkles size={18} /></span>
+                  <span className="sidebar-brand-mark">
+                    <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
+                  </span>
                   <span>Nova</span>
                   <span className="sidebar-brand-badge">STUDIO</span>
+                  <button
+                    type="button"
+                    className="sidebar-collapse-button"
+                    onClick={() => setSidebarCollapsed(true)}
+                    aria-label="收起侧边栏"
+                    title="收起侧边栏"
+                  >
+                    <PanelLeftClose size={18} />
+                  </button>
                 </div>
                 <button
                   type="button"
