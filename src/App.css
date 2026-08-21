@@ -3160,12 +3160,46 @@ body {
 .trajectory-row {
   position: relative;
   display: grid;
+  isolation: isolate;
   min-height: 38px;
   grid-template-columns: 16px 82px minmax(0, 1fr);
   align-items: start;
   gap: 10px;
+  margin: 2px 0;
   padding: 8px 10px 8px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-glass) 62%, transparent);
+  border-radius: 12px;
+}
+
+.trajectory-row::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-control) 54%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+  backdrop-filter: blur(7px) saturate(108%);
+  -webkit-backdrop-filter: blur(7px) saturate(108%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 3.5%, #000 94%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 3.5%, #000 94%, transparent 100%);
+  pointer-events: none;
+}
+
+.trajectory-row::after {
+  content: "";
+  position: absolute;
+  right: 2%;
+  bottom: -1px;
+  left: 2%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-border-glass) 58%, transparent) 12%,
+    color-mix(in srgb, var(--color-border-glass) 58%, transparent) 88%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 .trajectory-node {
@@ -3183,27 +3217,36 @@ body {
 .trajectory-role {
   display: inline-flex;
   width: fit-content;
-  min-width: 54px;
-  height: 20px;
+  min-width: 62px;
+  height: 22px;
   align-items: center;
   justify-content: center;
-  padding: 0 7px;
-  border-radius: 5px;
-  color: #aeb7fd;
-  background: rgba(129, 140, 248, 0.12);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.04em;
+  padding: 0 9px;
+  border: 1px solid rgba(129, 140, 248, 0.22);
+  border-radius: 7px;
+  color: #b9c1ff;
+  background: rgba(129, 140, 248, 0.2);
+  box-shadow: 0 3px 10px rgba(91, 103, 216, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  font-size: 9.5px;
+  font-weight: 820;
+  letter-spacing: 0.055em;
+  text-shadow: 0 0 10px rgba(174, 183, 253, 0.28);
 }
 
 .trajectory-row-user .trajectory-role {
-  color: #5b8cff;
-  background: rgba(91, 140, 255, 0.12);
+  border-color: rgba(91, 140, 255, 0.3);
+  color: #76a1ff;
+  background: rgba(91, 140, 255, 0.2);
+  box-shadow: 0 3px 10px rgba(67, 113, 220, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  text-shadow: 0 0 10px rgba(91, 140, 255, 0.34);
 }
 
 .trajectory-row-user {
-  border-radius: 7px;
-  background: linear-gradient(90deg, rgba(91, 140, 255, 0.1), transparent 72%);
+  border-radius: 12px;
+}
+
+.trajectory-row-user::before {
+  background: linear-gradient(90deg, rgba(91, 140, 255, 0.12), transparent 82%);
 }
 
 .trajectory-row-user .trajectory-node {
@@ -3215,13 +3258,19 @@ body {
 }
 
 .trajectory-row-thinking .trajectory-role {
-  color: #a178da;
-  background: rgba(161, 120, 218, 0.12);
+  border-color: rgba(161, 120, 218, 0.3);
+  color: #b890eb;
+  background: rgba(161, 120, 218, 0.2);
+  box-shadow: 0 3px 10px rgba(128, 83, 190, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  text-shadow: 0 0 10px rgba(161, 120, 218, 0.34);
 }
 
 .trajectory-row-tool .trajectory-role {
-  color: #d48a32;
-  background: rgba(212, 138, 50, 0.12);
+  border-color: rgba(212, 138, 50, 0.32);
+  color: #e59b45;
+  background: rgba(212, 138, 50, 0.2);
+  box-shadow: 0 3px 10px rgba(182, 112, 31, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  text-shadow: 0 0 10px rgba(212, 138, 50, 0.32);
 }
 
 .trajectory-content {
@@ -3282,7 +3331,33 @@ body {
   color: #000;
 }
 
-:root[data-theme="arctic-dawn"] .trajectory-row {
+:root[data-theme="arctic-dawn"] .trajectory-role {
+  border-color: rgba(91, 103, 216, 0.2);
+  color: #6574d8;
+  background: rgba(129, 140, 248, 0.16);
+  box-shadow: 0 3px 10px rgba(76, 91, 170, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.52);
+  text-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-user .trajectory-role {
+  border-color: rgba(55, 112, 232, 0.24);
+  color: #3975dc;
+  background: rgba(91, 140, 255, 0.17);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-thinking .trajectory-role {
+  border-color: rgba(132, 83, 196, 0.22);
+  color: #8555bd;
+  background: rgba(161, 120, 218, 0.16);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-tool .trajectory-role {
+  border-color: rgba(184, 110, 26, 0.24);
+  color: #b56d1f;
+  background: rgba(212, 138, 50, 0.17);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row::before {
   background: rgba(239, 246, 255, 0.68);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
   backdrop-filter: blur(8px) saturate(108%);
@@ -3299,7 +3374,7 @@ body {
   color: #000;
 }
 
-:root[data-theme="arctic-dawn"] .trajectory-row-user {
+:root[data-theme="arctic-dawn"] .trajectory-row-user::before {
   background: linear-gradient(
     90deg,
     rgba(205, 222, 250, 0.72) 0%,
