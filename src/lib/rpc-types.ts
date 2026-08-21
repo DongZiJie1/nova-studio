@@ -220,9 +220,22 @@ export interface AgentInfo {
   last_error: string | null;
 }
 
+export interface PersistedRpcContentBlock {
+  type?: string;
+  text?: string;
+  thinking?: string;
+  id?: string;
+  name?: string;
+  arguments?: unknown;
+}
+
 export interface PersistedRpcMessage {
   role?: string;
-  content?: string | Array<{ type?: string; text?: string }>;
+  content?: string | PersistedRpcContentBlock[];
+  toolCallId?: string;
+  toolName?: string;
+  details?: unknown;
+  isError?: boolean;
   timestamp?: number | string;
 }
 

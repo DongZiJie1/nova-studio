@@ -209,30 +209,97 @@ function parseAttachmentsFromContent(content: string): { attachments: MessageAtt
 }
 
 function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
-  return messages.flatMap((message) => {
-    if (message.role !== "user" && message.role !== "assistant") return [];
-    const rawContent = messageText(message);
-    if (!rawContent) return [];
+  const hydrated: ChatMessage[] = [];
+  const pendingToolCalls = new Map<string, ToolCall>();
+
+  for (const message of messages) {
     const parsedTimestamp =
       typeof message.timestamp === "number"
         ? message.timestamp
         : Date.parse(message.timestamp ?? "");
-    // For user messages, try to parse attached files from content
-    let content = rawContent;
-    let attachments: MessageAttachment[] | undefined;
+    const timestamp = Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now();
+
     if (message.role === "user") {
-      const result = parseAttachmentsFromContent(rawContent);
-      content = result.cleanContent;
-      attachments = result.attachments;
+      const rawContent = messageText(message);
+      if (!rawContent) continue;
+      const { cleanContent, attachments } = parseAttachmentsFromContent(rawContent);
+      hydrated.push({
+        id: nextId(),
+        role: "user",
+        content: cleanContent,
+        timestamp,
+        attachments,
+      });
+      continue;
     }
-    return [{
+
+    if (message.role === "assistant") {
+      if (!Array.isArray(message.content)) {
+        const content = messageText(message);
+        if (content) hydrated.push({ id: nextId(), role: "assistant", content, timestamp });
+        continue;
+      }
+
+      let text = "";
+      const flushText = () => {
+        if (!text) return;
+        hydrated.push({ id: nextId(), role: "assistant", content: text, timestamp });
+        text = "";
+      };
+      for (const block of message.content) {
+        if (block.type === "text" && typeof block.text === "string") {
+          text += block.text;
+        } else if (block.type === "thinking" && typeof block.thinking === "string") {
+          flushText();
+          hydrated.push({ id: nextId(), role: "thinking", content: block.thinking, timestamp });
+        } else if (
+          block.type === "toolCall" &&
+          typeof block.id === "string" &&
+          typeof block.name === "string"
+        ) {
+          flushText();
+          pendingToolCalls.set(block.id, {
+            id: block.id,
+            name: block.name,
+            args: block.arguments,
+            status: "pending",
+          });
+        }
+      }
+      flushText();
+      continue;
+    }
+
+    if (message.role === "toolResult" && message.toolCallId) {
+      const pending = pendingToolCalls.get(message.toolCallId);
+      const completed: ToolCall = {
+        id: message.toolCallId,
+        name: message.toolName ?? pending?.name ?? "tool",
+        args: pending?.args,
+        status: message.isError ? "error" : "done",
+        result: { content: message.content, details: message.details },
+      };
+      pendingToolCalls.delete(message.toolCallId);
+      hydrated.push({
+        id: nextId(),
+        role: "tool",
+        content: "",
+        timestamp,
+        toolCalls: [completed],
+      });
+    }
+  }
+
+  for (const pending of pendingToolCalls.values()) {
+    hydrated.push({
       id: nextId(),
-      role: message.role,
-      content,
-      timestamp: Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now(),
-      attachments,
-    }];
-  });
+      role: "tool",
+      content: "",
+      timestamp: Date.now(),
+      toolCalls: [{ ...pending, status: "error" }],
+    });
+  }
+  return hydrated;
 }
 
 export const useAgentStore = create<AgentStoreState>()((set, get) => ({
