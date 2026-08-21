@@ -91,6 +91,12 @@ interface PendingAttachment {
   previewUrl?: string;  // blob URL for image thumbnails
 }
 
+interface SelectedTrajectoryEntry {
+  id: string;
+  label: string;
+  data: unknown;
+}
+
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
 function formatTokens(count: number): string {
   if (count < 1000) return count.toString();
@@ -669,6 +675,7 @@ export function AppShell() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
+  const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
   const [agentNames, setAgentNames] = useState<Record<string, string>>(
@@ -809,6 +816,14 @@ export function AppShell() {
   }, [activeAgent?.messages]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
+
+  useEffect(() => {
+    setSelectedTrajectoryEntry(null);
+  }, [activeId]);
+
+  const toggleTrajectoryEntry = useCallback((entry: SelectedTrajectoryEntry) => {
+    setSelectedTrajectoryEntry((current) => current?.id === entry.id ? null : entry);
+  }, []);
 
   useEffect(() => {
     if (!fileMention) {
@@ -1602,17 +1617,31 @@ export function AppShell() {
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
-              <div className="trajectory-view">
-                {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
-                  <div className="trajectory-empty">当前会话还没有轨迹数据</div>
-                ) : (
-                  <div className="trajectory-list">
+              <div className={`trajectory-view ${selectedTrajectoryEntry ? "trajectory-view-inspecting" : ""}`}>
+                <div className="trajectory-main">
+                  {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
+                    <div className="trajectory-empty">当前会话还没有轨迹数据</div>
+                  ) : (
+                    <div className="trajectory-list">
                     {trajectoryRequests.map((request, requestIndex) => (
                       <section key={request.id} className="trajectory-request">
                         <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>
                         <div className="trajectory-request-events">
                           {request.messages.map((message) => (
-                            <div key={message.id} className={`trajectory-row trajectory-row-${message.role}`}>
+                            <div
+                              key={message.id}
+                              className={`trajectory-row trajectory-row-${message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              aria-pressed={selectedTrajectoryEntry?.id === message.id}
+                              onClick={() => toggleTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  toggleTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">
                                 {message.role === "user" ? "USER" : message.role === "assistant" ? "ASSISTANT" : message.role === "thinking" ? "THINK" : "TOOL"}
@@ -1631,14 +1660,37 @@ export function AppShell() {
                             </div>
                           ))}
                           {requestIndex === trajectoryRequests.length - 1 && activeAgent.streamingThinking && (
-                            <div className="trajectory-row trajectory-row-thinking trajectory-row-live">
+                            <div
+                              className={`trajectory-row trajectory-row-thinking trajectory-row-live ${selectedTrajectoryEntry?.id === "live-thinking" ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => toggleTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  toggleTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">THINK</span>
                               <div className="trajectory-content">{activeAgent.streamingThinking}</div>
                             </div>
                           )}
                           {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => (
-                            <div key={tool.id} className="trajectory-row trajectory-row-tool trajectory-row-live">
+                            <div
+                              key={tool.id}
+                              className={`trajectory-row trajectory-row-tool trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => toggleTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  toggleTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">TOOL</span>
                               <div className="trajectory-content trajectory-tool-line">
@@ -1649,7 +1701,18 @@ export function AppShell() {
                             </div>
                           ))}
                           {requestIndex === trajectoryRequests.length - 1 && streamingText && (
-                            <div className="trajectory-row trajectory-row-assistant trajectory-row-live">
+                            <div
+                              className={`trajectory-row trajectory-row-assistant trajectory-row-live ${selectedTrajectoryEntry?.id === "live-assistant" ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => toggleTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  toggleTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">ASSISTANT</span>
                               <div className="trajectory-content">{streamingText}</div>
@@ -1658,8 +1721,31 @@ export function AppShell() {
                         </div>
                       </section>
                     ))}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
+                <aside
+                  className={`trajectory-detail-panel ${selectedTrajectoryEntry ? "trajectory-detail-panel-open" : ""}`}
+                  aria-hidden={!selectedTrajectoryEntry}
+                >
+                    <header className="trajectory-detail-header">
+                      <div>
+                        <span className="trajectory-detail-kicker">SESSION JSON</span>
+                        <strong>{selectedTrajectoryEntry?.label ?? "DETAIL"}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="trajectory-detail-close"
+                        onClick={() => setSelectedTrajectoryEntry(null)}
+                        aria-label="关闭轨迹详情"
+                      >
+                        <X size={15} />
+                      </button>
+                    </header>
+                    <pre className="trajectory-detail-json">
+                      {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}
+                    </pre>
+                  </aside>
               </div>
             ) : !hasMessages ? (
               /* Empty state — tagline */
