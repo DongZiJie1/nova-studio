@@ -1222,6 +1222,155 @@ body {
   padding: 10px;
 }
 
+.ask-user-detail {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 82%, transparent);
+  border-radius: 12px;
+  padding: 10px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-accent-start) 7%, transparent), transparent 46%),
+    color-mix(in srgb, var(--color-bg-glass) 56%, transparent);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+  backdrop-filter: blur(18px) saturate(124%);
+  -webkit-backdrop-filter: blur(18px) saturate(124%);
+}
+
+.ask-user-detail::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -50px;
+  right: -35px;
+  width: 150px;
+  height: 110px;
+  border-radius: 50%;
+  opacity: 0.18;
+  background: var(--color-accent-start);
+  filter: blur(42px);
+  pointer-events: none;
+}
+
+.ask-user-question {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 5px 5px 10px;
+  color: var(--color-accent-start);
+}
+
+.ask-user-question svg {
+  margin-top: 1px;
+}
+
+.ask-user-question strong {
+  color: var(--text-heading);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.ask-user-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ask-user-option {
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 68%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-control) 34%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.ask-user-option > span {
+  display: inline-flex;
+  width: 23px;
+  height: 23px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--surface-control) 78%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ask-user-option > div {
+  min-width: 0;
+}
+
+.ask-user-option strong {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-user-option p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-user-option-selected {
+  border-color: color-mix(in srgb, var(--color-accent-start) 30%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 9%, var(--surface-control));
+}
+
+.ask-user-option-selected > svg,
+.ask-user-option-selected strong {
+  color: var(--color-accent-start);
+}
+
+.ask-user-answer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-accent-start) 9%, transparent);
+}
+
+:root[data-theme="arctic-dawn"] .ask-user-detail {
+  border-color: rgba(90, 121, 164, 0.18);
+  background:
+    linear-gradient(135deg, rgba(91, 140, 255, 0.08), transparent 48%),
+    rgba(241, 247, 255, 0.48);
+  box-shadow: 0 10px 28px rgba(48, 72, 108, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+.ask-user-answer span {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.ask-user-answer strong {
+  color: var(--text-heading);
+  font-size: 11px;
+  font-weight: 620;
+}
+
 .nova-data-heading {
   display: flex;
   align-items: center;
@@ -3520,6 +3669,287 @@ body {
   .settings-blur-control {
     width: 100%;
   }
+}
+
+/* ─── Extension question dialog ─── */
+
+.nova-question-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 7, 16, 0.34);
+  backdrop-filter: blur(9px) saturate(108%);
+  -webkit-backdrop-filter: blur(9px) saturate(108%);
+  animation: nova-question-overlay-in 160ms ease-out both;
+}
+
+.nova-question-card {
+  width: min(480px, 92vw);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 92%, transparent);
+  border-radius: 18px;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-bg-glass) 82%, transparent);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(28px) saturate(132%);
+  -webkit-backdrop-filter: blur(28px) saturate(132%);
+  animation: nova-question-card-in 190ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.nova-question-header {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 18px 14px;
+}
+
+.nova-question-icon {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 24%, transparent);
+  border-radius: 12px;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 11%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.nova-question-header > div {
+  min-width: 0;
+}
+
+.nova-question-header > div > span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+}
+
+.nova-question-header h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nova-question-queue {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: var(--surface-control);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.nova-question-close {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--color-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.nova-question-close:hover {
+  border-color: var(--color-border-glass);
+  color: var(--text-heading);
+  background: var(--surface-control);
+}
+
+.nova-question-message {
+  padding: 0 20px 15px;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.nova-question-options,
+.nova-question-input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 14px 14px;
+}
+
+.nova-question-option {
+  display: grid;
+  width: 100%;
+  min-height: 46px;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 76%, transparent);
+  border-radius: 11px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.nova-question-option:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 36%, transparent);
+  color: var(--text-heading);
+  background: color-mix(in srgb, var(--color-accent-start) 9%, var(--surface-control));
+  transform: translateX(2px);
+}
+
+.nova-question-option > svg {
+  color: var(--color-text-muted);
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.nova-question-option:hover > svg {
+  color: var(--color-accent-start);
+  transform: translateX(2px);
+}
+
+.nova-question-option-index {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--surface-control) 78%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.nova-question-custom {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: auto minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 76%, transparent);
+  border-radius: 11px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--surface-control) 36%, transparent);
+}
+
+.nova-question-custom:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent-start) 42%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+}
+
+.nova-question-custom input,
+.nova-question-input-section textarea {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--text-heading);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+}
+
+.nova-question-custom button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: var(--color-accent-start);
+  cursor: pointer;
+}
+
+.nova-question-custom button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.nova-question-input-section textarea {
+  min-height: 96px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-control) 42%, transparent);
+  line-height: 1.55;
+}
+
+.nova-question-input-section textarea:focus {
+  border-color: color-mix(in srgb, var(--color-accent-start) 42%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+}
+
+.nova-question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 14px 14px;
+}
+
+.nova-question-input-section .nova-question-actions {
+  padding: 2px 0 0;
+}
+
+.nova-question-actions button {
+  display: inline-flex;
+  min-width: 76px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.nova-question-button-secondary {
+  border: 1px solid var(--color-border-glass);
+  color: var(--color-text-secondary);
+  background: var(--surface-control);
+}
+
+.nova-question-button-primary {
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 52%, transparent);
+  color: white;
+  background: var(--color-accent-start);
+  box-shadow: 0 6px 16px var(--accent-shadow);
+}
+
+@keyframes nova-question-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nova-question-card-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+:root[data-theme="arctic-dawn"] .nova-question-overlay {
+  background: rgba(32, 48, 72, 0.18);
+}
+
+:root[data-theme="arctic-dawn"] .nova-question-card {
+  border-color: rgba(92, 122, 164, 0.2);
+  background: rgba(244, 249, 255, 0.78);
+  box-shadow: 0 28px 80px rgba(43, 67, 102, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.78);
 }
 
 .conversation-minimap {

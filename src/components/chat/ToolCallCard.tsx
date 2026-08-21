@@ -13,6 +13,7 @@ import {
   Search,
   Terminal,
   MessagesSquare,
+  MessageCircleQuestion,
   Trash2,
   Wrench,
   XCircle,
@@ -29,6 +30,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   glob: FolderSearch,
   ls: FolderSearch,
   nova_data: Database,
+  ask_user_question: MessageCircleQuestion,
 };
 
 function toolIcon(name: string): LucideIcon {
@@ -67,6 +69,8 @@ function toolSummary(name: string, args: unknown): string {
       if (action === "delete_session") return sessionIds > 1 ? `删除 ${sessionIds} 个会话` : "删除会话";
       return "管理 Nova 数据";
     }
+    case "ask_user_question":
+      return pick("question") || "等待用户选择";
     case "bash":
     case "shell":
       return pick("command", "cmd");
@@ -86,6 +90,7 @@ function toolSummary(name: string, args: unknown): string {
 
 function displayToolName(name: string): string {
   if (name.toLowerCase() === "nova_data") return "Nova 数据";
+  if (name.toLowerCase() === "ask_user_question") return "询问用户";
   return name ? name[0].toUpperCase() + name.slice(1) : "Tool";
 }
 
@@ -181,10 +186,33 @@ function NovaDataDetail({ args, result }: { args?: unknown; result?: unknown }) 
   );
 }
 
+function AskUserQuestionDetail({ args, result }: { args?: unknown; result?: unknown }) {
+  const question = objectString(args, "question");
+  const optionsValue = objectValue(args, "options");
+  const options = Array.isArray(optionsValue) ? optionsValue : [];
+  const details = objectValue(result, "details");
+  const answerValue = objectValue(details, "answer");
+  const answer = typeof answerValue === "string" ? answerValue : "";
+  return (
+    <div className="activity-detail ask-user-detail">
+      <div className="ask-user-question"><MessageCircleQuestion size={16} /><strong>{question || "Nova 需要你的选择"}</strong></div>
+      {options.length > 0 && <div className="ask-user-option-list">{options.map((option, index) => {
+        const label = objectString(option, "label") || String(option);
+        const description = objectString(option, "description");
+        const selected = answer === label;
+        return <div className={`ask-user-option ${selected ? "ask-user-option-selected" : ""}`} key={`${label}-${index}`}><span>{index + 1}</span><div><strong>{label}</strong>{description && <p>{description}</p>}</div>{selected && <CheckCircle2 size={15} />}</div>;
+      })}</div>}
+      {answer && <div className="ask-user-answer"><span>你的回答</span><strong>{answer}</strong></div>}
+      {!question && options.length === 0 && !answer && <pre className="tool-card-detail-pre">{prettyJson(args)}</pre>}
+    </div>
+  );
+}
+
 function ToolDetail({ name, args, result }: { name: string; args?: unknown; result?: unknown }) {
   const normalizedName = name.toLowerCase();
 
   if (normalizedName === "nova_data") return <NovaDataDetail args={args} result={result} />;
+  if (normalizedName === "ask_user_question") return <AskUserQuestionDetail args={args} result={result} />;
 
   if (normalizedName === "bash" || normalizedName === "shell") {
     const command = objectString(args, "command", "cmd");
