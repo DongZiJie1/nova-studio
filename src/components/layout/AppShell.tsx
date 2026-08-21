@@ -1475,38 +1475,31 @@ export function AppShell() {
                 <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
                 <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
               </button>
-              <button
-                type="button"
-                className="sidebar-collapsed-action"
-                onClick={() => {
-                  setPendingProjectCwd(null);
-                  setActiveAgent(null);
-                  setSettingsOpen(false);
-                  setConversationView("chat");
-                }}
-                aria-label="新会话"
-                title="新会话"
-              >
-                <Plus size={20} />
-              </button>
-              <button
-                type="button"
-                className="sidebar-collapsed-action"
-                onClick={() => setSidebarCollapsed(false)}
-                aria-label="查看工作区"
-                title="查看工作区"
-              >
-                <FolderOpen size={19} />
-              </button>
-              <button
-                type="button"
-                className={`sidebar-collapsed-action sidebar-collapsed-settings ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
-                onClick={() => setSettingsOpen(true)}
-                aria-label="设置"
-                title="设置"
-              >
-                <Settings size={19} />
-              </button>
+              {settingsOpen ? (
+                <>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-settings-button-active" aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="sidebar-collapsed-action"
+                    onClick={() => {
+                      setPendingProjectCwd(null);
+                      setActiveAgent(null);
+                      setSettingsOpen(false);
+                      setConversationView("chat");
+                    }}
+                    aria-label="新会话"
+                    title="新会话"
+                  >
+                    <Plus size={20} />
+                  </button>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => setSettingsOpen(true)} aria-label="设置" title="设置"><Settings size={19} /></button>
+                </>
+              )}
             </nav>
           ) : settingsOpen ? (
             <div className="settings-sidebar-content">
