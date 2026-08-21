@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
 import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
-import { listAgents, onAgentEvent } from "./lib/tauri-bridge";
+import { listAgents, onAgentEvent, requestMessages } from "./lib/tauri-bridge";
 import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
 import { useUiStore } from "./stores/ui-store";
@@ -85,6 +85,9 @@ function App() {
       // Preserve event order: a message_end must never overtake buffered text.
       flushTextDelta(payload.agentId);
       handleAgentEvent(payload);
+      if (payload.event.type === "agent_settled") {
+        void requestMessages(payload.agentId).catch((error) => console.error("Failed to refresh message entries:", error));
+      }
       if (isSuccessfulNovaSessionDeletion(payload)) {
         void listAgents()
           .then(syncAgents)

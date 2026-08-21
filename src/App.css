@@ -608,6 +608,56 @@ body {
   animation: fadeInUp 0.2s ease-out;
 }
 
+.message-response-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 28px;
+  margin-top: 5px;
+  opacity: 0.62;
+  transition: opacity 150ms ease;
+}
+
+.msg-row-assistant:hover .message-response-actions,
+.message-response-actions:focus-within {
+  opacity: 1;
+}
+
+.message-response-actions button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.message-response-actions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-border-glass) 76%, transparent);
+  color: var(--text-heading);
+  background: color-mix(in srgb, var(--surface-control) 64%, transparent);
+}
+
+.message-response-actions button:active:not(:disabled) {
+  transform: scale(0.91);
+}
+
+.message-response-actions button:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.message-response-actions .message-response-action-active {
+  border-color: color-mix(in srgb, var(--color-accent-start) 25%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 11%, transparent);
+}
+
 .msg-avatar {
   flex-shrink: 0;
   width: 42px;

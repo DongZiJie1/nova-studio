@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench } from "lucide-react";
+import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork } from "lucide-react";
 import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
@@ -63,11 +63,18 @@ export const ChatMessage = memo(function ChatMessage({
   message,
   userLabel = "You",
   avatarId,
+  showActions = false,
+  onFeedback,
+  onFork,
 }: {
   message: ChatMessageData;
   userLabel?: string;
   avatarId: AgentAvatarId;
+  showActions?: boolean;
+  onFeedback?: (message: ChatMessageData, rating: "up" | "down" | null) => void;
+  onFork?: (message: ChatMessageData) => void;
 }) {
+  const [copied, setCopied] = useState(false);
   if (message.role === "thinking") {
     return <div className="msg-row msg-row-special"><ThinkingCard content={message.content} /></div>;
   }
@@ -150,6 +157,19 @@ export const ChatMessage = memo(function ChatMessage({
         >
           {isUser ? message.content : <Markdown content={message.content} />}
         </div>
+        {!isUser && showActions && (
+          <div className="message-response-actions" aria-label="回复操作">
+            <button type="button" title="复制回复" aria-label="复制回复" onClick={() => {
+              void navigator.clipboard.writeText(message.content).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1400);
+              });
+            }}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            <button type="button" className={message.feedback === "up" ? "message-response-action-active" : ""} title="有帮助" aria-label="有帮助" aria-pressed={message.feedback === "up"} onClick={() => onFeedback?.(message, message.feedback === "up" ? null : "up")}><ThumbsUp size={14} /></button>
+            <button type="button" className={message.feedback === "down" ? "message-response-action-active" : ""} title="没有帮助" aria-label="没有帮助" aria-pressed={message.feedback === "down"} onClick={() => onFeedback?.(message, message.feedback === "down" ? null : "down")}><ThumbsDown size={14} /></button>
+            <button type="button" title="从此回复分叉会话" aria-label="从此回复分叉会话" disabled={!message.entryId} onClick={() => onFork?.(message)}><GitFork size={14} /></button>
+          </div>
+        )}
       </div>
       {isUser && (
         <div className="msg-avatar msg-avatar-user">

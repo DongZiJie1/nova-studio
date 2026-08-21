@@ -60,6 +60,18 @@ export async function startNewSession(agentId: string): Promise<void> {
   return invoke("new_session", { agentId });
 }
 
+export async function requestMessages(agentId: string): Promise<void> {
+  return invoke("request_messages", { agentId });
+}
+
+export async function forkSession(agentId: string, entryId: string): Promise<void> {
+  return invoke("fork_session", { agentId, entryId });
+}
+
+export async function setMessageFeedback(agentId: string, entryId: string, rating: "up" | "down" | null): Promise<void> {
+  return invoke("set_message_feedback", { agentId, entryId, rating });
+}
+
 export async function compactSession(agentId: string, instructions?: string): Promise<void> {
   return invoke("compact_session", { agentId, instructions });
 }

@@ -18,6 +18,9 @@ import {
   startNewSession,
   compactSession,
   setSessionName,
+  setMessageFeedback,
+  forkSession,
+  requestMessages,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -830,6 +833,46 @@ export function AppShell() {
     }
     return grouped;
   }, [activeAgent?.messages]);
+  const actionableAssistantMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    let lastAssistantId: string | null = null;
+    for (const message of chatMessages) {
+      if (message.role === "user") {
+        if (lastAssistantId) ids.add(lastAssistantId);
+        lastAssistantId = null;
+      } else if (message.role === "assistant" && message.content.trim()) {
+        lastAssistantId = message.id;
+      }
+    }
+    if (lastAssistantId && activeAgent?.status !== "streaming") ids.add(lastAssistantId);
+    return ids;
+  }, [chatMessages, activeAgent?.status]);
+
+  const handleMessageFeedback = useCallback((message: AgentState["messages"][number], rating: "up" | "down" | null) => {
+    if (!activeAgent || !message.entryId) return;
+    const previous = message.feedback;
+    updateAgent(activeAgent.id, {
+      messages: activeAgent.messages.map((item) => item.entryId === message.entryId ? { ...item, feedback: rating ?? undefined } : item),
+    });
+    void setMessageFeedback(activeAgent.id, message.entryId, rating).catch((feedbackError) => {
+      updateAgent(activeAgent.id, {
+        messages: useAgentStore.getState().getAgent(activeAgent.id)?.messages.map((item) => item.entryId === message.entryId ? { ...item, feedback: previous } : item) ?? [],
+      });
+      setError(feedbackError instanceof Error ? feedbackError.message : String(feedbackError));
+    });
+  }, [activeAgent, updateAgent]);
+
+  const handleForkMessage = useCallback((message: AgentState["messages"][number]) => {
+    if (!activeAgent || !message.entryId) return;
+    void forkSession(activeAgent.id, message.entryId)
+      .then(() => new Promise((resolve) => window.setTimeout(resolve, 180)))
+      .then(async () => {
+        await requestMessages(activeAgent.id);
+        const infos = await listAgents();
+        syncAgents(infos);
+      })
+      .catch((forkError) => setError(forkError instanceof Error ? forkError.message : String(forkError)));
+  }, [activeAgent, syncAgents]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
 
@@ -1941,6 +1984,9 @@ export function AppShell() {
                       message={msg}
                       userLabel={conversationUserLabel}
                       avatarId={activeAgent.avatarId}
+                      showActions={actionableAssistantMessageIds.has(msg.id)}
+                      onFeedback={handleMessageFeedback}
+                      onFork={handleForkMessage}
                     />
                   </div>
                 ))}

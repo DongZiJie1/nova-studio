@@ -230,6 +230,7 @@ export interface PersistedRpcContentBlock {
 }
 
 export interface PersistedRpcMessage {
+  entryId?: string;
   role?: string;
   content?: string | PersistedRpcContentBlock[];
   toolCallId?: string;

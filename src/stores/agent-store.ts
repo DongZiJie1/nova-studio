@@ -38,6 +38,8 @@ export interface MessageAttachment {
 
 export interface ChatMessage {
   id: string;
+  entryId?: string;
+  feedback?: "up" | "down";
   role: "user" | "assistant" | "thinking" | "tool";
   content: string;
   timestamp: number;
@@ -208,7 +210,7 @@ function parseAttachmentsFromContent(content: string): { attachments: MessageAtt
   return { attachments: attachments.length > 0 ? attachments : undefined, cleanContent };
 }
 
-function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
+function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<string, "up" | "down"> = {}): ChatMessage[] {
   const hydrated: ChatMessage[] = [];
   const pendingToolCalls = new Map<string, ToolCall>();
 
@@ -225,6 +227,7 @@ function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
       const { cleanContent, attachments } = parseAttachmentsFromContent(rawContent);
       hydrated.push({
         id: nextId(),
+        entryId: message.entryId,
         role: "user",
         content: cleanContent,
         timestamp,
@@ -236,14 +239,14 @@ function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
     if (message.role === "assistant") {
       if (!Array.isArray(message.content)) {
         const content = messageText(message);
-        if (content) hydrated.push({ id: nextId(), role: "assistant", content, timestamp });
+        if (content) hydrated.push({ id: nextId(), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content, timestamp });
         continue;
       }
 
       let text = "";
       const flushText = () => {
         if (!text) return;
-        hydrated.push({ id: nextId(), role: "assistant", content: text, timestamp });
+        hydrated.push({ id: nextId(), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content: text, timestamp });
         text = "";
       };
       for (const block of message.content) {
@@ -460,14 +463,17 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       const messages = Array.isArray(event.data?.messages)
         ? (event.data.messages as PersistedRpcMessage[])
         : [];
+      const feedback = event.data?.feedback && typeof event.data.feedback === "object"
+        ? event.data.feedback as Record<string, "up" | "down">
+        : {};
       set((s) => ({
         agents: s.agents.map((agent) => {
           if (agent.id !== agentId) return agent;
           // A newly spawned agent asks for history before its first prompt.
           // That empty response can arrive after the optimistic user message,
           // so never replace messages already rendered.
-          if (agent.messages.length > 0) return agent;
-          const hydrated = hydrateMessages(messages);
+          if (messages.length === 0 && agent.messages.length > 0) return agent;
+          const hydrated = hydrateMessages(messages, feedback);
           return {
             ...agent,
             messages: hydrated,

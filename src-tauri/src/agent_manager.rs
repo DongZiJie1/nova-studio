@@ -55,7 +55,6 @@ struct NovaSessionSummary {
     cwd: String,
     session_file: String,
     name: Option<String>,
-    parent_session_id: Option<String>,
     created_at: String,
     message_count: usize,
     #[serde(default)]
@@ -141,9 +140,10 @@ impl AgentManager {
                         id.clone(),
                         PersistedAgent {
                             id,
-                            parent_agent_id: session
-                                .parent_session_id
-                                .map(|parent| format!("agent-{parent}")),
+                            // A Nova parentSession records conversation lineage (fork/clone),
+                            // not an Agent collaboration hierarchy. Only Studio's persisted
+                            // parent_agent_id is authoritative for nested Agent rendering.
+                            parent_agent_id: legacy.and_then(|item| item.parent_agent_id.clone()),
                             name,
                             cwd,
                             model: legacy.and_then(|item| item.model.clone()),
@@ -214,14 +214,10 @@ impl AgentManager {
         let mut records = self.records.write().await;
         for session in catalog.sessions {
             let id = format!("agent-{}", session.session_id);
-            let parent_agent_id = session
-                .parent_session_id
-                .map(|parent| format!("agent-{parent}"));
             let cwd = normalize_project_cwd(&session.cwd).unwrap_or(session.cwd);
             let fallback_name = fallback_session_name(&session.first_message);
 
             if let Some(record) = records.get_mut(&id) {
-                record.parent_agent_id = parent_agent_id;
                 if session.name.is_some() {
                     record.name = session.name;
                 } else if record.name.is_none() {
@@ -236,7 +232,9 @@ impl AgentManager {
                     id.clone(),
                     PersistedAgent {
                         id,
-                        parent_agent_id,
+                        // Newly discovered sessions may be forks, clones, or sessions
+                        // created outside Studio. Session lineage must remain flat here.
+                        parent_agent_id: None,
                         name: session.name.or(fallback_name),
                         cwd,
                         model: None,
@@ -528,6 +526,27 @@ impl AgentManager {
         agent.send_command(&RpcCommand::NewSession { id: None })?;
         agent.send_command(&RpcCommand::GetMessages { id: None })?;
         agent.send_command(&RpcCommand::GetState { id: None })
+    }
+
+    pub async fn request_messages(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetMessages { id: None })
+    }
+
+    pub async fn fork_session(&self, agent_id: &str, entry_id: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::Fork { id: None, entry_id, position: "at".to_string() })
+    }
+
+    pub async fn set_feedback(&self, agent_id: &str, entry_id: String, rating: Option<String>) -> Result<(), String> {
+        if !matches!(rating.as_deref(), None | Some("up") | Some("down")) {
+            return Err("Invalid feedback rating".to_string());
+        }
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::SetFeedback { id: None, entry_id, rating })
     }
 
     /// Compact the current session, optionally using caller-provided instructions.
@@ -1065,7 +1084,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_preserves_project_session_and_parent_relationship() {
+    async fn restore_keeps_session_lineage_flat_without_agent_metadata() {
         let state_path =
             std::env::temp_dir().join(format!("nova-studio-restore-{}.json", Uuid::new_v4()));
         let restored = AgentManager::new(mock_cli_path(), state_path.clone());
@@ -1084,10 +1103,7 @@ mod tests {
         assert_eq!(restored_parent.session_id.as_deref(), Some("mock-parent"));
         assert_eq!(restored_parent.status, AgentStatus::Stopped);
         assert_eq!(restored_parent.message_count, 2);
-        assert_eq!(
-            restored_child.parent_agent_id.as_deref(),
-            Some("agent-mock-parent")
-        );
+        assert_eq!(restored_child.parent_agent_id, None);
         assert_eq!(restored_child.session_id.as_deref(), Some("mock-child"));
         assert_eq!(restored.count().await, 0);
 
