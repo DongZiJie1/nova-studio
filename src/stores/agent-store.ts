@@ -503,7 +503,15 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         reasoning: Boolean(m.reasoning),
         images: Boolean(m.images),
       }));
-      set({ availableModels: models });
+      set((state) => {
+        const merged = new Map(
+          state.availableModels.map((model) => [`${model.provider}:${model.id}`, model]),
+        );
+        for (const model of models) {
+          merged.set(`${model.provider}:${model.id}`, model);
+        }
+        return { availableModels: Array.from(merged.values()) };
+      });
       return;
     }
 

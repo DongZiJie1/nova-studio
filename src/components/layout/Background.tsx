@@ -2,6 +2,7 @@ import { useUiStore } from "../../stores/ui-store";
 
 export function Background() {
   const customBgUrl = useUiStore((s) => s.customBgUrl);
+  const backgroundBlur = useUiStore((s) => s.backgroundBlur);
   const theme = useUiStore((s) => s.theme);
   const isDawn = theme === "arctic-dawn";
 
@@ -116,8 +117,8 @@ export function Background() {
               backgroundImage: `url(${customBgUrl})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
-              transform: "scale(1.035)",
-              filter: "blur(11px) saturate(0.96)",
+              transform: `scale(${1.035 + backgroundBlur * 0.002})`,
+              filter: `blur(${11 + backgroundBlur}px) saturate(0.96)`,
             }}
           />
           <div
@@ -126,8 +127,8 @@ export function Background() {
               backgroundImage: `url(${customBgUrl})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
-              transform: "scale(1.008)",
-              filter: "blur(2.4px) saturate(0.98)",
+              transform: `scale(${1.008 + backgroundBlur * 0.002})`,
+              filter: `blur(${2.4 + backgroundBlur}px) saturate(0.98)`,
               WebkitMaskImage:
                 "radial-gradient(ellipse 58% 52% at 50% 48%, black 0%, rgba(0,0,0,0.98) 38%, rgba(0,0,0,0.72) 56%, rgba(0,0,0,0.24) 74%, transparent 92%)",
               maskImage:
