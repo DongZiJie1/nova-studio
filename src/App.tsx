@@ -14,6 +14,22 @@ interface PendingTextDelta {
   delta: string;
 }
 
+function isSuccessfulNovaSessionDeletion(payload: AgentEventPayload): boolean {
+  if (
+    payload.event.type !== "tool_execution_end" ||
+    payload.event.toolName !== "nova_data" ||
+    payload.event.isError
+  ) {
+    return false;
+  }
+  const result = payload.event.result;
+  if (!result || typeof result !== "object") return false;
+  const details = (result as Record<string, unknown>).details;
+  if (!details || typeof details !== "object") return false;
+  const mutation = details as Record<string, unknown>;
+  return mutation.action === "delete_session" && mutation.status === "ok";
+}
+
 function App() {
   const handleAgentEvent = useAgentStore((s) => s.handleAgentEvent);
   const syncAgents = useAgentStore((s) => s.syncAgents);
@@ -69,6 +85,11 @@ function App() {
       // Preserve event order: a message_end must never overtake buffered text.
       flushTextDelta(payload.agentId);
       handleAgentEvent(payload);
+      if (isSuccessfulNovaSessionDeletion(payload)) {
+        void listAgents()
+          .then(syncAgents)
+          .catch((error) => console.error("Failed to refresh sessions after deletion:", error));
+      }
     });
 
     // Reconcile with the backend after registering the event listener. This

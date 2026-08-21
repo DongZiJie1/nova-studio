@@ -2,7 +2,7 @@ use crate::agent_process::AgentProcess;
 use crate::nova_host_process::NovaHostProcess;
 use crate::rpc_types::{AgentInfo, FileReference, ImageContent, RpcCommand, SpawnRequest};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -205,6 +205,12 @@ impl AgentManager {
     /// process, so a one-time snapshot taken during startup is not sufficient.
     pub async fn refresh_sessions(&self) -> Result<(), String> {
         let catalog = self.load_nova_sessions().await?;
+        let catalog_ids: HashSet<String> = catalog
+            .sessions
+            .iter()
+            .map(|session| format!("agent-{}", session.session_id))
+            .collect();
+        let running_ids: HashSet<String> = self.agents.read().await.keys().cloned().collect();
         let mut records = self.records.write().await;
         for session in catalog.sessions {
             let id = format!("agent-{}", session.session_id);
@@ -245,6 +251,10 @@ impl AgentManager {
                 );
             }
         }
+        // Nova's catalog is the source of truth. Drop records whose session
+        // files were deleted outside Studio, while retaining live agents until
+        // they stop so a refresh cannot make an active conversation disappear.
+        records.retain(|id, _| catalog_ids.contains(id) || running_ids.contains(id));
         Ok(())
     }
 
