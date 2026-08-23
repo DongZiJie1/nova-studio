@@ -885,7 +885,8 @@ body {
 }
 
 .msg-row-assistant:hover .message-response-actions,
-.message-response-actions:focus-within {
+.message-response-actions:focus-within,
+.message-response-actions-selected {
   opacity: 1;
 }
 
@@ -919,9 +920,33 @@ body {
 }
 
 .message-response-actions .message-response-action-active {
-  border-color: color-mix(in srgb, var(--color-accent-start) 25%, transparent);
-  color: var(--color-accent-start);
-  background: color-mix(in srgb, var(--color-accent-start) 11%, transparent);
+  width: auto;
+  min-width: 28px;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.message-response-actions .message-response-action-active svg {
+  fill: currentColor;
+  stroke-width: 2.25;
+}
+
+.message-response-actions .message-response-action-up {
+  border-color: color-mix(in srgb, var(--color-success) 48%, transparent);
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 17%, var(--surface-control));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-success) 9%, transparent),
+    0 5px 14px color-mix(in srgb, var(--color-success) 15%, transparent);
+}
+
+.message-response-actions .message-response-action-down {
+  border-color: color-mix(in srgb, var(--color-error) 48%, transparent);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 17%, var(--surface-control));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-error) 9%, transparent),
+    0 5px 14px color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .msg-avatar {

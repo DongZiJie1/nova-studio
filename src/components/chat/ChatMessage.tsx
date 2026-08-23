@@ -203,15 +203,15 @@ export const ChatMessage = memo(function ChatMessage({
           </div>
         )}
         {!isUser && showActions && (
-          <div className="message-response-actions" aria-label="回复操作">
+          <div className={`message-response-actions ${message.feedback ? "message-response-actions-selected" : ""}`} aria-label="回复操作">
             <button type="button" title="复制回复" aria-label="复制回复" onClick={() => {
               void navigator.clipboard.writeText(message.content).then(() => {
                 setCopied(true);
                 window.setTimeout(() => setCopied(false), 1400);
               });
             }}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
-            <button type="button" className={message.feedback === "up" ? "message-response-action-active" : ""} title="有帮助" aria-label="有帮助" aria-pressed={message.feedback === "up"} onClick={() => onFeedback?.(message, message.feedback === "up" ? null : "up")}><ThumbsUp size={14} /></button>
-            <button type="button" className={message.feedback === "down" ? "message-response-action-active" : ""} title="没有帮助" aria-label="没有帮助" aria-pressed={message.feedback === "down"} onClick={() => onFeedback?.(message, message.feedback === "down" ? null : "down")}><ThumbsDown size={14} /></button>
+            <button type="button" className={message.feedback === "up" ? "message-response-action-active message-response-action-up" : ""} title="有帮助" aria-label="有帮助" aria-pressed={message.feedback === "up"} onClick={() => onFeedback?.(message, message.feedback === "up" ? null : "up")}><ThumbsUp size={14} />{message.feedback === "up" && <span>已赞</span>}</button>
+            <button type="button" className={message.feedback === "down" ? "message-response-action-active message-response-action-down" : ""} title="没有帮助" aria-label="没有帮助" aria-pressed={message.feedback === "down"} onClick={() => onFeedback?.(message, message.feedback === "down" ? null : "down")}><ThumbsDown size={14} />{message.feedback === "down" && <span>已踩</span>}</button>
             <button type="button" title="从此回复分叉会话" aria-label="从此回复分叉会话" disabled={!message.entryId} onClick={() => onFork?.(message)}><GitFork size={14} /></button>
           </div>
         )}

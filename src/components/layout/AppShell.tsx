@@ -976,6 +976,24 @@ export function AppShell() {
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
 
   useEffect(() => {
+    if (conversationView !== "chat" || settingsOpen || activeAgent?.status !== "streaming") return;
+    const frame = window.requestAnimationFrame(() => {
+      const container = scrollRef.current;
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeId,
+    conversationView,
+    settingsOpen,
+    activeAgent?.status,
+    activeAgent?.messages.length,
+    activeAgent?.streamingThinking,
+    activeAgent?.activeToolCalls.size,
+    streamingText,
+  ]);
+
+  useEffect(() => {
     setSelectedTrajectoryEntry(null);
   }, [activeId]);
 
