@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import type { CSSProperties } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -13,20 +14,24 @@ import {
   setModel,
   requestAvailableModels,
   requestSessionStats,
+  requestExecutionTraces,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
   compactSession,
   setSessionName,
+  setMessageFeedback,
+  forkSession,
+  requestMessages,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
-import { ChatMessage } from "../chat/ChatMessage";
+import type { ExecutionTrace } from "../../lib/rpc-types";
+import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
-import { ToolCallCard } from "../chat/ToolCallCard";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
@@ -43,7 +48,6 @@ import {
   Square,
   FolderOpen,
   Pencil,
-  Sparkles,
   ChevronDown,
   ChevronRight,
   Plus,
@@ -63,6 +67,8 @@ import {
   ArrowLeft,
   MessageCircle,
   Route,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -89,6 +95,128 @@ interface PendingAttachment {
   isImage: boolean;
   isText: boolean;
   previewUrl?: string;  // blob URL for image thumbnails
+}
+
+interface SelectedTrajectoryEntry {
+  id: string;
+  label: string;
+  data: unknown;
+}
+
+type TrajectoryDetailView = "execution" | "json";
+
+function formatTrajectoryTime(value: unknown): string {
+  if (typeof value !== "number" && typeof value !== "string") return "暂无时间数据";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "暂无时间数据";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function formatTrajectoryDuration(value: number | undefined): string {
+  if (value === undefined) return "暂无耗时数据";
+  if (value < 1000) return `${value} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 2 : 1)} 秒`;
+  return `${Math.floor(value / 60_000)} 分 ${((value % 60_000) / 1000).toFixed(1)} 秒`;
+}
+
+function formatTrajectoryStatus(value: ExecutionTrace["status"] | undefined): string {
+  if (value === "running") return "执行中";
+  if (value === "success") return "已完成";
+  if (value === "error") return "失败";
+  if (value === "cancelled") return "已取消";
+  if (value === "interrupted") return "已中断";
+  return "已记录";
+}
+
+function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: SelectedTrajectoryEntry; modelName: string; traces: ExecutionTrace[] }) {
+  const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
+  const role = typeof data.role === "string" ? data.role : typeof data.type === "string" ? data.type : entry.label.toLowerCase();
+  const timestamp = data.timestamp;
+  const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls as Array<Record<string, unknown>> : [];
+  const entryId = typeof data.entryId === "string" ? data.entryId : undefined;
+  const toolCallIds = new Set(toolCalls.map((tool) => tool.id).filter((id): id is string => typeof id === "string"));
+  if (role === "active_tool_call" && typeof data.id === "string") toolCallIds.add(data.id);
+  const matchingTraces = traces.filter((trace) =>
+    (trace.category === "model" && entryId !== undefined && trace.messageEntryId === entryId) ||
+    (trace.category === "tool" && trace.toolCallId !== undefined && toolCallIds.has(trace.toolCallId)),
+  );
+  const modelTrace = matchingTraces.find((trace) => trace.category === "model");
+  const thinkingTrace = [...traces].reverse().find((trace) =>
+    trace.category === "thinking" &&
+    (trace.parentTraceId === modelTrace?.traceId || (role === "streaming_thinking" && trace.status === "running")),
+  );
+  const primaryTrace = role === "thinking" || role === "streaming_thinking" ? thinkingTrace : modelTrace;
+  const typeLabel = role === "tool" || role === "active_tool_call"
+    ? "工具调用"
+    : role === "assistant" || role === "streaming_assistant"
+      ? "模型调用"
+      : role === "thinking" || role === "streaming_thinking"
+        ? "模型思考"
+        : role === "user"
+          ? "用户输入"
+          : role;
+
+  return (
+    <div className="trajectory-execution-details">
+      <dl className="trajectory-execution-summary">
+        <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
+        <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
+        {(role === "assistant" || role === "streaming_assistant" || role === "thinking" || role === "streaming_thinking") && (
+          <div><dt>调用模型</dt><dd>{modelTrace?.model ?? modelName}</dd></div>
+        )}
+        <div><dt>事件状态</dt><dd>{primaryTrace ? formatTrajectoryStatus(primaryTrace.status) : role.startsWith("streaming_") ? "执行中" : "已记录"}</dd></div>
+        {primaryTrace && <div><dt>开始时间</dt><dd>{formatTrajectoryTime(primaryTrace.startedAt)}</dd></div>}
+        {primaryTrace && <div><dt>结束时间</dt><dd>{formatTrajectoryTime(primaryTrace.endedAt)}</dd></div>}
+        {primaryTrace && <div><dt>执行耗时</dt><dd>{formatTrajectoryDuration(primaryTrace.durationMs)}</dd></div>}
+        {thinkingTrace && modelTrace && <div><dt>模型总耗时</dt><dd>{formatTrajectoryDuration(modelTrace.durationMs)}</dd></div>}
+        {modelTrace?.stopReason && <div><dt>停止原因</dt><dd>{modelTrace.stopReason}</dd></div>}
+        {modelTrace?.usage && <div><dt>Token 用量</dt><dd>输入 {formatTokens(modelTrace.usage.input)} · 输出 {formatTokens(modelTrace.usage.output)} · 缓存读取 {formatTokens(modelTrace.usage.cacheRead)}</dd></div>}
+      </dl>
+      {toolCalls.length > 0 && (
+        <section className="trajectory-execution-calls">
+          <h4>工具调用</h4>
+          {toolCalls.map((tool, index) => (
+            (() => {
+              const toolId = typeof tool.id === "string" ? tool.id : undefined;
+              const trace = matchingTraces.find((candidate) => candidate.category === "tool" && candidate.toolCallId === toolId);
+              return <div className="trajectory-execution-call" key={toolId ?? index}>
+              <div><strong>{typeof tool.name === "string" ? tool.name : "tool"}</strong><span>{trace ? formatTrajectoryStatus(trace.status) : tool.status === "error" ? "失败" : tool.status === "running" || tool.status === "pending" ? "执行中" : "已完成"}</span></div>
+              <dl>
+                <div><dt>调用 ID</dt><dd>{toolId ?? "—"}</dd></div>
+                <div><dt>开始时间</dt><dd>{formatTrajectoryTime(trace?.startedAt)}</dd></div>
+                <div><dt>结束时间</dt><dd>{formatTrajectoryTime(trace?.endedAt)}</dd></div>
+                <div><dt>执行耗时</dt><dd>{formatTrajectoryDuration(trace?.durationMs)}</dd></div>
+              </dl>
+            </div>;
+            })()
+          ))}
+        </section>
+      )}
+      {toolCalls.length === 0 && role === "active_tool_call" && (
+        <section className="trajectory-execution-calls">
+          <h4>工具调用</h4>
+          <div className="trajectory-execution-call">
+            <div><strong>{typeof data.name === "string" ? data.name : "tool"}</strong><span>执行中</span></div>
+            <dl>
+              <div><dt>调用 ID</dt><dd>{typeof data.id === "string" ? data.id : "—"}</dd></div>
+              <div><dt>执行时间</dt><dd>正在执行</dd></div>
+            </dl>
+          </div>
+        </section>
+      )}
+      {matchingTraces.length === 0 && !thinkingTrace && (
+        <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
+      )}
+    </div>
+  );
 }
 
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
@@ -160,16 +288,11 @@ function useRollingNumber(target: number, duration = 400): number {
   return display;
 }
 
-/** Merged session usage + context stats chip with hover breakdown. */
+/** Session usage and context stats displayed above the composer. */
 function SessionStats({ agent }: { agent: AgentState }) {
-  const [contextHoverOpen, setContextHoverOpen] = useState(false);
   const su = agent.sessionUsage;
   const cu = agent.contextUsage;
   const live = agent.liveUsage;
-  const fmtK = (n: number) => (n >= 1000 ? (n / 1000).toFixed(0) + "k" : String(n));
-  const r = 7;
-  const circ = 2 * Math.PI * r;
-  const model = agent.modelMeta;
 
   // Completed session totals + the in-flight turn's live usage.
   // For providers that only report usage at the end of the stream, estimate the
@@ -181,136 +304,84 @@ function SessionStats({ agent }: { agent: AgentState }) {
   const totalCacheWrite = (su?.cacheWrite ?? 0) + (live?.cacheWrite ?? 0);
   // ↓ shows output since last user input, not cumulative session output
   const outputSinceLastUserInput = agent.outputSinceLastUserInput + liveOutput;
-
-  // Live context occupancy. cu.tokens already includes the last turn's output
-  // (input + output + cacheRead + cacheWrite); add the in-flight turn's new
-  // input + output so Used context grows in real time as tokens stream.
-  const baseContextTokens = cu?.tokens ?? 0;
-  const usedContextTokens = baseContextTokens + (live?.input ?? 0) + liveOutput;
+  const usedContextTokens = (cu?.tokens ?? 0) + (live?.input ?? 0) + liveOutput;
   const contextWindow = cu?.contextWindow ?? 0;
-  const pct = contextWindow > 0 ? (usedContextTokens / contextWindow) * 100 : null;
-  const color = pct == null ? "#8a90a4" : pct > 90 ? "#ef4444" : pct > 70 ? "#f59e0b" : "#818cf8";
-  const dash = pct != null ? (pct / 100) * circ : 0;
+  const contextPercent = contextWindow > 0 ? (usedContextTokens / contextWindow) * 100 : null;
 
   // Rolling token counters for ↑↓
   const rollingInput = useRollingNumber(totalInput);
   const rollingOutput = useRollingNumber(outputSinceLastUserInput);
 
-  const parts: string[] = [];
-  if (totalInput > 0) parts.push(`↑${formatTokens(Math.round(rollingInput))}`);
-  if (outputSinceLastUserInput > 0) parts.push(`↓${formatTokens(Math.round(rollingOutput))}`);
-
   // Cache hit rate (no "CH" prefix) — shown inline and in the hover breakdown
   const latestPromptTokens = totalInput + totalCacheRead + totalCacheWrite;
   const cacheHitRate = latestPromptTokens > 0 ? (totalCacheRead / latestPromptTokens) * 100 : undefined;
   const hasCache = totalCacheRead > 0 || totalCacheWrite > 0;
-  if (hasCache && cacheHitRate !== undefined) {
-    parts.push(`${cacheHitRate.toFixed(1)}%`);
-  }
 
-  const showRing = pct != null;
-  const showTokens = parts.length > 0;
-  if (!showRing && !showTokens) return null;
-  const statsText = parts.join(" ");
+  if (!cu && !hasCache && totalInput <= 0 && outputSinceLastUserInput <= 0) return null;
+
+  const itemStyle: CSSProperties = {
+    flex: "1 1 0",
+    minWidth: 0,
+    textAlign: "center",
+  };
+  const valueStyle: CSSProperties = {
+    display: "inline-block",
+    minWidth: "5.5ch",
+    marginLeft: 5,
+    textAlign: "left",
+    fontVariantNumeric: "tabular-nums",
+    fontFeatureSettings: '"tnum"',
+    color: "var(--color-text-secondary)",
+    fontWeight: 600,
+  };
 
   return (
     <div
       style={{
-        position: "relative",
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        padding: "4px 8px 4px 6px",
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.05)",
-        border: "1px solid rgba(255,255,255,0.08)",
+        justifyContent: "space-between",
+        minWidth: 0,
+        width: "100%",
+        padding: "0 12px 8px",
+        color: "var(--color-text-muted)",
+        fontSize: 11,
         cursor: "default",
         userSelect: "none",
+        whiteSpace: "nowrap",
       }}
-      onMouseEnter={() => setContextHoverOpen(true)}
-      onMouseLeave={() => setContextHoverOpen(false)}
     >
-      {showRing && (
-        <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
-          <circle cx="9" cy="9" r={r} fill="none" stroke={`${color}25`} strokeWidth="2" />
-          <circle
-            cx="9" cy="9" r={r}
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeDasharray={`${dash} ${circ - dash}`}
-            transform="rotate(-90 9 9)"
-          />
-        </svg>
+      {cu && (
+        <>
+          <span
+            className="session-stat-item"
+            tabIndex={0}
+            data-tooltip="当前发送给模型的上下文占用，包含系统提示、历史对话、工具结果和当前内容；接近上限时需要压缩上下文。"
+            style={itemStyle}
+          >上下文<span style={{ ...valueStyle, minWidth: "19ch" }}>{formatTokens(usedContextTokens)} / {formatTokens(contextWindow)}{contextPercent != null ? ` (${contextPercent.toFixed(1)}%)` : ""}</span></span>
+          <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
+        </>
       )}
-      {pct != null && (
-        <span style={{ fontSize: 11, color, fontWeight: 500, whiteSpace: "nowrap" }}>
-          {pct.toFixed(1)}%
-        </span>
-      )}
-      {showTokens && (
-        <span style={{ fontSize: 11, color: "#8a90a4", whiteSpace: "nowrap" }}>{statsText}</span>
-      )}
-      {contextHoverOpen && cu && (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            bottom: 36,
-            zIndex: 50,
-            width: 260,
-            padding: "12px 14px",
-            borderRadius: 10,
-            background: "rgba(18, 20, 31, 0.92)",
-            border: "1px solid rgba(151, 159, 204, 0.18)",
-            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
-            backdropFilter: "blur(16px)",
-            fontSize: 11.5,
-            color: "#c0c4d6",
-            lineHeight: 1.6,
-          }}
-        >
-          {model && (
-            <div style={{ color: "#e5e8ff", fontWeight: 600, marginBottom: 8, fontSize: 12 }}>
-              {model.name}
-            </div>
-          )}
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Used context</span>
-            <span style={{ color: color, fontWeight: 600 }}>
-              {fmtK(usedContextTokens)} / {fmtK(contextWindow)}
-            </span>
-          </div>
-          {hasCache && (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>Cache hit rate</span>
-                <span
-                  style={{
-                    color:
-                      cacheHitRate != null
-                        ? cacheHitRate > 90
-                          ? "#34d399"
-                          : cacheHitRate > 70
-                            ? "#f59e0b"
-                            : "#818cf8"
-                        : "#8a90a4",
-                    fontWeight: 600,
-                  }}
-                >
-                  {cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}
-                </span>
-              </div>
-            </>
-          )}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
-          <div style={{ display: "flex", justifyContent: "space-between", color: "#8a90a4" }}>
-            <span>Available</span>
-            <span>{fmtK(Math.max(0, contextWindow - usedContextTokens))}</span>
-          </div>
-        </div>
-      )}
+      <span
+        className="session-stat-item"
+        tabIndex={0}
+        data-tooltip="Session 输入中通过模型缓存读取的比例。命中率越高，重复上下文的处理成本通常越低。"
+        style={itemStyle}
+      >缓存命中率<span style={{ ...valueStyle, color: cacheHitRate != null && cacheHitRate > 90 ? "#34d399" : cacheHitRate != null && cacheHitRate > 70 ? "#f59e0b" : "#818cf8" }}>{cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}</span></span>
+      <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
+      <span
+        className="session-stat-item"
+        tabIndex={0}
+        data-tooltip="整个 Session 内模型调用产生的累计未缓存输入，可能包含系统提示和未命中缓存的历史内容，不等于当前用户消息长度。"
+        style={itemStyle}
+      >输入 Token<span style={valueStyle}>{formatTokens(Math.round(rollingInput))}</span></span>
+      <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
+      <span
+        className="session-stat-item"
+        tabIndex={0}
+        data-tooltip="从最近一次用户发送消息开始，模型在当前轮生成的累计输出 Token。"
+        style={itemStyle}
+      >输出 Token<span style={valueStyle}>{formatTokens(Math.round(rollingOutput))}</span></span>
     </div>
   );
 }
@@ -668,7 +739,10 @@ export function AppShell() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
+  const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
+  const [trajectoryDetailView, setTrajectoryDetailView] = useState<TrajectoryDetailView>("execution");
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
   const [agentNames, setAgentNames] = useState<Record<string, string>>(
@@ -807,8 +881,138 @@ export function AppShell() {
     }
     return groups;
   }, [activeAgent?.messages]);
+  const chatMessages = useMemo(() => {
+    const grouped: AgentState["messages"] = [];
+    for (const message of activeAgent?.messages ?? []) {
+      const previous = grouped[grouped.length - 1];
+      if (message.role === "tool" && previous?.role === "tool") {
+        grouped[grouped.length - 1] = {
+          ...previous,
+          toolCalls: [...(previous.toolCalls ?? []), ...(message.toolCalls ?? [])],
+        };
+      } else {
+        grouped.push(message);
+      }
+    }
+    return grouped;
+  }, [activeAgent?.messages]);
+  const actionableAssistantMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    let lastAssistantId: string | null = null;
+    for (const message of chatMessages) {
+      if (message.role === "user") {
+        if (lastAssistantId) ids.add(lastAssistantId);
+        lastAssistantId = null;
+      } else if (message.role === "assistant" && message.content.trim()) {
+        lastAssistantId = message.id;
+      }
+    }
+    if (lastAssistantId && activeAgent?.status !== "streaming") ids.add(lastAssistantId);
+    return ids;
+  }, [chatMessages, activeAgent?.status]);
+  const turnFileChangesByAssistantId = useMemo(() => {
+    const result = new Map<string, TurnFileChange[]>();
+    for (const request of trajectoryRequests) {
+      const assistant = [...request.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
+      if (!assistant) continue;
+      const byPath = new Map<string, TurnFileChange>();
+      for (const message of request.messages) {
+        for (const tool of message.toolCalls ?? []) {
+          if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
+          const args = tool.args && typeof tool.args === "object" ? tool.args as Record<string, unknown> : {};
+          const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
+          if (!path) continue;
+          const resultRecord = tool.result && typeof tool.result === "object" ? tool.result as Record<string, unknown> : {};
+          const details = resultRecord.details && typeof resultRecord.details === "object" ? resultRecord.details as Record<string, unknown> : {};
+          const patch = typeof details.patch === "string" ? details.patch : undefined;
+          const patchLines = patch?.split("\n") ?? [];
+          const additions = tool.name === "write"
+            ? (typeof args.content === "string" && args.content ? args.content.split("\n").length : 0)
+            : patchLines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
+          const deletions = tool.name === "edit"
+            ? patchLines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
+            : 0;
+          const previous = byPath.get(path);
+          byPath.set(path, {
+            path,
+            kind: tool.name,
+            additions: (previous?.additions ?? 0) + additions,
+            deletions: (previous?.deletions ?? 0) + deletions,
+            patch: [previous?.patch, patch].filter(Boolean).join("\n\n") || undefined,
+          });
+        }
+      }
+      if (byPath.size > 0) result.set(assistant.id, Array.from(byPath.values()));
+    }
+    return result;
+  }, [trajectoryRequests]);
+
+  const handleMessageFeedback = useCallback((message: AgentState["messages"][number], rating: "up" | "down" | null) => {
+    if (!activeAgent || !message.entryId) return;
+    const previous = message.feedback;
+    updateAgent(activeAgent.id, {
+      messages: activeAgent.messages.map((item) => item.entryId === message.entryId ? { ...item, feedback: rating ?? undefined } : item),
+    });
+    void setMessageFeedback(activeAgent.id, message.entryId, rating).catch((feedbackError) => {
+      updateAgent(activeAgent.id, {
+        messages: useAgentStore.getState().getAgent(activeAgent.id)?.messages.map((item) => item.entryId === message.entryId ? { ...item, feedback: previous } : item) ?? [],
+      });
+      setError(feedbackError instanceof Error ? feedbackError.message : String(feedbackError));
+    });
+  }, [activeAgent, updateAgent]);
+
+  const handleForkMessage = useCallback((message: AgentState["messages"][number]) => {
+    if (!activeAgent || !message.entryId) return;
+    void forkSession(activeAgent.id, message.entryId)
+      .then(() => new Promise((resolve) => window.setTimeout(resolve, 180)))
+      .then(async () => {
+        await requestMessages(activeAgent.id);
+        const infos = await listAgents();
+        syncAgents(infos);
+      })
+      .catch((forkError) => setError(forkError instanceof Error ? forkError.message : String(forkError)));
+  }, [activeAgent, syncAgents]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
+
+  useEffect(() => {
+    if (conversationView !== "chat" || settingsOpen || activeAgent?.status !== "streaming") return;
+    const frame = window.requestAnimationFrame(() => {
+      const container = scrollRef.current;
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeId,
+    conversationView,
+    settingsOpen,
+    activeAgent?.status,
+    activeAgent?.messages.length,
+    activeAgent?.streamingThinking,
+    activeAgent?.activeToolCalls.size,
+    streamingText,
+  ]);
+
+  useEffect(() => {
+    setSelectedTrajectoryEntry(null);
+  }, [activeId]);
+
+  useEffect(() => {
+    if (conversationView !== "trajectory" || !activeId) return;
+    void requestExecutionTraces(activeId).catch((traceError) => {
+      setError(traceError instanceof Error ? traceError.message : String(traceError));
+    });
+  }, [conversationView, activeId, activeAgent?.status]);
+
+  const selectTrajectoryEntry = useCallback((entry: SelectedTrajectoryEntry) => {
+    setSelectedTrajectoryEntry(entry);
+    setTrajectoryDetailView("execution");
+    if (activeId) {
+      void requestExecutionTraces(activeId).catch((traceError) => {
+        setError(traceError instanceof Error ? traceError.message : String(traceError));
+      });
+    }
+  }, [activeId]);
 
   useEffect(() => {
     if (!fileMention) {
@@ -1091,6 +1295,7 @@ export function AppShell() {
           contextUsage: null,
           lastTurnUsage: null,
           sessionUsage: null,
+          executionTraces: [],
           autoCompactionEnabled: true,
           liveUsage: null,
           outputSinceLastUserInput: 0,
@@ -1351,9 +1556,47 @@ export function AppShell() {
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className="studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex w-[288px] shrink-0 flex-col"
+          className={`studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
         >
-          {settingsOpen ? (
+          {sidebarCollapsed ? (
+            <nav className="sidebar-collapsed-nav" aria-label="折叠侧边栏">
+              <button
+                type="button"
+                className="sidebar-collapsed-logo"
+                onClick={() => setSidebarCollapsed(false)}
+                aria-label="展开侧边栏"
+                title="展开侧边栏"
+              >
+                <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
+                <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
+              </button>
+              {settingsOpen ? (
+                <>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-settings-button-active" aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="sidebar-collapsed-action"
+                    onClick={() => {
+                      setPendingProjectCwd(null);
+                      setActiveAgent(null);
+                      setSettingsOpen(false);
+                      setConversationView("chat");
+                    }}
+                    aria-label="新会话"
+                    title="新会话"
+                  >
+                    <Plus size={20} />
+                  </button>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => setSettingsOpen(true)} aria-label="设置" title="设置"><Settings size={19} /></button>
+                </>
+              )}
+            </nav>
+          ) : settingsOpen ? (
             <div className="settings-sidebar-content">
               <header className="settings-sidebar-header">
                 <button
@@ -1365,6 +1608,15 @@ export function AppShell() {
                   <span>返回</span>
                 </button>
                 <h1>设置</h1>
+                <button
+                  type="button"
+                  className="sidebar-collapse-button"
+                  onClick={() => setSidebarCollapsed(true)}
+                  aria-label="收起侧边栏"
+                  title="收起侧边栏"
+                >
+                  <PanelLeftClose size={18} />
+                </button>
               </header>
               <nav className="settings-sidebar-nav" aria-label="设置分类">
                 <button type="button" className="settings-category-button settings-category-button-active">
@@ -1377,9 +1629,20 @@ export function AppShell() {
             <>
               <header className="sidebar-header">
                 <div className="sidebar-brand">
-                  <span className="sidebar-brand-mark"><Sparkles size={18} /></span>
+                  <span className="sidebar-brand-mark">
+                    <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
+                  </span>
                   <span>Nova</span>
                   <span className="sidebar-brand-badge">STUDIO</span>
+                  <button
+                    type="button"
+                    className="sidebar-collapse-button"
+                    onClick={() => setSidebarCollapsed(true)}
+                    aria-label="收起侧边栏"
+                    title="收起侧边栏"
+                  >
+                    <PanelLeftClose size={18} />
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -1602,17 +1865,31 @@ export function AppShell() {
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
-              <div className="trajectory-view">
-                {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
-                  <div className="trajectory-empty">当前会话还没有轨迹数据</div>
-                ) : (
-                  <div className="trajectory-list">
+              <div className={`trajectory-view ${selectedTrajectoryEntry ? "trajectory-view-inspecting" : ""}`}>
+                <div className="trajectory-main">
+                  {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
+                    <div className="trajectory-empty">当前会话还没有轨迹数据</div>
+                  ) : (
+                    <div className="trajectory-list">
                     {trajectoryRequests.map((request, requestIndex) => (
                       <section key={request.id} className="trajectory-request">
                         <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>
                         <div className="trajectory-request-events">
                           {request.messages.map((message) => (
-                            <div key={message.id} className={`trajectory-row trajectory-row-${message.role}`}>
+                            <div
+                              key={message.id}
+                              className={`trajectory-row trajectory-row-${message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              aria-pressed={selectedTrajectoryEntry?.id === message.id}
+                              onClick={() => selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">
                                 {message.role === "user" ? "USER" : message.role === "assistant" ? "ASSISTANT" : message.role === "thinking" ? "THINK" : "TOOL"}
@@ -1631,14 +1908,37 @@ export function AppShell() {
                             </div>
                           ))}
                           {requestIndex === trajectoryRequests.length - 1 && activeAgent.streamingThinking && (
-                            <div className="trajectory-row trajectory-row-thinking trajectory-row-live">
+                            <div
+                              className={`trajectory-row trajectory-row-thinking trajectory-row-live ${selectedTrajectoryEntry?.id === "live-thinking" ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => selectTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectTrajectoryEntry({ id: "live-thinking", label: "THINK", data: { type: "streaming_thinking", content: activeAgent.streamingThinking } });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">THINK</span>
                               <div className="trajectory-content">{activeAgent.streamingThinking}</div>
                             </div>
                           )}
                           {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => (
-                            <div key={tool.id} className="trajectory-row trajectory-row-tool trajectory-row-live">
+                            <div
+                              key={tool.id}
+                              className={`trajectory-row trajectory-row-tool trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">TOOL</span>
                               <div className="trajectory-content trajectory-tool-line">
@@ -1649,7 +1949,18 @@ export function AppShell() {
                             </div>
                           ))}
                           {requestIndex === trajectoryRequests.length - 1 && streamingText && (
-                            <div className="trajectory-row trajectory-row-assistant trajectory-row-live">
+                            <div
+                              className={`trajectory-row trajectory-row-assistant trajectory-row-live ${selectedTrajectoryEntry?.id === "live-assistant" ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => selectTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectTrajectoryEntry({ id: "live-assistant", label: "ASSISTANT", data: { type: "streaming_assistant", content: streamingText } });
+                                }
+                              }}
+                            >
                               <span className="trajectory-node" />
                               <span className="trajectory-role">ASSISTANT</span>
                               <div className="trajectory-content">{streamingText}</div>
@@ -1658,8 +1969,39 @@ export function AppShell() {
                         </div>
                       </section>
                     ))}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
+                <aside
+                  className={`trajectory-detail-panel ${selectedTrajectoryEntry ? "trajectory-detail-panel-open" : ""}`}
+                  aria-hidden={!selectedTrajectoryEntry}
+                >
+                    <header className="trajectory-detail-header">
+                      <div>
+                        <span className="trajectory-detail-kicker">SESSION JSON</span>
+                        <strong>{selectedTrajectoryEntry?.label ?? "DETAIL"}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="trajectory-detail-close"
+                        onClick={() => setSelectedTrajectoryEntry(null)}
+                        aria-label="关闭轨迹详情"
+                      >
+                        <X size={15} />
+                      </button>
+                    </header>
+                    <div className="trajectory-detail-tabs" role="tablist" aria-label="轨迹详情显示方式">
+                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "execution"} className={trajectoryDetailView === "execution" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("execution")}>执行信息</button>
+                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整 JSON</button>
+                    </div>
+                    {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
+                      <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                    ) : (
+                      <pre className="trajectory-detail-json">
+                        {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}
+                      </pre>
+                    )}
+                  </aside>
               </div>
             ) : !hasMessages ? (
               /* Empty state — tagline */
@@ -1764,7 +2106,7 @@ export function AppShell() {
                     Loading conversation…
                   </div>
                 )}
-                {activeAgent?.messages.map((msg) => (
+                {activeAgent && chatMessages.map((msg) => (
                   <div
                     key={msg.id}
                     id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
@@ -1774,22 +2116,20 @@ export function AppShell() {
                       message={msg}
                       userLabel={conversationUserLabel}
                       avatarId={activeAgent.avatarId}
+                      showActions={actionableAssistantMessageIds.has(msg.id)}
+                      onFeedback={handleMessageFeedback}
+                      onFork={handleForkMessage}
+                      fileChanges={turnFileChangesByAssistantId.get(msg.id)}
                     />
                   </div>
                 ))}
 
                 {/* Active tool calls */}
-                {activeAgent &&
-                  Array.from(activeAgent.activeToolCalls.values()).map((tc) => (
-                    <div key={tc.id} className="msg-row msg-row-tool">
-                      <ToolCallCard
-                        name={tc.name}
-                        status={tc.status}
-                        args={tc.args}
-                        result={tc.result}
-                      />
-                    </div>
-                  ))}
+                {activeAgent && activeAgent.activeToolCalls.size > 0 && (
+                  <div className="msg-row msg-row-tool">
+                    <ToolCallList tools={Array.from(activeAgent.activeToolCalls.values())} />
+                  </div>
+                )}
 
                 {activeAgent?.streamingThinking && (
                   <div className="msg-row msg-row-special">
@@ -1845,6 +2185,7 @@ export function AppShell() {
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
+              {activeAgent && <SessionStats agent={activeAgent} />}
               {/* Input card */}
               <div
                 ref={inputCardRef}
@@ -2182,8 +2523,6 @@ export function AppShell() {
                       position: "relative",
                     }}
                   >
-                    {/* Session usage + context (merged TUI-footer style) */}
-                    {activeAgent && <SessionStats agent={activeAgent} />}
                     {/* Model selector - show on homepage (no active agent) or when models are loaded */}
                     {(availableModels.length > 0 || !activeId) && (
                       <div style={{ position: "relative" }}>
@@ -2242,7 +2581,7 @@ export function AppShell() {
                               overflowY: "auto",
                               padding: 4,
                               borderRadius: 12,
-                              background: "rgba(20, 22, 34, 0.6)",
+                              background: "rgba(20, 22, 34, 0.84)",
                               border: "1px solid rgba(255, 255, 255, 0.12)",
                               boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
                               backdropFilter: "blur(24px) saturate(150%)",

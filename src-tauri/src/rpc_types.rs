@@ -45,10 +45,26 @@ pub enum RpcCommand {
     GetMessages { id: Option<String> },
     #[serde(rename = "get_session_stats")]
     GetSessionStats { id: Option<String> },
+    #[serde(rename = "get_execution_traces")]
+    GetExecutionTraces { id: Option<String> },
     #[serde(rename = "get_available_models")]
     GetAvailableModels { id: Option<String> },
     #[serde(rename = "new_session")]
     NewSession { id: Option<String> },
+    #[serde(rename = "fork")]
+    Fork {
+        id: Option<String>,
+        #[serde(rename = "entryId")]
+        entry_id: String,
+        position: String,
+    },
+    #[serde(rename = "set_feedback")]
+    SetFeedback {
+        id: Option<String>,
+        #[serde(rename = "entryId")]
+        entry_id: String,
+        rating: Option<String>,
+    },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel { id: Option<String>, level: String },
     #[serde(rename = "compact")]

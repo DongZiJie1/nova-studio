@@ -240,6 +240,26 @@ pub async fn new_session(
 }
 
 #[tauri::command]
+pub async fn request_messages(state: State<'_, AgentManagerState>, agent_id: String) -> Result<(), String> {
+    state.0.request_messages(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn fork_session(state: State<'_, AgentManagerState>, agent_id: String, entry_id: String) -> Result<(), String> {
+    state.0.fork_session(&agent_id, entry_id).await
+}
+
+#[tauri::command]
+pub async fn set_message_feedback(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    entry_id: String,
+    rating: Option<String>,
+) -> Result<(), String> {
+    state.0.set_feedback(&agent_id, entry_id, rating).await
+}
+
+#[tauri::command]
 pub async fn compact_session(
     state: State<'_, AgentManagerState>,
     agent_id: String,
@@ -285,6 +305,14 @@ pub async fn request_session_stats(
     agent_id: String,
 ) -> Result<(), String> {
     state.0.request_session_stats(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn request_execution_traces(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    state.0.request_execution_traces(&agent_id).await
 }
 
 #[tauri::command]

@@ -1,10 +1,48 @@
-import { memo } from "react";
-import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File } from "lucide-react";
-import type { ChatMessage as ChatMessageData } from "../../stores/agent-store";
+import { memo, useState } from "react";
+import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork } from "lucide-react";
+import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
 import { ThinkingCard } from "./ThinkingCard";
 import { ToolCallCard } from "./ToolCallCard";
+
+export interface TurnFileChange {
+  path: string;
+  kind: "edit" | "write";
+  additions: number;
+  deletions: number;
+  patch?: string;
+}
+
+function FileChangesCard({ changes }: { changes: TurnFileChange[] }) {
+  const [open, setOpen] = useState(false);
+  const additions = changes.reduce((total, change) => total + change.additions, 0);
+  const deletions = changes.reduce((total, change) => total + change.deletions, 0);
+  const patches = changes.filter((change) => change.patch);
+  const visibleChanges = changes.length > 4 ? changes.slice(0, 3) : changes;
+  const hiddenChanges = changes.length > 4 ? changes.slice(3) : [];
+  return (
+    <div className={`turn-file-change ${open ? "turn-file-change-open" : ""}`}>
+      <div className="turn-file-change-summary">
+        <span className="turn-file-change-icon"><FileCode size={18} /></span>
+        <span className="turn-file-change-copy"><strong>{changes.length === 1 ? "已编辑 1 个文件" : `已编辑 ${changes.length} 个文件`}</strong><span className="turn-file-change-stats"><b>+{additions}</b><i>-{deletions}</i></span></span>
+        {patches.length > 0 && <button type="button" className="turn-file-change-review" onClick={() => setOpen((value) => !value)}>{open ? "收起" : "审核"}<ChevronRight size={14} /></button>}
+      </div>
+      <div className="turn-file-change-list">
+        {visibleChanges.map((change) => <div className="turn-file-change-row" key={change.path}><span title={change.path}>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></div>)}
+        {hiddenChanges.length > 0 && (
+          <div className="turn-file-change-overflow" tabIndex={0}>
+            <span>…</span><span>还有 {hiddenChanges.length} 个文件</span>
+            <div className="turn-file-change-tooltip" role="tooltip">
+              {hiddenChanges.map((change) => <div key={change.path}><span>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></div>)}
+            </div>
+          </div>
+        )}
+      </div>
+      {open && patches.length > 0 && <div className="turn-file-change-patches">{patches.map((change) => <section key={change.path}><strong>{change.path}</strong><pre>{change.patch}</pre></section>)}</div>}
+    </div>
+  );
+}
 
 function getAttIcon(name: string, mimeType: string): { icon: typeof FileText; color: string } {
   const lower = name.toLowerCase();
@@ -26,24 +64,64 @@ function formatTime(ts: number): string {
   });
 }
 
+export function ToolCallList({ tools }: { tools: ToolCall[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (tools.length <= 1) {
+    return tools.map((tool) => (
+      <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
+    ));
+  }
+
+  const runningCount = tools.filter((tool) => tool.status === "running" || tool.status === "pending").length;
+  const errorCount = tools.filter((tool) => tool.status === "error").length;
+  const names = [...new Set(tools.map((tool) => tool.name))];
+  return (
+    <div className={`tool-call-group ${expanded ? "tool-call-group-expanded" : ""}`}>
+      <button type="button" className="tool-call-group-summary" onClick={() => setExpanded((value) => !value)}>
+        <ChevronRight size={15} className="tool-call-group-chevron" />
+        <Wrench size={14} />
+        <strong>{tools.length} 个工具调用</strong>
+        <span className="tool-call-group-names">{names.slice(0, 3).join("、")}{names.length > 3 ? ` 等 ${names.length} 种工具` : ""}</span>
+        <span className={`tool-call-group-status ${errorCount ? "tool-call-group-status-error" : runningCount ? "tool-call-group-status-running" : ""}`}>
+          {errorCount ? `${errorCount} 个失败` : runningCount ? `${runningCount} 个执行中` : "已完成"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="tool-call-group-items">
+          {tools.map((tool) => (
+            <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const ChatMessage = memo(function ChatMessage({
   message,
   userLabel = "You",
   avatarId,
+  showActions = false,
+  onFeedback,
+  onFork,
+  fileChanges = [],
 }: {
   message: ChatMessageData;
   userLabel?: string;
   avatarId: AgentAvatarId;
+  showActions?: boolean;
+  onFeedback?: (message: ChatMessageData, rating: "up" | "down" | null) => void;
+  onFork?: (message: ChatMessageData) => void;
+  fileChanges?: TurnFileChange[];
 }) {
+  const [copied, setCopied] = useState(false);
   if (message.role === "thinking") {
     return <div className="msg-row msg-row-special"><ThinkingCard content={message.content} /></div>;
   }
   if (message.role === "tool") {
     return (
       <div className="msg-row msg-row-special">
-        {message.toolCalls?.map((tool) => (
-          <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
-        ))}
+        <ToolCallList tools={message.toolCalls ?? []} />
       </div>
     );
   }
@@ -119,6 +197,24 @@ export const ChatMessage = memo(function ChatMessage({
         >
           {isUser ? message.content : <Markdown content={message.content} />}
         </div>
+        {!isUser && showActions && fileChanges.length > 0 && (
+          <div className="turn-file-changes" aria-label="本轮文件改动">
+            <FileChangesCard changes={fileChanges} />
+          </div>
+        )}
+        {!isUser && showActions && (
+          <div className={`message-response-actions ${message.feedback ? "message-response-actions-selected" : ""}`} aria-label="回复操作">
+            <button type="button" title="复制回复" aria-label="复制回复" onClick={() => {
+              void navigator.clipboard.writeText(message.content).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1400);
+              });
+            }}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            <button type="button" className={message.feedback === "up" ? "message-response-action-active message-response-action-up" : ""} title="有帮助" aria-label="有帮助" aria-pressed={message.feedback === "up"} onClick={() => onFeedback?.(message, message.feedback === "up" ? null : "up")}><ThumbsUp size={14} />{message.feedback === "up" && <span>已赞</span>}</button>
+            <button type="button" className={message.feedback === "down" ? "message-response-action-active message-response-action-down" : ""} title="没有帮助" aria-label="没有帮助" aria-pressed={message.feedback === "down"} onClick={() => onFeedback?.(message, message.feedback === "down" ? null : "down")}><ThumbsDown size={14} />{message.feedback === "down" && <span>已踩</span>}</button>
+            <button type="button" title="从此回复分叉会话" aria-label="从此回复分叉会话" disabled={!message.entryId} onClick={() => onFork?.(message)}><GitFork size={14} /></button>
+          </div>
+        )}
       </div>
       {isUser && (
         <div className="msg-avatar msg-avatar-user">

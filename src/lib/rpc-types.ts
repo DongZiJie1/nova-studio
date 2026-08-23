@@ -30,6 +30,7 @@ export type RpcCommand =
   | { type: "get_state"; id?: string }
   | { type: "get_messages"; id?: string }
   | { type: "get_session_stats"; id?: string }
+  | { type: "get_execution_traces"; id?: string }
   | { type: "new_session"; id?: string }
   | { type: "set_thinking_level"; id?: string; level: string }
   | { type: "compact"; id?: string; customInstructions?: string };
@@ -201,6 +202,33 @@ export interface SessionUsage {
   cost: number;
 }
 
+export interface ExecutionTraceUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+export interface ExecutionTrace {
+  traceId: string;
+  category: "turn" | "model" | "thinking" | "tool";
+  turnId?: string;
+  parentTraceId?: string;
+  messageEntryId?: string;
+  toolCallId?: string;
+  provider?: string;
+  model?: string;
+  toolName?: string;
+  status: "running" | "success" | "error" | "cancelled" | "interrupted";
+  startedAt?: number;
+  endedAt?: number;
+  durationMs?: number;
+  stopReason?: string;
+  errorMessage?: string;
+  usage?: ExecutionTraceUsage;
+}
+
 // ─── Agent status ───
 
 export type AgentStatus = "starting" | "idle" | "streaming" | "error" | "stopped";
@@ -220,9 +248,23 @@ export interface AgentInfo {
   last_error: string | null;
 }
 
+export interface PersistedRpcContentBlock {
+  type?: string;
+  text?: string;
+  thinking?: string;
+  id?: string;
+  name?: string;
+  arguments?: unknown;
+}
+
 export interface PersistedRpcMessage {
+  entryId?: string;
   role?: string;
-  content?: string | Array<{ type?: string; text?: string }>;
+  content?: string | PersistedRpcContentBlock[];
+  toolCallId?: string;
+  toolName?: string;
+  details?: unknown;
+  isError?: boolean;
   timestamp?: number | string;
 }
 

@@ -4,6 +4,7 @@ import type {
   AgentEventPayload,
   AgentInfo,
   ContextUsage,
+  ExecutionTrace,
   ModelMeta,
   PersistedRpcMessage,
   SessionUsage,
@@ -38,6 +39,8 @@ export interface MessageAttachment {
 
 export interface ChatMessage {
   id: string;
+  entryId?: string;
+  feedback?: "up" | "down";
   role: "user" | "assistant" | "thinking" | "tool";
   content: string;
   timestamp: number;
@@ -70,6 +73,8 @@ export interface AgentState {
   lastTurnUsage: TurnUsage | null;
   /** Cumulative token/cost totals across the session (from get_session_stats) */
   sessionUsage: SessionUsage | null;
+  /** Persisted execution timing for turns, model calls, and tool calls. */
+  executionTraces: ExecutionTrace[];
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
   /** Live usage of the in-flight turn, streamed from message_update events */
@@ -139,6 +144,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     contextUsage: null,
     lastTurnUsage: null,
     sessionUsage: null,
+    executionTraces: [],
     autoCompactionEnabled: true,
     liveUsage: null,
     outputSinceLastUserInput: 0,
@@ -208,31 +214,99 @@ function parseAttachmentsFromContent(content: string): { attachments: MessageAtt
   return { attachments: attachments.length > 0 ? attachments : undefined, cleanContent };
 }
 
-function hydrateMessages(messages: PersistedRpcMessage[]): ChatMessage[] {
-  return messages.flatMap((message) => {
-    if (message.role !== "user" && message.role !== "assistant") return [];
-    const rawContent = messageText(message);
-    if (!rawContent) return [];
+function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<string, "up" | "down"> = {}): ChatMessage[] {
+  const hydrated: ChatMessage[] = [];
+  const pendingToolCalls = new Map<string, ToolCall>();
+
+  for (const message of messages) {
     const parsedTimestamp =
       typeof message.timestamp === "number"
         ? message.timestamp
         : Date.parse(message.timestamp ?? "");
-    // For user messages, try to parse attached files from content
-    let content = rawContent;
-    let attachments: MessageAttachment[] | undefined;
+    const timestamp = Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now();
+
     if (message.role === "user") {
-      const result = parseAttachmentsFromContent(rawContent);
-      content = result.cleanContent;
-      attachments = result.attachments;
+      const rawContent = messageText(message);
+      if (!rawContent) continue;
+      const { cleanContent, attachments } = parseAttachmentsFromContent(rawContent);
+      hydrated.push({
+        id: nextId(),
+        entryId: message.entryId,
+        role: "user",
+        content: cleanContent,
+        timestamp,
+        attachments,
+      });
+      continue;
     }
-    return [{
+
+    if (message.role === "assistant") {
+      if (!Array.isArray(message.content)) {
+        const content = messageText(message);
+        if (content) hydrated.push({ id: nextId(), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content, timestamp });
+        continue;
+      }
+
+      let text = "";
+      const flushText = () => {
+        if (!text) return;
+        hydrated.push({ id: nextId(), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content: text, timestamp });
+        text = "";
+      };
+      for (const block of message.content) {
+        if (block.type === "text" && typeof block.text === "string") {
+          text += block.text;
+        } else if (block.type === "thinking" && typeof block.thinking === "string") {
+          flushText();
+          hydrated.push({ id: nextId(), entryId: message.entryId, role: "thinking", content: block.thinking, timestamp });
+        } else if (
+          block.type === "toolCall" &&
+          typeof block.id === "string" &&
+          typeof block.name === "string"
+        ) {
+          flushText();
+          pendingToolCalls.set(block.id, {
+            id: block.id,
+            name: block.name,
+            args: block.arguments,
+            status: "pending",
+          });
+        }
+      }
+      flushText();
+      continue;
+    }
+
+    if (message.role === "toolResult" && message.toolCallId) {
+      const pending = pendingToolCalls.get(message.toolCallId);
+      const completed: ToolCall = {
+        id: message.toolCallId,
+        name: message.toolName ?? pending?.name ?? "tool",
+        args: pending?.args,
+        status: message.isError ? "error" : "done",
+        result: { content: message.content, details: message.details },
+      };
+      pendingToolCalls.delete(message.toolCallId);
+      hydrated.push({
+        id: nextId(),
+        role: "tool",
+        content: "",
+        timestamp,
+        toolCalls: [completed],
+      });
+    }
+  }
+
+  for (const pending of pendingToolCalls.values()) {
+    hydrated.push({
       id: nextId(),
-      role: message.role,
-      content,
-      timestamp: Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now(),
-      attachments,
-    }];
-  });
+      role: "tool",
+      content: "",
+      timestamp: Date.now(),
+      toolCalls: [{ ...pending, status: "error" }],
+    });
+  }
+  return hydrated;
 }
 
 export const useAgentStore = create<AgentStoreState>()((set, get) => ({
@@ -387,20 +461,36 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
 
     if (
       event.type === "response" &&
+      event.command === "get_execution_traces" &&
+      event.success &&
+      Array.isArray(event.data?.traces)
+    ) {
+      const executionTraces = event.data.traces as ExecutionTrace[];
+      set((s) => ({
+        agents: s.agents.map((agent) => agent.id === agentId ? { ...agent, executionTraces } : agent),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
       event.command === "get_messages" &&
       event.success
     ) {
       const messages = Array.isArray(event.data?.messages)
         ? (event.data.messages as PersistedRpcMessage[])
         : [];
+      const feedback = event.data?.feedback && typeof event.data.feedback === "object"
+        ? event.data.feedback as Record<string, "up" | "down">
+        : {};
       set((s) => ({
         agents: s.agents.map((agent) => {
           if (agent.id !== agentId) return agent;
           // A newly spawned agent asks for history before its first prompt.
           // That empty response can arrive after the optimistic user message,
           // so never replace messages already rendered.
-          if (agent.messages.length > 0) return agent;
-          const hydrated = hydrateMessages(messages);
+          if (messages.length === 0 && agent.messages.length > 0) return agent;
+          const hydrated = hydrateMessages(messages, feedback);
           return {
             ...agent,
             messages: hydrated,

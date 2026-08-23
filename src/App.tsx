@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
 import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
-import { listAgents, onAgentEvent } from "./lib/tauri-bridge";
+import { listAgents, onAgentEvent, requestMessages } from "./lib/tauri-bridge";
 import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
 import { useUiStore } from "./stores/ui-store";
@@ -12,6 +12,22 @@ const STREAM_FLUSH_INTERVAL_MS = 50;
 interface PendingTextDelta {
   payload: AgentEventPayload;
   delta: string;
+}
+
+function isSuccessfulNovaSessionDeletion(payload: AgentEventPayload): boolean {
+  if (
+    payload.event.type !== "tool_execution_end" ||
+    payload.event.toolName !== "nova_data" ||
+    payload.event.isError
+  ) {
+    return false;
+  }
+  const result = payload.event.result;
+  if (!result || typeof result !== "object") return false;
+  const details = (result as Record<string, unknown>).details;
+  if (!details || typeof details !== "object") return false;
+  const mutation = details as Record<string, unknown>;
+  return mutation.action === "delete_session" && mutation.status === "ok";
 }
 
 function App() {
@@ -69,6 +85,14 @@ function App() {
       // Preserve event order: a message_end must never overtake buffered text.
       flushTextDelta(payload.agentId);
       handleAgentEvent(payload);
+      if (payload.event.type === "agent_settled") {
+        void requestMessages(payload.agentId).catch((error) => console.error("Failed to refresh message entries:", error));
+      }
+      if (isSuccessfulNovaSessionDeletion(payload)) {
+        void listAgents()
+          .then(syncAgents)
+          .catch((error) => console.error("Failed to refresh sessions after deletion:", error));
+      }
     });
 
     // Reconcile with the backend after registering the event listener. This

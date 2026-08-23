@@ -4,6 +4,7 @@ import type {
   AgentEventPayload,
   ExtensionUIRequest,
 } from "../lib/rpc-types";
+import { ArrowRight, Check, MessageCircleQuestion, PenLine, X } from "lucide-react";
 
 interface PendingDialog {
   agentId: string;
@@ -16,99 +17,11 @@ const DIALOG_METHODS = new Set(["select", "confirm", "input"]);
  * means "let the user type a custom answer" (ask-user-question.ts). */
 const TYPE_SOMETHING = "Type something";
 
-const overlayStyle: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 100,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  background: "rgba(0, 0, 0, 0.5)",
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
-};
-
-const cardStyle: React.CSSProperties = {
-  width: 420,
-  maxWidth: "90vw",
-  background: "rgba(12, 14, 28, 0.92)",
-  backdropFilter: "blur(20px) saturate(180%)",
-  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
-  borderRadius: 16,
-  padding: 24,
-  color: "#e8eaed",
-  boxShadow: "0 20px 60px rgba(0, 0, 0, 0.4)",
-};
-
-const titleStyle: React.CSSProperties = {
-  fontSize: 15,
-  fontWeight: 600,
-  marginBottom: 8,
-  color: "#e8eaed",
-};
-
-const messageStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "#9ca3af",
-  marginBottom: 16,
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-};
-
-const optionStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  textAlign: "left",
-  padding: "10px 12px",
-  marginBottom: 8,
-  borderRadius: 10,
-  background: "rgba(255, 255, 255, 0.04)",
-  color: "#e8eaed",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
-  cursor: "pointer",
-  fontSize: 13,
-  boxSizing: "border-box",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  marginBottom: 16,
-  borderRadius: 10,
-  background: "rgba(255, 255, 255, 0.04)",
-  color: "#e8eaed",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
-  fontSize: 13,
-  boxSizing: "border-box",
-};
-
-/** An input that fills a select option slot — same sizing as optionStyle */
-const optionInputStyle: React.CSSProperties = {
-  ...inputStyle,
-  marginBottom: 8,
-};
-
-const actionRowStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "flex-end",
-  gap: 8,
-  marginTop: 4,
-};
-
-const buttonBase: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 10,
-  fontSize: 13,
-  border: "none",
-  cursor: "pointer",
-};
-
 export function ExtensionUIPrompt() {
   const [queue, setQueue] = useState<PendingDialog[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [customValue, setCustomValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const unlisten = onAgentEvent((payload: AgentEventPayload) => {
@@ -149,123 +62,44 @@ export function ExtensionUIPrompt() {
     setInputValue("");
   };
 
-  const confirmButton: React.CSSProperties = {
-    ...buttonBase,
-    background: "#818cf8",
-    color: "#fff",
-  };
-  const cancelButton: React.CSSProperties = {
-    ...buttonBase,
-    background: "rgba(255, 255, 255, 0.06)",
-    color: "#9ca3af",
-    border: "1px solid rgba(255, 255, 255, 0.08)",
-  };
-
   return (
-    <div style={overlayStyle} onClick={() => respond({ cancelled: true })}>
-      <style>{`
-        .nova-ui-option {
-          transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
-        }
-        .nova-ui-option:hover {
-          background: rgba(129, 140, 248, 0.12);
-          border-color: #818cf8;
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(129, 140, 248, 0.2);
-        }
-        .nova-ui-option:active {
-          background: rgba(129, 140, 248, 0.18);
-          transform: translateY(0);
-          box-shadow: none;
-        }
-      `}</style>
-      <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
-        <div style={titleStyle}>{title}</div>
-        {message ? <div style={messageStyle}>{message}</div> : null}
+    <div className="nova-question-overlay" onClick={() => respond({ cancelled: true })}>
+      <div className="nova-question-card" role="dialog" aria-modal="true" aria-labelledby="nova-question-title" onClick={(e) => e.stopPropagation()}>
+        <header className="nova-question-header">
+          <span className="nova-question-icon"><MessageCircleQuestion size={20} /></span>
+          <div><span>需要你的选择</span><h2 id="nova-question-title">{title}</h2></div>
+          {queue.length > 1 && <span className="nova-question-queue">{queue.length} 个问题</span>}
+          <button type="button" className="nova-question-close" onClick={() => respond({ cancelled: true })} aria-label="取消"><X size={17} /></button>
+        </header>
+        {message ? <div className="nova-question-message">{message}</div> : null}
 
         {request.method === "select" && (
-          <>
+          <div className="nova-question-options">
             {(request.options ?? []).map((opt, i) =>
               opt === TYPE_SOMETHING ? (
-                <input
-                  key={i}
-                  style={optionInputStyle}
-                  placeholder={TYPE_SOMETHING}
-                  value={customValue}
-                  onChange={(e) => setCustomValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && customValue.trim()) {
-                      respond({ value: customValue.trim() });
-                    }
-                  }}
-                />
+                <label className="nova-question-custom" key={i}><PenLine size={15} /><input placeholder="输入其他答案…" value={customValue} onChange={(e) => setCustomValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customValue.trim()) respond({ value: customValue.trim() }); }} /><button type="button" disabled={!customValue.trim()} onClick={() => customValue.trim() && respond({ value: customValue.trim() })} aria-label="提交自定义答案"><ArrowRight size={15} /></button></label>
               ) : (
-                <button
-                  key={i}
-                  style={optionStyle}
-                  className="nova-ui-option"
-                  onClick={() => respond({ value: opt })}
-                >
-                  {opt}
-                </button>
+                <button key={i} type="button" className="nova-question-option" onClick={() => respond({ value: opt })}><span className="nova-question-option-index">{i + 1}</span><span>{opt}</span><ArrowRight size={15} /></button>
               ),
             )}
-            <div style={actionRowStyle}>
-              <button
-                style={cancelButton}
-                onClick={() => respond({ cancelled: true })}
-              >
-                Cancel
-              </button>
-            </div>
-          </>
+          </div>
         )}
 
         {request.method === "confirm" && (
-          <div style={actionRowStyle}>
-            <button
-              style={cancelButton}
-              onClick={() => respond({ cancelled: true })}
-            >
-              Cancel
-            </button>
-            <button
-              style={confirmButton}
-              onClick={() => respond({ confirmed: true })}
-            >
-              Confirm
-            </button>
+          <div className="nova-question-actions">
+            <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>取消</button>
+            <button type="button" className="nova-question-button-primary" onClick={() => respond({ confirmed: true })}><Check size={15} />确认</button>
           </div>
         )}
 
         {request.method === "input" && (
-          <>
-            <input
-              ref={inputRef}
-              style={inputStyle}
-              placeholder={request.placeholder}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") respond({ value: inputValue });
-                if (e.key === "Escape") respond({ cancelled: true });
-              }}
-            />
-            <div style={actionRowStyle}>
-              <button
-                style={cancelButton}
-                onClick={() => respond({ cancelled: true })}
-              >
-                Cancel
-              </button>
-              <button
-                style={confirmButton}
-                onClick={() => respond({ value: inputValue })}
-              >
-                Submit
-              </button>
+          <div className="nova-question-input-section">
+            <textarea ref={inputRef} placeholder={request.placeholder || "输入你的回答…"} value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); respond({ value: inputValue }); } if (e.key === "Escape") respond({ cancelled: true }); }} />
+            <div className="nova-question-actions">
+              <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>取消</button>
+              <button type="button" className="nova-question-button-primary" onClick={() => respond({ value: inputValue })}><ArrowRight size={15} />提交</button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
