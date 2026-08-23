@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import type { CSSProperties } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -100,6 +101,79 @@ interface SelectedTrajectoryEntry {
   data: unknown;
 }
 
+type TrajectoryDetailView = "execution" | "json";
+
+function formatTrajectoryTime(value: unknown): string {
+  if (typeof value !== "number" && typeof value !== "string") return "暂无时间数据";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "暂无时间数据";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function TrajectoryExecutionDetails({ entry, modelName }: { entry: SelectedTrajectoryEntry; modelName: string }) {
+  const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
+  const role = typeof data.role === "string" ? data.role : typeof data.type === "string" ? data.type : entry.label.toLowerCase();
+  const timestamp = data.timestamp;
+  const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls as Array<Record<string, unknown>> : [];
+  const typeLabel = role === "tool" || role === "active_tool_call"
+    ? "工具调用"
+    : role === "assistant" || role === "streaming_assistant"
+      ? "模型调用"
+      : role === "thinking" || role === "streaming_thinking"
+        ? "模型思考"
+        : role === "user"
+          ? "用户输入"
+          : role;
+
+  return (
+    <div className="trajectory-execution-details">
+      <dl className="trajectory-execution-summary">
+        <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
+        <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
+        {(role === "assistant" || role === "streaming_assistant" || role === "thinking" || role === "streaming_thinking") && (
+          <div><dt>调用模型</dt><dd>{modelName}</dd></div>
+        )}
+        <div><dt>事件状态</dt><dd>{role.startsWith("streaming_") ? "执行中" : "已记录"}</dd></div>
+      </dl>
+      {toolCalls.length > 0 && (
+        <section className="trajectory-execution-calls">
+          <h4>工具调用</h4>
+          {toolCalls.map((tool, index) => (
+            <div className="trajectory-execution-call" key={typeof tool.id === "string" ? tool.id : index}>
+              <div><strong>{typeof tool.name === "string" ? tool.name : "tool"}</strong><span>{tool.status === "error" ? "失败" : tool.status === "running" || tool.status === "pending" ? "执行中" : "已完成"}</span></div>
+              <dl>
+                <div><dt>调用 ID</dt><dd>{typeof tool.id === "string" ? tool.id : "—"}</dd></div>
+                <div><dt>执行时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
+              </dl>
+            </div>
+          ))}
+        </section>
+      )}
+      {toolCalls.length === 0 && role === "active_tool_call" && (
+        <section className="trajectory-execution-calls">
+          <h4>工具调用</h4>
+          <div className="trajectory-execution-call">
+            <div><strong>{typeof data.name === "string" ? data.name : "tool"}</strong><span>执行中</span></div>
+            <dl>
+              <div><dt>调用 ID</dt><dd>{typeof data.id === "string" ? data.id : "—"}</dd></div>
+              <div><dt>执行时间</dt><dd>正在执行</dd></div>
+            </dl>
+          </div>
+        </section>
+      )}
+      <p className="trajectory-execution-note">历史轨迹目前只保存事件记录时间；精确耗时需要 Nova 同时持久化调用开始和结束时间。</p>
+    </div>
+  );
+}
+
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
 function formatTokens(count: number): string {
   if (count < 1000) return count.toString();
@@ -169,16 +243,11 @@ function useRollingNumber(target: number, duration = 400): number {
   return display;
 }
 
-/** Merged session usage + context stats chip with hover breakdown. */
+/** Session usage and context stats displayed above the composer. */
 function SessionStats({ agent }: { agent: AgentState }) {
-  const [contextHoverOpen, setContextHoverOpen] = useState(false);
   const su = agent.sessionUsage;
   const cu = agent.contextUsage;
   const live = agent.liveUsage;
-  const fmtK = (n: number) => (n >= 1000 ? (n / 1000).toFixed(0) + "k" : String(n));
-  const r = 7;
-  const circ = 2 * Math.PI * r;
-  const model = agent.modelMeta;
 
   // Completed session totals + the in-flight turn's live usage.
   // For providers that only report usage at the end of the stream, estimate the
@@ -190,136 +259,84 @@ function SessionStats({ agent }: { agent: AgentState }) {
   const totalCacheWrite = (su?.cacheWrite ?? 0) + (live?.cacheWrite ?? 0);
   // ↓ shows output since last user input, not cumulative session output
   const outputSinceLastUserInput = agent.outputSinceLastUserInput + liveOutput;
-
-  // Live context occupancy. cu.tokens already includes the last turn's output
-  // (input + output + cacheRead + cacheWrite); add the in-flight turn's new
-  // input + output so Used context grows in real time as tokens stream.
-  const baseContextTokens = cu?.tokens ?? 0;
-  const usedContextTokens = baseContextTokens + (live?.input ?? 0) + liveOutput;
+  const usedContextTokens = (cu?.tokens ?? 0) + (live?.input ?? 0) + liveOutput;
   const contextWindow = cu?.contextWindow ?? 0;
-  const pct = contextWindow > 0 ? (usedContextTokens / contextWindow) * 100 : null;
-  const color = pct == null ? "#8a90a4" : pct > 90 ? "#ef4444" : pct > 70 ? "#f59e0b" : "#818cf8";
-  const dash = pct != null ? (pct / 100) * circ : 0;
+  const contextPercent = contextWindow > 0 ? (usedContextTokens / contextWindow) * 100 : null;
 
   // Rolling token counters for ↑↓
   const rollingInput = useRollingNumber(totalInput);
   const rollingOutput = useRollingNumber(outputSinceLastUserInput);
 
-  const parts: string[] = [];
-  if (totalInput > 0) parts.push(`↑${formatTokens(Math.round(rollingInput))}`);
-  if (outputSinceLastUserInput > 0) parts.push(`↓${formatTokens(Math.round(rollingOutput))}`);
-
   // Cache hit rate (no "CH" prefix) — shown inline and in the hover breakdown
   const latestPromptTokens = totalInput + totalCacheRead + totalCacheWrite;
   const cacheHitRate = latestPromptTokens > 0 ? (totalCacheRead / latestPromptTokens) * 100 : undefined;
   const hasCache = totalCacheRead > 0 || totalCacheWrite > 0;
-  if (hasCache && cacheHitRate !== undefined) {
-    parts.push(`${cacheHitRate.toFixed(1)}%`);
-  }
 
-  const showRing = pct != null;
-  const showTokens = parts.length > 0;
-  if (!showRing && !showTokens) return null;
-  const statsText = parts.join(" ");
+  if (!cu && !hasCache && totalInput <= 0 && outputSinceLastUserInput <= 0) return null;
+
+  const itemStyle: CSSProperties = {
+    flex: "1 1 0",
+    minWidth: 0,
+    textAlign: "center",
+  };
+  const valueStyle: CSSProperties = {
+    display: "inline-block",
+    minWidth: "5.5ch",
+    marginLeft: 5,
+    textAlign: "left",
+    fontVariantNumeric: "tabular-nums",
+    fontFeatureSettings: '"tnum"',
+    color: "var(--color-text-secondary)",
+    fontWeight: 600,
+  };
 
   return (
     <div
       style={{
-        position: "relative",
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        padding: "4px 8px 4px 6px",
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.05)",
-        border: "1px solid rgba(255,255,255,0.08)",
+        justifyContent: "space-between",
+        minWidth: 0,
+        width: "100%",
+        padding: "0 12px 8px",
+        color: "var(--color-text-muted)",
+        fontSize: 11,
         cursor: "default",
         userSelect: "none",
+        whiteSpace: "nowrap",
       }}
-      onMouseEnter={() => setContextHoverOpen(true)}
-      onMouseLeave={() => setContextHoverOpen(false)}
     >
-      {showRing && (
-        <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
-          <circle cx="9" cy="9" r={r} fill="none" stroke={`${color}25`} strokeWidth="2" />
-          <circle
-            cx="9" cy="9" r={r}
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeDasharray={`${dash} ${circ - dash}`}
-            transform="rotate(-90 9 9)"
-          />
-        </svg>
+      {cu && (
+        <>
+          <span
+            className="session-stat-item"
+            tabIndex={0}
+            data-tooltip="当前发送给模型的上下文占用，包含系统提示、历史对话、工具结果和当前内容；接近上限时需要压缩上下文。"
+            style={itemStyle}
+          >上下文<span style={{ ...valueStyle, minWidth: "19ch" }}>{formatTokens(usedContextTokens)} / {formatTokens(contextWindow)}{contextPercent != null ? ` (${contextPercent.toFixed(1)}%)` : ""}</span></span>
+          <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
+        </>
       )}
-      {pct != null && (
-        <span style={{ fontSize: 11, color, fontWeight: 500, whiteSpace: "nowrap" }}>
-          {pct.toFixed(1)}%
-        </span>
-      )}
-      {showTokens && (
-        <span style={{ fontSize: 11, color: "#8a90a4", whiteSpace: "nowrap" }}>{statsText}</span>
-      )}
-      {contextHoverOpen && cu && (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            bottom: 36,
-            zIndex: 50,
-            width: 260,
-            padding: "12px 14px",
-            borderRadius: 10,
-            background: "rgba(18, 20, 31, 0.92)",
-            border: "1px solid rgba(151, 159, 204, 0.18)",
-            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
-            backdropFilter: "blur(16px)",
-            fontSize: 11.5,
-            color: "#c0c4d6",
-            lineHeight: 1.6,
-          }}
-        >
-          {model && (
-            <div style={{ color: "#e5e8ff", fontWeight: 600, marginBottom: 8, fontSize: 12 }}>
-              {model.name}
-            </div>
-          )}
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Used context</span>
-            <span style={{ color: color, fontWeight: 600 }}>
-              {fmtK(usedContextTokens)} / {fmtK(contextWindow)}
-            </span>
-          </div>
-          {hasCache && (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>Cache hit rate</span>
-                <span
-                  style={{
-                    color:
-                      cacheHitRate != null
-                        ? cacheHitRate > 90
-                          ? "#34d399"
-                          : cacheHitRate > 70
-                            ? "#f59e0b"
-                            : "#818cf8"
-                        : "#8a90a4",
-                    fontWeight: 600,
-                  }}
-                >
-                  {cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}
-                </span>
-              </div>
-            </>
-          )}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "6px 0" }} />
-          <div style={{ display: "flex", justifyContent: "space-between", color: "#8a90a4" }}>
-            <span>Available</span>
-            <span>{fmtK(Math.max(0, contextWindow - usedContextTokens))}</span>
-          </div>
-        </div>
-      )}
+      <span
+        className="session-stat-item"
+        tabIndex={0}
+        data-tooltip="Session 输入中通过模型缓存读取的比例。命中率越高，重复上下文的处理成本通常越低。"
+        style={itemStyle}
+      >缓存命中率<span style={{ ...valueStyle, color: cacheHitRate != null && cacheHitRate > 90 ? "#34d399" : cacheHitRate != null && cacheHitRate > 70 ? "#f59e0b" : "#818cf8" }}>{cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}</span></span>
+      <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
+      <span
+        className="session-stat-item"
+        tabIndex={0}
+        data-tooltip="整个 Session 内模型调用产生的累计未缓存输入，可能包含系统提示和未命中缓存的历史内容，不等于当前用户消息长度。"
+        style={itemStyle}
+      >输入 Token<span style={valueStyle}>{formatTokens(Math.round(rollingInput))}</span></span>
+      <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
+      <span
+        className="session-stat-item"
+        tabIndex={0}
+        data-tooltip="从最近一次用户发送消息开始，模型在当前轮生成的累计输出 Token。"
+        style={itemStyle}
+      >输出 Token<span style={valueStyle}>{formatTokens(Math.round(rollingOutput))}</span></span>
     </div>
   );
 }
@@ -680,6 +697,7 @@ export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
+  const [trajectoryDetailView, setTrajectoryDetailView] = useState<TrajectoryDetailView>("execution");
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
   const [projectNames, setProjectNames] = useState<Record<string, string>>(loadProjectNames);
   const [agentNames, setAgentNames] = useState<Record<string, string>>(
@@ -918,6 +936,7 @@ export function AppShell() {
 
   const selectTrajectoryEntry = useCallback((entry: SelectedTrajectoryEntry) => {
     setSelectedTrajectoryEntry(entry);
+    setTrajectoryDetailView("execution");
   }, []);
 
   useEffect(() => {
@@ -1895,9 +1914,17 @@ export function AppShell() {
                         <X size={15} />
                       </button>
                     </header>
-                    <pre className="trajectory-detail-json">
-                      {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}
-                    </pre>
+                    <div className="trajectory-detail-tabs" role="tablist" aria-label="轨迹详情显示方式">
+                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "execution"} className={trajectoryDetailView === "execution" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("execution")}>执行信息</button>
+                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整 JSON</button>
+                    </div>
+                    {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
+                      <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} />
+                    ) : (
+                      <pre className="trajectory-detail-json">
+                        {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}
+                      </pre>
+                    )}
                   </aside>
               </div>
             ) : !hasMessages ? (
@@ -2082,6 +2109,7 @@ export function AppShell() {
             }}
           >
             <div style={{ width: "100%", maxWidth: 640 }}>
+              {activeAgent && <SessionStats agent={activeAgent} />}
               {/* Input card */}
               <div
                 ref={inputCardRef}
@@ -2419,8 +2447,6 @@ export function AppShell() {
                       position: "relative",
                     }}
                   >
-                    {/* Session usage + context (merged TUI-footer style) */}
-                    {activeAgent && <SessionStats agent={activeAgent} />}
                     {/* Model selector - show on homepage (no active agent) or when models are loaded */}
                     {(availableModels.length > 0 || !activeId) && (
                       <div style={{ position: "relative" }}>
@@ -2479,7 +2505,7 @@ export function AppShell() {
                               overflowY: "auto",
                               padding: 4,
                               borderRadius: 12,
-                              background: "rgba(20, 22, 34, 0.6)",
+                              background: "rgba(20, 22, 34, 0.84)",
                               border: "1px solid rgba(255, 255, 255, 0.12)",
                               boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
                               backdropFilter: "blur(24px) saturate(150%)",

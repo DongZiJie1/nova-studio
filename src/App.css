@@ -42,6 +42,10 @@
   --input-border: rgba(255, 255, 255, 0.09);
   --sidebar-solid-bg: rgba(10, 12, 24, 0.95);
   --input-shadow: 0 18px 48px -12px rgba(86, 96, 230, 0.28), 0 4px 16px rgba(0, 0, 0, 0.45);
+  --stats-tooltip-bg: rgba(14, 17, 34, 0.88);
+  --stats-tooltip-border: rgba(129, 140, 248, 0.26);
+  --stats-tooltip-text: #e8eaff;
+  --stats-tooltip-shadow: 0 10px 30px rgba(0, 0, 0, 0.42), 0 0 20px rgba(129, 140, 248, 0.1);
 }
 
 :root[data-theme="arctic-dawn"] {
@@ -67,6 +71,10 @@
   --color-success: #14825f;
   --color-warning: #9a6700;
   --color-error: #c2414b;
+  --stats-tooltip-bg: rgba(248, 251, 255, 0.88);
+  --stats-tooltip-border: rgba(79, 125, 243, 0.24);
+  --stats-tooltip-text: #263b5d;
+  --stats-tooltip-shadow: 0 10px 30px rgba(58, 91, 145, 0.16), 0 0 18px rgba(79, 125, 243, 0.08);
 }
 
 body,
@@ -255,6 +263,18 @@ body,
     0 8px 24px rgba(47, 70, 102, 0.15) !important;
   backdrop-filter: blur(16px) saturate(132%) brightness(1.03) !important;
   -webkit-backdrop-filter: blur(16px) saturate(132%) brightness(1.03) !important;
+}
+
+:root[data-theme="arctic-dawn"] .model-picker-popover {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.88) 0%,
+    rgba(241, 247, 255, 0.82) 52%,
+    rgba(222, 235, 252, 0.76) 100%
+  ) !important;
+  border-color: rgba(101, 139, 190, 0.28) !important;
+  backdrop-filter: blur(20px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(125%) !important;
 }
 
 :root[data-theme="arctic-dawn"] .model-picker-provider,
@@ -4471,6 +4491,122 @@ body {
   background: color-mix(in srgb, var(--surface-control) 78%, transparent);
 }
 
+.trajectory-detail-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 10px 12px 0;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+}
+
+.trajectory-detail-tabs button {
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.trajectory-detail-tabs button:hover {
+  color: var(--color-text-secondary);
+}
+
+.trajectory-detail-tabs .trajectory-detail-tab-active {
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 12%, var(--surface-control));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-start) 18%, transparent);
+}
+
+.trajectory-execution-details {
+  max-height: calc(100vh - 224px);
+  padding: 14px;
+  overflow: auto;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.trajectory-execution-summary,
+.trajectory-execution-call dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.trajectory-execution-summary > div,
+.trajectory-execution-call dl > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.trajectory-execution-details dt {
+  color: var(--color-text-muted);
+}
+
+.trajectory-execution-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-heading);
+  overflow-wrap: anywhere;
+}
+
+.trajectory-execution-calls {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-glass) 72%, transparent);
+}
+
+.trajectory-execution-calls h4 {
+  margin: 0 0 9px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.trajectory-execution-call {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+}
+
+.trajectory-execution-call > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.trajectory-execution-call strong {
+  color: var(--text-heading);
+  font-size: 11.5px;
+}
+
+.trajectory-execution-call > div span {
+  color: var(--color-accent-start);
+  font-size: 9.5px;
+}
+
+.trajectory-execution-note {
+  margin: 16px 0 0;
+  padding: 10px 11px;
+  border-radius: 9px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--surface-control) 64%, transparent);
+  line-height: 1.6;
+}
+
 .trajectory-detail-json {
   max-height: calc(100vh - 172px);
   margin: 0;
@@ -4649,4 +4785,69 @@ body {
   .conversation-minimap-preview {
     right: 24px;
   }
+}
+.session-stat-item {
+  position: relative;
+  outline: none;
+}
+
+.session-stat-item::before,
+.session-stat-item::after {
+  position: absolute;
+  left: 50%;
+  z-index: 80;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+}
+
+.session-stat-item::before {
+  content: "";
+  bottom: calc(100% + 5px);
+  width: 8px;
+  height: 8px;
+  background: var(--stats-tooltip-bg);
+  border-right: 1px solid var(--stats-tooltip-border);
+  border-bottom: 1px solid var(--stats-tooltip-border);
+  transform: translate(-50%, 3px) rotate(45deg);
+}
+
+.session-stat-item::after {
+  content: attr(data-tooltip);
+  bottom: calc(100% + 9px);
+  width: max-content;
+  max-width: 280px;
+  padding: 9px 11px;
+  border: 1px solid var(--stats-tooltip-border);
+  border-radius: 9px;
+  background: var(--stats-tooltip-bg);
+  box-shadow: var(--stats-tooltip-shadow);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  color: var(--stats-tooltip-text);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  transform: translate(-50%, 4px);
+}
+
+.session-stat-item:hover::before,
+.session-stat-item:hover::after,
+.session-stat-item:focus-visible::before,
+.session-stat-item:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+.session-stat-item:hover::before,
+.session-stat-item:focus-visible::before {
+  transform: translate(-50%, 0) rotate(45deg);
+}
+
+.session-stat-item:hover::after,
+.session-stat-item:focus-visible::after {
+  transform: translate(-50%, 0);
 }
