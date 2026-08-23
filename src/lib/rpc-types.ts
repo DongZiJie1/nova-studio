@@ -30,6 +30,7 @@ export type RpcCommand =
   | { type: "get_state"; id?: string }
   | { type: "get_messages"; id?: string }
   | { type: "get_session_stats"; id?: string }
+  | { type: "get_execution_traces"; id?: string }
   | { type: "new_session"; id?: string }
   | { type: "set_thinking_level"; id?: string; level: string }
   | { type: "compact"; id?: string; customInstructions?: string };
@@ -199,6 +200,33 @@ export interface SessionUsage {
   cacheWrite: number;
   total: number;
   cost: number;
+}
+
+export interface ExecutionTraceUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+export interface ExecutionTrace {
+  traceId: string;
+  category: "turn" | "model" | "thinking" | "tool";
+  turnId?: string;
+  parentTraceId?: string;
+  messageEntryId?: string;
+  toolCallId?: string;
+  provider?: string;
+  model?: string;
+  toolName?: string;
+  status: "running" | "success" | "error" | "cancelled" | "interrupted";
+  startedAt?: number;
+  endedAt?: number;
+  durationMs?: number;
+  stopReason?: string;
+  errorMessage?: string;
+  usage?: ExecutionTraceUsage;
 }
 
 // ─── Agent status ───

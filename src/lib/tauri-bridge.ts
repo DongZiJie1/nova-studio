@@ -84,6 +84,10 @@ export async function requestSessionStats(agentId: string): Promise<void> {
   return invoke("request_session_stats", { agentId });
 }
 
+export async function requestExecutionTraces(agentId: string): Promise<void> {
+  return invoke("request_execution_traces", { agentId });
+}
+
 export async function requestAvailableModels(agentId: string): Promise<void> {
   return invoke("request_available_models", { agentId });
 }

@@ -130,6 +130,7 @@ pub fn run() {
             commands::send_extension_ui_response,
             commands::list_project_files,
             commands::request_session_stats,
+            commands::request_execution_traces,
             commands::request_available_models,
             commands::list_all_models,
             commands::set_model,

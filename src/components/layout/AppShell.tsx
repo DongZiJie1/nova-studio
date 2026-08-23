@@ -14,6 +14,7 @@ import {
   setModel,
   requestAvailableModels,
   requestSessionStats,
+  requestExecutionTraces,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
@@ -28,6 +29,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
+import type { ExecutionTrace } from "../../lib/rpc-types";
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
@@ -118,11 +120,40 @@ function formatTrajectoryTime(value: unknown): string {
   });
 }
 
-function TrajectoryExecutionDetails({ entry, modelName }: { entry: SelectedTrajectoryEntry; modelName: string }) {
+function formatTrajectoryDuration(value: number | undefined): string {
+  if (value === undefined) return "暂无耗时数据";
+  if (value < 1000) return `${value} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 2 : 1)} 秒`;
+  return `${Math.floor(value / 60_000)} 分 ${((value % 60_000) / 1000).toFixed(1)} 秒`;
+}
+
+function formatTrajectoryStatus(value: ExecutionTrace["status"] | undefined): string {
+  if (value === "running") return "执行中";
+  if (value === "success") return "已完成";
+  if (value === "error") return "失败";
+  if (value === "cancelled") return "已取消";
+  if (value === "interrupted") return "已中断";
+  return "已记录";
+}
+
+function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: SelectedTrajectoryEntry; modelName: string; traces: ExecutionTrace[] }) {
   const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
   const role = typeof data.role === "string" ? data.role : typeof data.type === "string" ? data.type : entry.label.toLowerCase();
   const timestamp = data.timestamp;
   const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls as Array<Record<string, unknown>> : [];
+  const entryId = typeof data.entryId === "string" ? data.entryId : undefined;
+  const toolCallIds = new Set(toolCalls.map((tool) => tool.id).filter((id): id is string => typeof id === "string"));
+  if (role === "active_tool_call" && typeof data.id === "string") toolCallIds.add(data.id);
+  const matchingTraces = traces.filter((trace) =>
+    (trace.category === "model" && entryId !== undefined && trace.messageEntryId === entryId) ||
+    (trace.category === "tool" && trace.toolCallId !== undefined && toolCallIds.has(trace.toolCallId)),
+  );
+  const modelTrace = matchingTraces.find((trace) => trace.category === "model");
+  const thinkingTrace = [...traces].reverse().find((trace) =>
+    trace.category === "thinking" &&
+    (trace.parentTraceId === modelTrace?.traceId || (role === "streaming_thinking" && trace.status === "running")),
+  );
+  const primaryTrace = role === "thinking" || role === "streaming_thinking" ? thinkingTrace : modelTrace;
   const typeLabel = role === "tool" || role === "active_tool_call"
     ? "工具调用"
     : role === "assistant" || role === "streaming_assistant"
@@ -139,21 +170,33 @@ function TrajectoryExecutionDetails({ entry, modelName }: { entry: SelectedTraje
         <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
         <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
         {(role === "assistant" || role === "streaming_assistant" || role === "thinking" || role === "streaming_thinking") && (
-          <div><dt>调用模型</dt><dd>{modelName}</dd></div>
+          <div><dt>调用模型</dt><dd>{modelTrace?.model ?? modelName}</dd></div>
         )}
-        <div><dt>事件状态</dt><dd>{role.startsWith("streaming_") ? "执行中" : "已记录"}</dd></div>
+        <div><dt>事件状态</dt><dd>{primaryTrace ? formatTrajectoryStatus(primaryTrace.status) : role.startsWith("streaming_") ? "执行中" : "已记录"}</dd></div>
+        {primaryTrace && <div><dt>开始时间</dt><dd>{formatTrajectoryTime(primaryTrace.startedAt)}</dd></div>}
+        {primaryTrace && <div><dt>结束时间</dt><dd>{formatTrajectoryTime(primaryTrace.endedAt)}</dd></div>}
+        {primaryTrace && <div><dt>执行耗时</dt><dd>{formatTrajectoryDuration(primaryTrace.durationMs)}</dd></div>}
+        {thinkingTrace && modelTrace && <div><dt>模型总耗时</dt><dd>{formatTrajectoryDuration(modelTrace.durationMs)}</dd></div>}
+        {modelTrace?.stopReason && <div><dt>停止原因</dt><dd>{modelTrace.stopReason}</dd></div>}
+        {modelTrace?.usage && <div><dt>Token 用量</dt><dd>输入 {formatTokens(modelTrace.usage.input)} · 输出 {formatTokens(modelTrace.usage.output)} · 缓存读取 {formatTokens(modelTrace.usage.cacheRead)}</dd></div>}
       </dl>
       {toolCalls.length > 0 && (
         <section className="trajectory-execution-calls">
           <h4>工具调用</h4>
           {toolCalls.map((tool, index) => (
-            <div className="trajectory-execution-call" key={typeof tool.id === "string" ? tool.id : index}>
-              <div><strong>{typeof tool.name === "string" ? tool.name : "tool"}</strong><span>{tool.status === "error" ? "失败" : tool.status === "running" || tool.status === "pending" ? "执行中" : "已完成"}</span></div>
+            (() => {
+              const toolId = typeof tool.id === "string" ? tool.id : undefined;
+              const trace = matchingTraces.find((candidate) => candidate.category === "tool" && candidate.toolCallId === toolId);
+              return <div className="trajectory-execution-call" key={toolId ?? index}>
+              <div><strong>{typeof tool.name === "string" ? tool.name : "tool"}</strong><span>{trace ? formatTrajectoryStatus(trace.status) : tool.status === "error" ? "失败" : tool.status === "running" || tool.status === "pending" ? "执行中" : "已完成"}</span></div>
               <dl>
-                <div><dt>调用 ID</dt><dd>{typeof tool.id === "string" ? tool.id : "—"}</dd></div>
-                <div><dt>执行时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
+                <div><dt>调用 ID</dt><dd>{toolId ?? "—"}</dd></div>
+                <div><dt>开始时间</dt><dd>{formatTrajectoryTime(trace?.startedAt)}</dd></div>
+                <div><dt>结束时间</dt><dd>{formatTrajectoryTime(trace?.endedAt)}</dd></div>
+                <div><dt>执行耗时</dt><dd>{formatTrajectoryDuration(trace?.durationMs)}</dd></div>
               </dl>
-            </div>
+            </div>;
+            })()
           ))}
         </section>
       )}
@@ -169,7 +212,9 @@ function TrajectoryExecutionDetails({ entry, modelName }: { entry: SelectedTraje
           </div>
         </section>
       )}
-      <p className="trajectory-execution-note">历史轨迹目前只保存事件记录时间；精确耗时需要 Nova 同时持久化调用开始和结束时间。</p>
+      {matchingTraces.length === 0 && !thinkingTrace && (
+        <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
+      )}
     </div>
   );
 }
@@ -934,10 +979,22 @@ export function AppShell() {
     setSelectedTrajectoryEntry(null);
   }, [activeId]);
 
+  useEffect(() => {
+    if (conversationView !== "trajectory" || !activeId) return;
+    void requestExecutionTraces(activeId).catch((traceError) => {
+      setError(traceError instanceof Error ? traceError.message : String(traceError));
+    });
+  }, [conversationView, activeId, activeAgent?.status]);
+
   const selectTrajectoryEntry = useCallback((entry: SelectedTrajectoryEntry) => {
     setSelectedTrajectoryEntry(entry);
     setTrajectoryDetailView("execution");
-  }, []);
+    if (activeId) {
+      void requestExecutionTraces(activeId).catch((traceError) => {
+        setError(traceError instanceof Error ? traceError.message : String(traceError));
+      });
+    }
+  }, [activeId]);
 
   useEffect(() => {
     if (!fileMention) {
@@ -1220,6 +1277,7 @@ export function AppShell() {
           contextUsage: null,
           lastTurnUsage: null,
           sessionUsage: null,
+          executionTraces: [],
           autoCompactionEnabled: true,
           liveUsage: null,
           outputSinceLastUserInput: 0,
@@ -1919,7 +1977,7 @@ export function AppShell() {
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整 JSON</button>
                     </div>
                     {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
-                      <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} />
+                      <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
                     ) : (
                       <pre className="trajectory-detail-json">
                         {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}

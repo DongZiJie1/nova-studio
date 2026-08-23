@@ -45,6 +45,8 @@ pub enum RpcCommand {
     GetMessages { id: Option<String> },
     #[serde(rename = "get_session_stats")]
     GetSessionStats { id: Option<String> },
+    #[serde(rename = "get_execution_traces")]
+    GetExecutionTraces { id: Option<String> },
     #[serde(rename = "get_available_models")]
     GetAvailableModels { id: Option<String> },
     #[serde(rename = "new_session")]

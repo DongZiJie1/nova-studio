@@ -4,6 +4,7 @@ import type {
   AgentEventPayload,
   AgentInfo,
   ContextUsage,
+  ExecutionTrace,
   ModelMeta,
   PersistedRpcMessage,
   SessionUsage,
@@ -72,6 +73,8 @@ export interface AgentState {
   lastTurnUsage: TurnUsage | null;
   /** Cumulative token/cost totals across the session (from get_session_stats) */
   sessionUsage: SessionUsage | null;
+  /** Persisted execution timing for turns, model calls, and tool calls. */
+  executionTraces: ExecutionTrace[];
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
   /** Live usage of the in-flight turn, streamed from message_update events */
@@ -141,6 +144,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     contextUsage: null,
     lastTurnUsage: null,
     sessionUsage: null,
+    executionTraces: [],
     autoCompactionEnabled: true,
     liveUsage: null,
     outputSinceLastUserInput: 0,
@@ -254,7 +258,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
           text += block.text;
         } else if (block.type === "thinking" && typeof block.thinking === "string") {
           flushText();
-          hydrated.push({ id: nextId(), role: "thinking", content: block.thinking, timestamp });
+          hydrated.push({ id: nextId(), entryId: message.entryId, role: "thinking", content: block.thinking, timestamp });
         } else if (
           block.type === "toolCall" &&
           typeof block.id === "string" &&
@@ -451,6 +455,19 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         agents: s.agents.map((agent) =>
           agent.id === agentId ? { ...agent, name: event.name } : agent,
         ),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_execution_traces" &&
+      event.success &&
+      Array.isArray(event.data?.traces)
+    ) {
+      const executionTraces = event.data.traces as ExecutionTrace[];
+      set((s) => ({
+        agents: s.agents.map((agent) => agent.id === agentId ? { ...agent, executionTraces } : agent),
       }));
       return;
     }

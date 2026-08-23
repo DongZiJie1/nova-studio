@@ -308,6 +308,14 @@ pub async fn request_session_stats(
 }
 
 #[tauri::command]
+pub async fn request_execution_traces(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    state.0.request_execution_traces(&agent_id).await
+}
+
+#[tauri::command]
 pub async fn request_available_models(
     state: State<'_, AgentManagerState>,
     agent_id: String,
