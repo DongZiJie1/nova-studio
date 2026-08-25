@@ -66,7 +66,7 @@ function formatTime(ts: number): string {
 
 export function ToolCallList({ tools }: { tools: ToolCall[] }) {
   const [expanded, setExpanded] = useState(false);
-  if (tools.length <= 1) {
+  if (tools.length <= 4) {
     return tools.map((tool) => (
       <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
     ));

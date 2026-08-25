@@ -20,6 +20,7 @@ import {
   type AgentAvatarId,
 } from "../lib/agent-avatars";
 import { requestSessionStats } from "../lib/tauri-bridge";
+import { recordTokenUsage, recordUserInteraction } from "../lib/activity-tracker";
 
 // ─── Frontend-side types ───
 
@@ -371,6 +372,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       timestamp: Date.now(),
       attachments: attachments?.length ? attachments : undefined,
     };
+    recordUserInteraction(msg.timestamp);
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === agentId
@@ -606,6 +608,9 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     }
 
     const parsed = parseAgentEvent(event);
+    if (parsed.kind === "turn_lifecycle" && parsed.phase === "end" && parsed.usage) {
+      recordTokenUsage(parsed.usage);
+    }
     set((s) => ({
       agents: s.agents.map((agent) => {
         if (agent.id !== agentId) return agent;

@@ -31,6 +31,7 @@ import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
+import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
@@ -64,6 +65,7 @@ import {
   Sun,
   Settings,
   Palette,
+  ChartNoAxesColumnIncreasing,
   ArrowLeft,
   MessageCircle,
   Route,
@@ -739,6 +741,7 @@ export function AppShell() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
@@ -1573,7 +1576,8 @@ export function AppShell() {
               {settingsOpen ? (
                 <>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action sidebar-settings-button-active" aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" title="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
               ) : (
                 <>
@@ -1619,9 +1623,13 @@ export function AppShell() {
                 </button>
               </header>
               <nav className="settings-sidebar-nav" aria-label="设置分类">
-                <button type="button" className="settings-category-button settings-category-button-active">
+                <button type="button" className={`settings-category-button ${settingsSection === "appearance" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("appearance")}>
                   <Palette size={16} />
                   <span>外观</span>
+                </button>
+                <button type="button" className={`settings-category-button ${settingsSection === "activity" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("activity")}>
+                  <ChartNoAxesColumnIncreasing size={16} />
+                  <span>活跃度</span>
                 </button>
               </nav>
             </div>
@@ -1767,7 +1775,9 @@ export function AppShell() {
         <main className="relative w-full flex flex-col overflow-hidden">
           {settingsOpen && (
             <section className="settings-page">
-              <div className="settings-page-inner">
+              <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
+                {settingsSection === "appearance" ? (
+                  <>
                   <header className="settings-page-header">
                     <h1>外观</h1>
                     <p>调整 Nova Studio 的主题和桌面背景。</p>
@@ -1833,6 +1843,10 @@ export function AppShell() {
                       <span className="settings-blur-scale"><span>清晰</span><span>模糊</span></span>
                     </label>
                   </div>
+                  </>
+                ) : (
+                  <ActivityHeatmap />
+                )}
               </div>
             </section>
           )}
