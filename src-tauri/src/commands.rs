@@ -240,12 +240,19 @@ pub async fn new_session(
 }
 
 #[tauri::command]
-pub async fn request_messages(state: State<'_, AgentManagerState>, agent_id: String) -> Result<(), String> {
+pub async fn request_messages(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
     state.0.request_messages(&agent_id).await
 }
 
 #[tauri::command]
-pub async fn fork_session(state: State<'_, AgentManagerState>, agent_id: String, entry_id: String) -> Result<(), String> {
+pub async fn fork_session(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    entry_id: String,
+) -> Result<(), String> {
     state.0.fork_session(&agent_id, entry_id).await
 }
 
