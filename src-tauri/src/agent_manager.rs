@@ -544,16 +544,29 @@ impl AgentManager {
     pub async fn fork_session(&self, agent_id: &str, entry_id: String) -> Result<(), String> {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
-        agent.send_command(&RpcCommand::Fork { id: None, entry_id, position: "at".to_string() })
+        agent.send_command(&RpcCommand::Fork {
+            id: None,
+            entry_id,
+            position: "at".to_string(),
+        })
     }
 
-    pub async fn set_feedback(&self, agent_id: &str, entry_id: String, rating: Option<String>) -> Result<(), String> {
+    pub async fn set_feedback(
+        &self,
+        agent_id: &str,
+        entry_id: String,
+        rating: Option<String>,
+    ) -> Result<(), String> {
         if !matches!(rating.as_deref(), None | Some("up") | Some("down")) {
             return Err("Invalid feedback rating".to_string());
         }
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
-        agent.send_command(&RpcCommand::SetFeedback { id: None, entry_id, rating })
+        agent.send_command(&RpcCommand::SetFeedback {
+            id: None,
+            entry_id,
+            rating,
+        })
     }
 
     /// Compact the current session, optionally using caller-provided instructions.
@@ -578,10 +591,19 @@ impl AgentManager {
     }
 
     /// Switch model for an agent
-    pub async fn set_model(&self, agent_id: &str, provider: String, model_id: String) -> Result<(), String> {
+    pub async fn set_model(
+        &self,
+        agent_id: &str,
+        provider: String,
+        model_id: String,
+    ) -> Result<(), String> {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
-        agent.send_command(&RpcCommand::SetModel { id: None, provider, model_id })
+        agent.send_command(&RpcCommand::SetModel {
+            id: None,
+            provider,
+            model_id,
+        })
     }
 
     /// List all available models from nova CLI
@@ -620,15 +642,27 @@ impl AgentManager {
                 let images = parts.get(5).map(|s| *s == "yes").unwrap_or(false);
                 // Parse context window (e.g., "1M" -> 1000000, "200K" -> 200000)
                 let context_window_num = if context_window.ends_with('M') {
-                    context_window.trim_end_matches('M').parse::<f64>().unwrap_or(0.0) * 1_000_000.0
+                    context_window
+                        .trim_end_matches('M')
+                        .parse::<f64>()
+                        .unwrap_or(0.0)
+                        * 1_000_000.0
                 } else if context_window.ends_with('K') {
-                    context_window.trim_end_matches('K').parse::<f64>().unwrap_or(0.0) * 1_000.0
+                    context_window
+                        .trim_end_matches('K')
+                        .parse::<f64>()
+                        .unwrap_or(0.0)
+                        * 1_000.0
                 } else {
                     context_window.parse::<f64>().unwrap_or(0.0)
                 };
                 // Parse max tokens
                 let max_tokens_num = if max_tokens.ends_with('K') {
-                    max_tokens.trim_end_matches('K').parse::<f64>().unwrap_or(0.0) * 1_000.0
+                    max_tokens
+                        .trim_end_matches('K')
+                        .parse::<f64>()
+                        .unwrap_or(0.0)
+                        * 1_000.0
                 } else {
                     max_tokens.parse::<f64>().unwrap_or(0.0)
                 };
