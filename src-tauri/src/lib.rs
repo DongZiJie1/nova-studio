@@ -10,6 +10,49 @@ use commands::AgentManagerState;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+#[cfg(desktop)]
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::{
+        menu::{Menu, MenuItem, PredefinedMenuItem},
+        tray::TrayIconBuilder,
+    };
+
+    let version = app.package_info().version.to_string();
+    let app_info = MenuItem::with_id(
+        app,
+        "app_info",
+        format!("Nova Studio  v{}", version),
+        false,
+        None::<&str>,
+    )?;
+    let status = MenuItem::with_id(app, "status", "●  应用正在运行", false, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let show = MenuItem::with_id(app, "show", "打开 Nova Studio", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出 Nova Studio", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&app_info, &status, &separator, &show, &quit])?;
+
+    let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+    TrayIconBuilder::with_id("nova-studio-tray")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .tooltip("Nova Studio")
+        .icon(tray_icon)
+        .icon_as_template(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -20,6 +63,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
+            #[cfg(desktop)]
+            setup_tray(app)?;
+
             // Determine the path to the nova CLI
             // Priority: env var > bundled sidecar (prod) > global npm > dev paths
             let cli_path = resolve_cli_path(app.handle());
