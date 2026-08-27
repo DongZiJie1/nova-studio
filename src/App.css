@@ -5161,6 +5161,78 @@ body {
   overflow-wrap: anywhere;
 }
 
+.trajectory-detail-text,
+.trajectory-detail-resources {
+  max-height: calc(100vh - 250px);
+  margin: 0;
+  overflow: auto;
+  padding: 16px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-detail-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: inherit;
+  white-space: normal;
+}
+
+.trajectory-detail-resource {
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-control) 64%, transparent);
+}
+
+.trajectory-detail-resource strong,
+.trajectory-detail-resource p,
+.trajectory-detail-resource span {
+  display: block;
+}
+
+.trajectory-detail-resource strong {
+  color: var(--text-heading);
+  font-size: 11.5px;
+}
+
+.trajectory-detail-resource p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.trajectory-detail-resource span {
+  margin-top: 5px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-detail-instruction pre {
+  margin: 10px 0 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-detail-empty {
+  margin: 24px 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 :root[data-theme="arctic-dawn"] .conversation-view-switcher {
   border-color: rgba(110, 139, 179, 0.2);
   background: rgba(239, 247, 255, 0.3);

@@ -267,13 +267,60 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
         </section>
       )}
       {isContextEntry && (
-        <p className="trajectory-execution-note">该项在第一条用户消息之前进入模型上下文；System 为实际生效的完整提示词，工具、Skill 和项目指令用于说明它的组成与来源。</p>
+        <p className="trajectory-execution-note">该项在第一条用户消息之前进入模型上下文；System 仅展示基础系统指令，工具、Skill 和项目指令分别在独立条目中展示。</p>
       )}
       {!isContextEntry && matchingTraces.length === 0 && !thinkingTrace && (
         <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
       )}
     </div>
   );
+}
+
+function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
+  const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
+  const type = typeof data.type === "string" ? data.type : "";
+
+  if (type === "context_system") {
+    return <pre className="trajectory-detail-text">{typeof data.content === "string" ? data.content : ""}</pre>;
+  }
+
+  if (type === "context_tools" || type === "context_skills") {
+    const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
+    const suffix = type === "context_tools" ? "工具" : "Skill";
+    return (
+      <div className="trajectory-detail-resources">
+        {items.map((item, index) => (
+          <section key={`${String(item.name ?? suffix)}-${index}`} className="trajectory-detail-resource">
+            <strong>{String(item.name ?? "未命名")} {suffix}</strong>
+            <p>{typeof item.description === "string" && item.description ? item.description : "暂无描述"}</p>
+            {type === "context_skills" && typeof item.filePath === "string" && <span>{item.filePath}</span>}
+          </section>
+        ))}
+        {items.length === 0 && <p className="trajectory-detail-empty">暂无内容</p>}
+      </div>
+    );
+  }
+
+  if (type === "context_instructions") {
+    const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
+    return (
+      <div className="trajectory-detail-resources">
+        {items.map((item, index) => {
+          const path = typeof item.path === "string" ? item.path : "项目指令";
+          return (
+            <section key={`${path}-${index}`} className="trajectory-detail-resource trajectory-detail-instruction">
+              <strong>{path.split(/[\\/]/).pop() ?? path}</strong>
+              <span>{path}</span>
+              <pre>{typeof item.content === "string" ? item.content : ""}</pre>
+            </section>
+          );
+        })}
+        {items.length === 0 && <p className="trajectory-detail-empty">暂无内容</p>}
+      </div>
+    );
+  }
+
+  return <pre className="trajectory-detail-json">{JSON.stringify(entry.data, null, 2)}</pre>;
 }
 
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
@@ -2167,7 +2214,7 @@ export function AppShell() {
                 >
                     <header className="trajectory-detail-header">
                       <div>
-                        <span className="trajectory-detail-kicker">SESSION JSON</span>
+                        <span className="trajectory-detail-kicker">TRAJECTORY DETAIL</span>
                         <strong>{selectedTrajectoryEntry?.label ?? "DETAIL"}</strong>
                       </div>
                       <button
@@ -2181,14 +2228,12 @@ export function AppShell() {
                     </header>
                     <div className="trajectory-detail-tabs" role="tablist" aria-label="轨迹详情显示方式">
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "execution"} className={trajectoryDetailView === "execution" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("execution")}>执行信息</button>
-                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整 JSON</button>
+                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整信息</button>
                     </div>
                     {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
                       <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
                     ) : (
-                      <pre className="trajectory-detail-json">
-                        {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}
-                      </pre>
+                      selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
                     )}
                   </aside>
               </div>
