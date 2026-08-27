@@ -433,6 +433,46 @@ body {
   color: var(--text-placeholder);
 }
 
+.scroll-to-bottom-button {
+  position: absolute;
+  z-index: 20;
+  top: -48px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(151, 159, 204, 0.24);
+  border-radius: 50%;
+  color: #c8cdfc;
+  background: rgba(19, 22, 40, 0.88);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(129, 140, 248, 0.06);
+  backdrop-filter: blur(18px);
+  transform: translateX(-50%);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.scroll-to-bottom-button:hover {
+  color: #fff;
+  background: rgba(99, 110, 245, 0.92);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+/* Skip layout and paint work for expensive Markdown and trajectory rows until
+   they approach the viewport. The intrinsic size keeps scrolling stable. */
+.msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.trajectory-request {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+
 .input-attachment {
   position: relative;
   max-width: 200px;
@@ -2953,6 +2993,18 @@ body {
 
 :root[data-theme="arctic-dawn"] .input-attachment-remove:hover {
   background: #3c5275;
+}
+
+:root[data-theme="arctic-dawn"] .scroll-to-bottom-button {
+  color: #36598c;
+  border-color: rgba(79, 125, 243, 0.34);
+  background: rgba(248, 251, 255, 0.94);
+  box-shadow: 0 8px 22px rgba(55, 89, 143, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme="arctic-dawn"] .scroll-to-bottom-button:hover {
+  color: #fff;
+  background: #527be1;
 }
 
 :root[data-theme="arctic-dawn"] .slash-command-menu,

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
@@ -46,6 +46,7 @@ import { findFileMention, insertFileMention } from "../../lib/file-mentions";
 import {
   Paperclip,
   ArrowUp,
+  ArrowDown,
   Square,
   FolderOpen,
   Pencil,
@@ -106,6 +107,44 @@ interface SelectedTrajectoryEntry {
 }
 
 type TrajectoryDetailView = "execution" | "json";
+
+interface ChatHistoryProps {
+  messages: AgentState["messages"];
+  userLabel: string;
+  avatarId: AgentState["avatarId"];
+  actionableAssistantMessageIds: Set<string>;
+  turnFileChangesByAssistantId: Map<string, TurnFileChange[]>;
+  onFeedback: (message: AgentState["messages"][number], rating: "up" | "down" | null) => void;
+  onFork: (message: AgentState["messages"][number]) => void;
+}
+
+const ChatHistory = memo(function ChatHistory({
+  messages,
+  userLabel,
+  avatarId,
+  actionableAssistantMessageIds,
+  turnFileChangesByAssistantId,
+  onFeedback,
+  onFork,
+}: ChatHistoryProps) {
+  return messages.map((message) => (
+    <div
+      key={message.id}
+      id={message.role === "user" ? `conversation-turn-${message.id}` : undefined}
+      style={{ scrollMarginTop: 24 }}
+    >
+      <ChatMessage
+        message={message}
+        userLabel={userLabel}
+        avatarId={avatarId}
+        showActions={actionableAssistantMessageIds.has(message.id)}
+        onFeedback={onFeedback}
+        onFork={onFork}
+        fileChanges={turnFileChangesByAssistantId.get(message.id)}
+      />
+    </div>
+  ));
+});
 
 function formatTrajectoryTime(value: unknown): string {
   if (typeof value !== "number" && typeof value !== "string") return "暂无时间数据";
@@ -599,7 +638,7 @@ interface AgentTreeNodeProps {
   depth?: number;
 }
 
-function AgentTreeNode({
+const AgentTreeNode = memo(function AgentTreeNode({
   agent,
   childrenByParent,
   agentsById,
@@ -696,7 +735,7 @@ function AgentTreeNode({
       )}
     </div>
   );
-}
+});
 
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
@@ -744,6 +783,7 @@ export function AppShell() {
   const [settingsSection, setSettingsSection] = useState<"appearance" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
   const [trajectoryDetailView, setTrajectoryDetailView] = useState<TrajectoryDetailView>("execution");
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
@@ -765,6 +805,7 @@ export function AppShell() {
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
   const isComposingRef = useRef(false);
 
   const userHistory = useMemo(() => {
@@ -799,21 +840,53 @@ export function AppShell() {
     autoResize();
   }, [autoResize, pendingAttachments]);
 
-  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const isAgentHidden = (agent: AgentState): boolean => {
-    if (hiddenAgentIds.has(agent.id)) return true;
-    let parentId = agent.parentAgentId;
-    while (parentId) {
-      if (hiddenAgentIds.has(parentId)) return true;
-      parentId = agentsById.get(parentId)?.parentAgentId ?? null;
+  const agentNavigationKey = agents.map((agent) => [
+    agent.id,
+    agent.parentAgentId ?? "",
+    agent.cwd,
+    agent.name ?? "",
+    agent.status,
+    agent.messageCount,
+  ].join("\u001f")).join("\u001e");
+  const { agentsById, visibleAgents, visibleAgentIds, childrenByParent, rootsByProject } = useMemo(() => {
+    const byId = new Map(agents.map((agent) => [agent.id, agent]));
+    const isAgentHidden = (agent: AgentState): boolean => {
+      if (hiddenAgentIds.has(agent.id)) return true;
+      let parentId = agent.parentAgentId;
+      while (parentId) {
+        if (hiddenAgentIds.has(parentId)) return true;
+        parentId = byId.get(parentId)?.parentAgentId ?? null;
+      }
+      return false;
+    };
+    const visible = agents.filter(
+      (agent) => !isAgentHidden(agent) && !isTemporaryRuntimeProject(agent.cwd),
+    );
+    const visibleById = new Map(visible.map((agent) => [agent.id, agent]));
+    const children = new Map<string, AgentState[]>();
+    const roots = new Map<string, AgentState[]>();
+    for (const agent of visible) {
+      if (agent.parentAgentId && visibleById.has(agent.parentAgentId)) {
+        const siblings = children.get(agent.parentAgentId) ?? [];
+        siblings.push(agent);
+        children.set(agent.parentAgentId, siblings);
+      } else {
+        const projectAgents = roots.get(agent.cwd) ?? [];
+        projectAgents.push(agent);
+        roots.set(agent.cwd, projectAgents);
+      }
     }
-    return false;
-  };
-  const visibleAgents = agents.filter(
-    (agent) => !isAgentHidden(agent) && !isTemporaryRuntimeProject(agent.cwd),
-  );
-  const visibleAgentsById = new Map(visibleAgents.map((agent) => [agent.id, agent]));
-  const activeAgent = visibleAgents.find((a) => a.id === activeId);
+    return {
+      agentsById: byId,
+      visibleAgents: visible,
+      visibleAgentIds: new Set(visible.map((agent) => agent.id)),
+      childrenByParent: children,
+      rootsByProject: roots,
+    };
+  }, [agentNavigationKey, hiddenAgentIds]);
+  const activeAgent = activeId && visibleAgentIds.has(activeId)
+    ? agents.find((agent) => agent.id === activeId)
+    : undefined;
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
   // possibly-stale `model` field that list_agents reports from spawn time.
@@ -824,22 +897,6 @@ export function AppShell() {
     () => availableModels.find((m) => m.id === activeModelId)?.name ?? activeModelId ?? "Model",
     [availableModels, activeModelId],
   );
-  const childrenByParent = new Map<string, AgentState[]>();
-  for (const agent of visibleAgents) {
-    if (!agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId)) continue;
-    const siblings = childrenByParent.get(agent.parentAgentId) ?? [];
-    siblings.push(agent);
-    childrenByParent.set(agent.parentAgentId, siblings);
-  }
-  const rootAgents = visibleAgents.filter(
-    (agent) => !agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId),
-  );
-  const rootsByProject = new Map<string, AgentState[]>();
-  for (const agent of rootAgents) {
-    const projectAgents = rootsByProject.get(agent.cwd) ?? [];
-    projectAgents.push(agent);
-    rootsByProject.set(agent.cwd, projectAgents);
-  }
   const hasMessages =
     (activeAgent?.messages.length ?? 0) > 0 ||
     (activeAgent?.messageCount ?? 0) > 0;
@@ -872,7 +929,10 @@ export function AppShell() {
   const streamingText = activeAgent?.streamingText ?? "";
   const slashCommands = slashCommandMenuDismissed ? [] : matchingSlashCommands(input);
   const fileMention = fileMentionMenuDismissed ? null : findFileMention(input, cursorPosition);
-  const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
+  const conversationPairs = useMemo(
+    () => buildConversationPairs(activeAgent?.messages ?? []),
+    [activeAgent?.messages],
+  );
   const trajectoryRequests = useMemo(() => {
     const groups: Array<{ id: string; messages: AgentState["messages"] }> = [];
     for (const message of activeAgent?.messages ?? []) {
@@ -962,7 +1022,7 @@ export function AppShell() {
       });
       setError(feedbackError instanceof Error ? feedbackError.message : String(feedbackError));
     });
-  }, [activeAgent, updateAgent]);
+  }, [activeAgent?.id, activeAgent?.messages, updateAgent]);
 
   const handleForkMessage = useCallback((message: AgentState["messages"][number]) => {
     if (!activeAgent || !message.entryId) return;
@@ -974,12 +1034,37 @@ export function AppShell() {
         syncAgents(infos);
       })
       .catch((forkError) => setError(forkError instanceof Error ? forkError.message : String(forkError)));
-  }, [activeAgent, syncAgents]);
+  }, [activeAgent?.id, syncAgents]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
 
+  const handleConversationScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isNearBottom = distanceFromBottom <= 48;
+    isNearBottomRef.current = isNearBottom;
+    setShowScrollToBottom(!isNearBottom && container.scrollHeight > container.clientHeight);
+  }, []);
+
+  const scrollConversationToBottom = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    isNearBottomRef.current = true;
+    setShowScrollToBottom(false);
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    isNearBottomRef.current = true;
+    setShowScrollToBottom(false);
+    const frame = window.requestAnimationFrame(scrollConversationToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeId, scrollConversationToBottom]);
+
   useEffect(() => {
     if (conversationView !== "chat" || settingsOpen || activeAgent?.status !== "streaming") return;
+    if (!isNearBottomRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       const container = scrollRef.current;
       if (container) container.scrollTop = container.scrollHeight;
@@ -1432,7 +1517,7 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", abortOnEscape);
   }, [activeAgent?.status, handleAbort]);
 
-  const handleSelectAgent = (agentId: string) => {
+  const handleSelectAgent = useCallback((agentId: string) => {
     setSettingsOpen(false);
     setConversationView("chat");
     setActiveAgent(agentId);
@@ -1455,7 +1540,14 @@ export function AppShell() {
         updateAgent(agentId, { status: "error" });
         setError(message);
       });
-  };
+  }, [agentsById, setActiveAgent, updateAgent]);
+
+  const handleEditAgent = useCallback((agent: AgentState) => {
+    setEditingAgent({
+      id: agent.id,
+      name: agentDisplayName(agent, agentNames),
+    });
+  }, [agentNames]);
 
   const handleChooseBackground = async () => {
     const selected = await open({
@@ -1743,12 +1835,7 @@ export function AppShell() {
                             activeId={activeId}
                             onSelect={handleSelectAgent}
                             agentNames={agentNames}
-                            onEdit={(agent) =>
-                              setEditingAgent({
-                                id: agent.id,
-                                name: agentDisplayName(agent, agentNames),
-                              })
-                            }
+                            onEdit={handleEditAgent}
                             onHide={setHidingAgent}
                           />
                         ))}
@@ -1873,6 +1960,7 @@ export function AppShell() {
           {/* Content area */}
           <div
             ref={scrollRef}
+            onScroll={handleConversationScroll}
             className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
             }`}
@@ -2120,23 +2208,17 @@ export function AppShell() {
                     Loading conversation…
                   </div>
                 )}
-                {activeAgent && chatMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
-                    style={{ scrollMarginTop: 24 }}
-                  >
-                    <ChatMessage
-                      message={msg}
-                      userLabel={conversationUserLabel}
-                      avatarId={activeAgent.avatarId}
-                      showActions={actionableAssistantMessageIds.has(msg.id)}
-                      onFeedback={handleMessageFeedback}
-                      onFork={handleForkMessage}
-                      fileChanges={turnFileChangesByAssistantId.get(msg.id)}
-                    />
-                  </div>
-                ))}
+                {activeAgent && (
+                  <ChatHistory
+                    messages={chatMessages}
+                    userLabel={conversationUserLabel}
+                    avatarId={activeAgent.avatarId}
+                    actionableAssistantMessageIds={actionableAssistantMessageIds}
+                    turnFileChangesByAssistantId={turnFileChangesByAssistantId}
+                    onFeedback={handleMessageFeedback}
+                    onFork={handleForkMessage}
+                  />
+                )}
 
                 {/* Active tool calls */}
                 {activeAgent && activeAgent.activeToolCalls.size > 0 && (
@@ -2198,7 +2280,18 @@ export function AppShell() {
               justifyContent: "center",
             }}
           >
-            <div style={{ width: "100%", maxWidth: 640 }}>
+            <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
+              {showScrollToBottom && activeAgent && (
+                <button
+                  type="button"
+                  className="scroll-to-bottom-button"
+                  onClick={scrollConversationToBottom}
+                  aria-label="滚动到对话底部"
+                  title="滚动到最新消息"
+                >
+                  <ArrowDown size={18} />
+                </button>
+              )}
               {activeAgent && <SessionStats agent={activeAgent} />}
               {/* Input card */}
               <div

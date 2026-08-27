@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { useUiStore } from "../../stores/ui-store";
 
-export function Background() {
+export const Background = memo(function Background() {
   const customBgUrl = useUiStore((s) => s.customBgUrl);
   const backgroundBlur = useUiStore((s) => s.backgroundBlur);
   const theme = useUiStore((s) => s.theme);
@@ -147,4 +148,4 @@ export function Background() {
       )}
     </div>
   );
-}
+});
