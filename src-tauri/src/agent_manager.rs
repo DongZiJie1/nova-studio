@@ -519,6 +519,13 @@ impl AgentManager {
         agent.send_command(&RpcCommand::GetExecutionTraces { id: None })
     }
 
+    /// Request the effective system prompt and its tool/instruction sources.
+    pub async fn request_context_snapshot(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetContextSnapshot { id: None })
+    }
+
     /// Request available models from an agent
     pub async fn request_available_models(&self, agent_id: &str) -> Result<(), String> {
         let agents = self.agents.read().await;

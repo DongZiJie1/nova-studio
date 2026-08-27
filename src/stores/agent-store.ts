@@ -4,6 +4,7 @@ import type {
   AgentEventPayload,
   AgentInfo,
   ContextUsage,
+  ContextSnapshot,
   ExecutionTrace,
   ModelMeta,
   PersistedRpcMessage,
@@ -76,6 +77,8 @@ export interface AgentState {
   sessionUsage: SessionUsage | null;
   /** Persisted execution timing for turns, model calls, and tool calls. */
   executionTraces: ExecutionTrace[];
+  /** Effective model context before conversation messages. */
+  contextSnapshot: ContextSnapshot | null;
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
   /** Live usage of the in-flight turn, streamed from message_update events */
@@ -146,6 +149,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     lastTurnUsage: null,
     sessionUsage: null,
     executionTraces: [],
+    contextSnapshot: null,
     autoCompactionEnabled: true,
     liveUsage: null,
     outputSinceLastUserInput: 0,
@@ -473,6 +477,20 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       const executionTraces = event.data.traces as ExecutionTrace[];
       set((s) => ({
         agents: s.agents.map((agent) => agent.id === agentId ? { ...agent, executionTraces } : agent),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_context_snapshot" &&
+      event.success &&
+      event.data &&
+      typeof event.data.systemPrompt === "string"
+    ) {
+      const contextSnapshot = event.data as unknown as ContextSnapshot;
+      set((s) => ({
+        agents: s.agents.map((agent) => agent.id === agentId ? { ...agent, contextSnapshot } : agent),
       }));
       return;
     }

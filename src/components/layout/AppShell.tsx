@@ -15,6 +15,7 @@ import {
   requestAvailableModels,
   requestSessionStats,
   requestExecutionTraces,
+  requestContextSnapshot,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
@@ -203,12 +204,24 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
         ? "模型思考"
         : role === "user"
           ? "用户输入"
+          : role === "context_system"
+            ? "系统提示词"
+            : role === "context_tools"
+              ? "工具定义集合"
+              : role === "context_skills"
+                ? "Skill 声明集合"
+                : role === "context_instructions"
+                  ? "项目指令集合"
           : role;
+  const isContextEntry = role.startsWith("context_");
 
   return (
     <div className="trajectory-execution-details">
       <dl className="trajectory-execution-summary">
         <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
+        {isContextEntry && Array.isArray(data.items) && <div><dt>资源数量</dt><dd>{data.items.length}</dd></div>}
+        {isContextEntry && typeof data.name === "string" && <div><dt>资源名称</dt><dd>{data.name}</dd></div>}
+        {isContextEntry && typeof data.path === "string" && <div><dt>来源路径</dt><dd>{data.path}</dd></div>}
         <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
         {(role === "assistant" || role === "streaming_assistant" || role === "thinking" || role === "streaming_thinking") && (
           <div><dt>调用模型</dt><dd>{modelTrace?.model ?? modelName}</dd></div>
@@ -253,7 +266,10 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
           </div>
         </section>
       )}
-      {matchingTraces.length === 0 && !thinkingTrace && (
+      {isContextEntry && (
+        <p className="trajectory-execution-note">该项在第一条用户消息之前进入模型上下文；System 为实际生效的完整提示词，工具、Skill 和项目指令用于说明它的组成与来源。</p>
+      )}
+      {!isContextEntry && matchingTraces.length === 0 && !thinkingTrace && (
         <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
       )}
     </div>
@@ -944,6 +960,46 @@ export function AppShell() {
     }
     return groups;
   }, [activeAgent?.messages]);
+  const trajectoryContextEntries = useMemo(() => {
+    const snapshot = activeAgent?.contextSnapshot;
+    if (!snapshot) return [];
+    return [
+      {
+        id: "context-system",
+        role: "SYSTEM",
+        className: "system",
+        preview: snapshot.systemPrompt,
+        data: { type: "context_system", content: snapshot.systemPrompt },
+      },
+      {
+        id: "context-tools",
+        role: "TOOLS",
+        className: "tool-definition",
+        preview: snapshot.tools.length > 0
+          ? `${snapshot.tools.length} 个 · ${snapshot.tools.map((tool) => tool.name).join(" · ")}`
+          : "未启用工具",
+        data: { type: "context_tools", items: snapshot.tools },
+      },
+      {
+        id: "context-skills",
+        role: "SKILLS",
+        className: "skill",
+        preview: snapshot.skills.length > 0
+          ? `${snapshot.skills.length} 个 · ${snapshot.skills.map((skill) => skill.name).join(" · ")}`
+          : "未加载 Skill",
+        data: { type: "context_skills", items: snapshot.skills },
+      },
+      {
+        id: "context-instructions",
+        role: "INSTRUCTIONS",
+        className: "instruction",
+        preview: snapshot.contextFiles.length > 0
+          ? `${snapshot.contextFiles.length} 个 · ${snapshot.contextFiles.map((file) => file.path.split(/[\\/]/).pop() ?? file.path).join(" · ")}`
+          : "未加载项目指令",
+        data: { type: "context_instructions", items: snapshot.contextFiles },
+      },
+    ];
+  }, [activeAgent?.contextSnapshot]);
   const chatMessages = useMemo(() => {
     const grouped: AgentState["messages"] = [];
     for (const message of activeAgent?.messages ?? []) {
@@ -1087,8 +1143,11 @@ export function AppShell() {
 
   useEffect(() => {
     if (conversationView !== "trajectory" || !activeId) return;
-    void requestExecutionTraces(activeId).catch((traceError) => {
-      setError(traceError instanceof Error ? traceError.message : String(traceError));
+    void Promise.all([
+      requestExecutionTraces(activeId),
+      requestContextSnapshot(activeId),
+    ]).catch((trajectoryError) => {
+      setError(trajectoryError instanceof Error ? trajectoryError.message : String(trajectoryError));
     });
   }, [conversationView, activeId, activeAgent?.status]);
 
@@ -1384,6 +1443,7 @@ export function AppShell() {
           lastTurnUsage: null,
           sessionUsage: null,
           executionTraces: [],
+          contextSnapshot: null,
           autoCompactionEnabled: true,
           liveUsage: null,
           outputSinceLastUserInput: 0,
@@ -1969,10 +2029,37 @@ export function AppShell() {
             {conversationView === "trajectory" && activeAgent ? (
               <div className={`trajectory-view ${selectedTrajectoryEntry ? "trajectory-view-inspecting" : ""}`}>
                 <div className="trajectory-main">
-                  {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
+                  {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking && trajectoryContextEntries.length === 0 ? (
                     <div className="trajectory-empty">当前会话还没有轨迹数据</div>
                   ) : (
                     <div className="trajectory-list">
+                    {trajectoryContextEntries.length > 0 && (
+                      <section className={`trajectory-request trajectory-context-request ${trajectoryRequests.length > 0 ? "trajectory-context-request-with-conversation" : ""}`}>
+                        <span className="trajectory-request-label">CONTEXT</span>
+                        <div className="trajectory-request-events">
+                          {trajectoryContextEntries.map((entry) => (
+                            <div
+                              key={entry.id}
+                              className={`trajectory-row trajectory-row-${entry.className} ${selectedTrajectoryEntry?.id === entry.id ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              aria-pressed={selectedTrajectoryEntry?.id === entry.id}
+                              onClick={() => selectTrajectoryEntry({ id: entry.id, label: entry.role, data: entry.data })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectTrajectoryEntry({ id: entry.id, label: entry.role, data: entry.data });
+                                }
+                              }}
+                            >
+                              <span className="trajectory-node" />
+                              <span className="trajectory-role">{entry.role}</span>
+                              <div className="trajectory-content">{entry.preview || "—"}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                     {trajectoryRequests.map((request, requestIndex) => (
                       <section key={request.id} className="trajectory-request">
                         <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>

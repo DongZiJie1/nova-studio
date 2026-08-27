@@ -4671,6 +4671,24 @@ body {
   display: block;
 }
 
+.trajectory-context-request {
+  margin-bottom: 18px;
+}
+
+.trajectory-context-request .trajectory-row {
+  grid-template-columns: 16px 96px minmax(0, 1fr);
+}
+
+.trajectory-context-request-with-conversation::after {
+  content: "CONVERSATION";
+  display: block;
+  margin: 12px 0 8px 28px;
+  color: var(--color-text-muted);
+  font-size: 8.5px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+}
+
 .trajectory-list {
   position: relative;
   padding: 4px 0 4px 82px;
@@ -4832,6 +4850,59 @@ body {
   background: rgba(212, 138, 50, 0.2);
   box-shadow: 0 3px 10px rgba(182, 112, 31, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   text-shadow: 0 0 10px rgba(212, 138, 50, 0.32);
+}
+
+.trajectory-row-system .trajectory-role,
+.trajectory-row-tool-definition .trajectory-role,
+.trajectory-row-skill .trajectory-role,
+.trajectory-row-instruction .trajectory-role {
+  min-width: 72px;
+  padding: 0 7px;
+  font-size: 8.5px;
+}
+
+.trajectory-row-system .trajectory-role {
+  border-color: rgba(167, 139, 250, 0.4);
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.trajectory-row-system .trajectory-node {
+  background: #a78bfa;
+}
+
+.trajectory-row-tool-definition .trajectory-role {
+  border-color: rgba(251, 146, 60, 0.42);
+  color: #fdba74;
+  background: rgba(234, 88, 12, 0.19);
+}
+
+.trajectory-row-tool-definition .trajectory-node {
+  background: #fb923c;
+}
+
+.trajectory-row-skill .trajectory-role {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #6ee7b7;
+  background: rgba(5, 150, 105, 0.19);
+}
+
+.trajectory-row-skill .trajectory-node {
+  background: #34d399;
+}
+
+.trajectory-row-instruction .trajectory-role {
+  border-color: rgba(34, 211, 238, 0.4);
+  color: #67e8f9;
+  background: rgba(8, 145, 178, 0.19);
+}
+
+.trajectory-row-instruction .trajectory-node {
+  background: #22d3ee;
+}
+
+.trajectory-row-system::before {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent-start) 14%, transparent), transparent 82%);
 }
 
 .trajectory-content {
@@ -5143,6 +5214,46 @@ body {
   border-color: rgba(184, 110, 26, 0.24);
   color: #b56d1f;
   background: rgba(212, 138, 50, 0.17);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-system .trajectory-role {
+  border-color: rgba(124, 58, 237, 0.34);
+  color: #6d28d9;
+  background: rgba(139, 92, 246, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-system .trajectory-node {
+  background: #7c3aed;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-tool-definition .trajectory-role {
+  border-color: rgba(194, 65, 12, 0.34);
+  color: #c2410c;
+  background: rgba(249, 115, 22, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-tool-definition .trajectory-node {
+  background: #ea580c;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-skill .trajectory-role {
+  border-color: rgba(4, 120, 87, 0.32);
+  color: #047857;
+  background: rgba(16, 185, 129, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-skill .trajectory-node {
+  background: #059669;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-instruction .trajectory-role {
+  border-color: rgba(14, 116, 144, 0.32);
+  color: #0e7490;
+  background: rgba(6, 182, 212, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-instruction .trajectory-node {
+  background: #0891b2;
 }
 
 :root[data-theme="arctic-dawn"] .trajectory-row::before {

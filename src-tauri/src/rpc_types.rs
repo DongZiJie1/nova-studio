@@ -41,6 +41,8 @@ pub enum RpcCommand {
     },
     #[serde(rename = "get_state")]
     GetState { id: Option<String> },
+    #[serde(rename = "get_context_snapshot")]
+    GetContextSnapshot { id: Option<String> },
     #[serde(rename = "get_messages")]
     GetMessages { id: Option<String> },
     #[serde(rename = "get_session_stats")]
