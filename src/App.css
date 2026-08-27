@@ -433,6 +433,49 @@ body {
   color: var(--text-placeholder);
 }
 
+.input-attachment {
+  position: relative;
+  max-width: 200px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.input-attachment-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 34px 6px 10px;
+  color: #d1d5db;
+  font-size: 11px;
+}
+
+.input-attachment-name {
+  overflow: hidden;
+  color: inherit;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+
 .slash-command-menu {
   position: absolute;
   z-index: 50;
@@ -2886,6 +2929,30 @@ body {
     inset 0 -1px 0 rgba(79, 125, 243, 0.16),
     0 22px 58px -22px rgba(48, 83, 143, 0.42),
     0 0 0 3px rgba(79, 125, 243, 0.1);
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment {
+  border-color: rgba(79, 125, 243, 0.42);
+  background: rgba(242, 247, 255, 0.92);
+  box-shadow: 0 3px 10px rgba(55, 89, 143, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-content {
+  color: #29466f;
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-name {
+  font-weight: 600;
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-remove {
+  color: #fff;
+  background: #526787;
+  box-shadow: 0 1px 4px rgba(35, 55, 86, 0.24);
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-remove:hover {
+  background: #3c5275;
 }
 
 :root[data-theme="arctic-dawn"] .slash-command-menu,

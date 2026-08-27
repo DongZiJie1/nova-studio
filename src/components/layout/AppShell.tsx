@@ -2235,14 +2235,9 @@ export function AppShell() {
                       return (
                       <div
                         key={att.id}
+                        className="input-attachment"
                         style={{
-                          position: "relative",
                           width: att.isImage ? 64 : "auto",
-                          maxWidth: 200,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                          background: "rgba(255,255,255,0.05)",
                         }}
                       >
                         {att.isImage && att.previewUrl ? (
@@ -2258,21 +2253,12 @@ export function AppShell() {
                           />
                         ) : (
                           <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              padding: "6px 10px",
-                              fontSize: 11,
-                              color: "#d1d5db",
-                            }}
+                            className="input-attachment-content"
                           >
                             <IconComp size={14} color={typeInfo.color} style={{ flexShrink: 0 }} />
                             <span
+                              className="input-attachment-name"
                               style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
                                 maxWidth: 120,
                               }}
                             >
@@ -2293,24 +2279,10 @@ export function AppShell() {
                           </div>
                         )}
                         <button
+                          type="button"
+                          className="input-attachment-remove"
+                          aria-label={`Remove ${att.name}`}
                           onClick={() => removeAttachment(att.id)}
-                          style={{
-                            position: "absolute",
-                            top: 2,
-                            right: 2,
-                            width: 18,
-                            height: 18,
-                            borderRadius: "50%",
-                            background: "rgba(0,0,0,0.7)",
-                            border: "none",
-                            color: "#fff",
-                            fontSize: 10,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            padding: 0,
-                          }}
                         >
                           <X size={10} />
                         </button>

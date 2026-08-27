@@ -197,8 +197,9 @@ function guessMimeType(name: string): string {
 /** Parse attached file names from message content (sent as "--- Attached file: xxx ---") */
 function parseAttachmentsFromContent(content: string): { attachments: MessageAttachment[] | undefined; cleanContent: string } {
   const attachments: MessageAttachment[] = [];
-  // Match with flexible newlines: \r?\n\r?\n before, \r?\n after
-  const regex = /\r?\n\r?\n--- Attached file: (.+?) ---\r?\n/g;
+  // Attached file bodies are appended after the user's visible prompt. Extract
+  // their metadata, then keep the entire appended context out of the chat UI.
+  const regex = /\r?\n\r?\n--- Attached file: ([^\r\n]+?) ---\r?\n/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
     const fileName = match[1].trim();
@@ -210,8 +211,10 @@ function parseAttachmentsFromContent(content: string): { attachments: MessageAtt
       });
     }
   }
-  // Remove attachment markers from content
-  const cleanContent = content.replace(/\r?\n\r?\n--- Attached file: .+? ---\r?\n/g, '');
+  const attachmentContextStart = content.search(/\r?\n\r?\n--- Attached file: [^\r\n]+? ---\r?\n/);
+  const cleanContent = attachmentContextStart >= 0
+    ? content.slice(0, attachmentContextStart)
+    : content;
   return { attachments: attachments.length > 0 ? attachments : undefined, cleanContent };
 }
 
