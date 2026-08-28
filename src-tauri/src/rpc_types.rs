@@ -16,6 +16,18 @@ pub struct FileReference {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollaborationContext {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "requestDepth")]
+    pub request_depth: u64,
+    #[serde(rename = "visitedAgentIds")]
+    pub visited_agent_ids: Vec<String>,
+    #[serde(rename = "sourceAgentId")]
+    pub source_agent_id: String,
+}
+
 /// Commands sent from the bridge to the agent process (stdin)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -29,6 +41,9 @@ pub enum RpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "fileReferences")]
         file_references: Option<Vec<FileReference>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "collaborationContext")]
+        collaboration_context: Option<CollaborationContext>,
     },
     #[serde(rename = "abort")]
     Abort { id: Option<String> },
@@ -41,6 +56,8 @@ pub enum RpcCommand {
     },
     #[serde(rename = "get_state")]
     GetState { id: Option<String> },
+    #[serde(rename = "get_context_snapshot")]
+    GetContextSnapshot { id: Option<String> },
     #[serde(rename = "get_messages")]
     GetMessages { id: Option<String> },
     #[serde(rename = "get_session_stats")]
@@ -280,6 +297,7 @@ mod tests {
             file_references: Some(vec![FileReference {
                 path: "src/main.rs".into(),
             }]),
+            collaboration_context: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"mimeType\":\"image/png\""));

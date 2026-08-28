@@ -1,12 +1,16 @@
 use crate::agent_process::AgentProcess;
 use crate::nova_host_process::NovaHostProcess;
-use crate::rpc_types::{AgentInfo, FileReference, ImageContent, RpcCommand, SpawnRequest};
+use crate::rpc_types::{
+    AgentInfo, CollaborationContext, FileReference, ImageContent, RpcCommand, SpawnRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
+
+const MAX_AGENT_DEPTH: u64 = 2;
 
 /// Central manager for all agent processes.
 /// Shared between Tauri commands (UI-driven) and HTTP API (agent-driven).
@@ -21,7 +25,31 @@ pub struct AgentManager {
     hub_url: RwLock<String>,
     state_path: PathBuf,
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
+    persistence_lock: Arc<Mutex<()>>,
     host: Mutex<Option<Arc<NovaHostProcess>>>,
+}
+
+struct AskCancellationGuard {
+    agent: Arc<AgentProcess>,
+    armed: bool,
+}
+
+impl AskCancellationGuard {
+    fn new(agent: Arc<AgentProcess>) -> Self {
+        Self { agent, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AskCancellationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.agent.send_command(&RpcCommand::Abort { id: None });
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +100,7 @@ impl AgentManager {
             hub_url: RwLock::new("http://127.0.0.1:9528".to_string()),
             state_path,
             records: Arc::new(RwLock::new(HashMap::new())),
+            persistence_lock: Arc::new(Mutex::new(())),
             host: Mutex::new(None),
         }
     }
@@ -171,7 +200,12 @@ impl AgentManager {
             Err(error) => return Err(error),
         };
         *self.records.write().await = records;
+        self.persist_records().await?;
         Ok(())
+    }
+
+    async fn persist_records(&self) -> Result<(), String> {
+        persist_records_to_path(&self.state_path, &self.records, &self.persistence_lock).await
     }
 
     async fn load_nova_sessions(&self) -> Result<NovaSessionCatalog, String> {
@@ -253,6 +287,8 @@ impl AgentManager {
         // files were deleted outside Studio, while retaining live agents until
         // they stop so a refresh cannot make an active conversation disappear.
         records.retain(|id, _| catalog_ids.contains(id) || running_ids.contains(id));
+        drop(records);
+        self.persist_records().await?;
         Ok(())
     }
 
@@ -269,9 +305,23 @@ impl AgentManager {
 
     /// Spawn a new agent process
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentInfo, String> {
+        if request.depth > MAX_AGENT_DEPTH {
+            return Err(format!(
+                "Agent depth {} exceeds maximum {}",
+                request.depth, MAX_AGENT_DEPTH
+            ));
+        }
         if let Some(parent_id) = request.parent_agent_id.as_deref() {
-            if !self.agents.read().await.contains_key(parent_id) {
-                return Err(format!("Parent agent not found: {}", parent_id));
+            let agents = self.agents.read().await;
+            let parent = agents
+                .get(parent_id)
+                .ok_or_else(|| format!("Parent agent not found: {}", parent_id))?;
+            let expected_depth = parent.depth + 1;
+            if request.depth != expected_depth {
+                return Err(format!(
+                    "Invalid child depth {} for parent {} at depth {}; expected {}",
+                    request.depth, parent_id, parent.depth, expected_depth
+                ));
             }
         }
 
@@ -407,6 +457,8 @@ impl AgentManager {
         let mut rx = process.subscribe();
         let global_tx = self.global_event_tx.clone();
         let records = self.records.clone();
+        let state_path = self.state_path.clone();
+        let persistence_lock = self.persistence_lock.clone();
         let aid = agent_id.clone();
         tokio::spawn(async move {
             while let Ok(msg) = rx.recv().await {
@@ -415,6 +467,11 @@ impl AgentManager {
                     {
                         if let Some(record) = records.write().await.get_mut(&aid) {
                             record.name = Some(name.to_string());
+                        }
+                        if let Err(error) =
+                            persist_records_to_path(&state_path, &records, &persistence_lock).await
+                        {
+                            log::warn!("Failed to persist Agent name update: {error}");
                         }
                     }
                 }
@@ -428,6 +485,7 @@ impl AgentManager {
             .insert(agent_id.clone(), Arc::new(process));
         if persist {
             self.records.write().await.insert(agent_id.clone(), record);
+            self.persist_records().await?;
         }
 
         if let Some(agent) = self.get_process(&agent_id).await {
@@ -493,6 +551,7 @@ impl AgentManager {
             message,
             images,
             file_references,
+            collaboration_context: None,
         };
         agent.send_command(&cmd)
     }
@@ -517,6 +576,13 @@ impl AgentManager {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         agent.send_command(&RpcCommand::GetExecutionTraces { id: None })
+    }
+
+    /// Request the effective system prompt and its tool/instruction sources.
+    pub async fn request_context_snapshot(&self, agent_id: &str) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::GetContextSnapshot { id: None })
     }
 
     /// Request available models from an agent
@@ -691,6 +757,7 @@ impl AgentManager {
         agent_id: &str,
         question: String,
         timeout_secs: u64,
+        collaboration_context: CollaborationContext,
     ) -> Result<String, String> {
         let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
         if !agent.is_alive().await {
@@ -706,7 +773,12 @@ impl AgentManager {
             message: question,
             images: None,
             file_references: None,
+            collaboration_context: Some(collaboration_context),
         })?;
+        // If the HTTP caller disconnects, the future is cancelled, or any
+        // error/timeout path returns early, stop the target turn before
+        // releasing its prompt lock. Successful completion disarms this.
+        let mut cancellation_guard = AskCancellationGuard::new(agent.clone());
 
         let mut reply = String::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -739,6 +811,7 @@ impl AgentManager {
                     }
                 }
                 "agent_settled" => {
+                    cancellation_guard.disarm();
                     return if reply.is_empty() {
                         Err("agent settled without a text reply".to_string())
                     } else {
@@ -822,6 +895,17 @@ impl AgentManager {
         self.global_event_tx.subscribe()
     }
 
+    pub fn notify_delegated_task(&self, agent_id: &str, source_agent_id: &str, task: &str) {
+        let _ = self.global_event_tx.send((
+            agent_id.to_string(),
+            serde_json::json!({
+                "type": "agent_delegated_task",
+                "sourceAgentId": source_agent_id,
+                "task": task,
+            }),
+        ));
+    }
+
     /// Get the number of running agents
     pub async fn count(&self) -> usize {
         self.agents.read().await.len()
@@ -841,6 +925,26 @@ impl AgentManager {
             last_error: None,
         }
     }
+}
+
+async fn persist_records_to_path(
+    state_path: &std::path::Path,
+    records: &Arc<RwLock<HashMap<String, PersistedAgent>>>,
+    persistence_lock: &Arc<Mutex<()>>,
+) -> Result<(), String> {
+    let _guard = persistence_lock.lock().await;
+    let mut snapshot = records.read().await.values().cloned().collect::<Vec<_>>();
+    snapshot.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+    let contents = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|error| format!("Failed to serialize Studio Agent state: {error}"))?;
+    if let Some(parent) = state_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("Failed to create Studio state directory: {error}"))?;
+    }
+    tokio::fs::write(state_path, contents)
+        .await
+        .map_err(|error| format!("Failed to persist Studio Agent state: {error}"))
 }
 
 fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
@@ -1018,7 +1122,17 @@ mod tests {
         );
 
         let reply = manager
-            .ask(&info.id, "hello".to_string(), 15)
+            .ask(
+                &info.id,
+                "hello".to_string(),
+                15,
+                CollaborationContext {
+                    request_id: "test-request".to_string(),
+                    request_depth: 1,
+                    source_agent_id: "agent-parent".to_string(),
+                    visited_agent_ids: vec![info.id.clone()],
+                },
+            )
             .await
             .expect("ask failed");
 
@@ -1056,7 +1170,17 @@ mod tests {
             std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4())),
         );
         let err = manager
-            .ask("agent-nope", "hi".to_string(), 5)
+            .ask(
+                "agent-nope",
+                "hi".to_string(),
+                5,
+                CollaborationContext {
+                    request_id: "missing-request".to_string(),
+                    request_depth: 1,
+                    source_agent_id: "agent-parent".to_string(),
+                    visited_agent_ids: vec!["agent-parent".to_string()],
+                },
+            )
             .await
             .unwrap_err();
         assert_eq!(err, "Agent not found");
@@ -1064,10 +1188,8 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_records_parent_child_relationship() {
-        let manager = AgentManager::new(
-            mock_cli_path(),
-            std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4())),
-        );
+        let state_path = std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4()));
+        let manager = AgentManager::new(mock_cli_path(), state_path.clone());
         let parent = manager
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
@@ -1098,9 +1220,66 @@ mod tests {
             listed_child.parent_agent_id.as_deref(),
             Some(parent.id.as_str())
         );
+        let persisted: Vec<PersistedAgent> =
+            serde_json::from_str(&tokio::fs::read_to_string(&state_path).await.unwrap()).unwrap();
+        let persisted_child = persisted
+            .iter()
+            .find(|record| record.id == child.id)
+            .unwrap();
+        assert_eq!(
+            persisted_child.parent_agent_id.as_deref(),
+            Some(parent.id.as_str())
+        );
 
         manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
+        let _ = tokio::fs::remove_file(state_path).await;
+    }
+
+    #[tokio::test]
+    async fn restore_preserves_persisted_agent_relationships() {
+        let state_path =
+            std::env::temp_dir().join(format!("nova-studio-relation-{}.json", Uuid::new_v4()));
+        let records = vec![
+            PersistedAgent {
+                id: "agent-mock-parent".to_string(),
+                parent_agent_id: None,
+                name: Some("Parent".to_string()),
+                cwd: "/tmp".to_string(),
+                model: None,
+                provider: None,
+                args: Vec::new(),
+                session_id: "mock-parent".to_string(),
+                session_file: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                message_count: 0,
+                depth: 0,
+            },
+            PersistedAgent {
+                id: "agent-mock-child".to_string(),
+                parent_agent_id: Some("agent-mock-parent".to_string()),
+                name: Some("Child".to_string()),
+                cwd: "/tmp".to_string(),
+                model: None,
+                provider: None,
+                args: Vec::new(),
+                session_id: "mock-child".to_string(),
+                session_file: None,
+                created_at: "2026-01-01T00:00:01Z".to_string(),
+                message_count: 0,
+                depth: 1,
+            },
+        ];
+        tokio::fs::write(&state_path, serde_json::to_vec(&records).unwrap())
+            .await
+            .unwrap();
+
+        let restored = AgentManager::new(mock_cli_path(), state_path.clone());
+        restored.restore().await.unwrap();
+        let child = restored.get_info("agent-mock-child").await.unwrap();
+        assert_eq!(child.parent_agent_id.as_deref(), Some("agent-mock-parent"));
+
+        let _ = tokio::fs::remove_file(state_path).await;
     }
 
     #[tokio::test]

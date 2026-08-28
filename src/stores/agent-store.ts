@@ -4,6 +4,7 @@ import type {
   AgentEventPayload,
   AgentInfo,
   ContextUsage,
+  ContextSnapshot,
   ExecutionTrace,
   ModelMeta,
   PersistedRpcMessage,
@@ -47,6 +48,7 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCall[];
   attachments?: MessageAttachment[];
+  sourceAgentId?: string;
 }
 
 export interface AgentState {
@@ -76,6 +78,8 @@ export interface AgentState {
   sessionUsage: SessionUsage | null;
   /** Persisted execution timing for turns, model calls, and tool calls. */
   executionTraces: ExecutionTrace[];
+  /** Effective model context before conversation messages. */
+  contextSnapshot: ContextSnapshot | null;
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
   /** Live usage of the in-flight turn, streamed from message_update events */
@@ -146,6 +150,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     lastTurnUsage: null,
     sessionUsage: null,
     executionTraces: [],
+    contextSnapshot: null,
     autoCompactionEnabled: true,
     liveUsage: null,
     outputSinceLastUserInput: 0,
@@ -197,8 +202,9 @@ function guessMimeType(name: string): string {
 /** Parse attached file names from message content (sent as "--- Attached file: xxx ---") */
 function parseAttachmentsFromContent(content: string): { attachments: MessageAttachment[] | undefined; cleanContent: string } {
   const attachments: MessageAttachment[] = [];
-  // Match with flexible newlines: \r?\n\r?\n before, \r?\n after
-  const regex = /\r?\n\r?\n--- Attached file: (.+?) ---\r?\n/g;
+  // Attached file bodies are appended after the user's visible prompt. Extract
+  // their metadata, then keep the entire appended context out of the chat UI.
+  const regex = /\r?\n\r?\n--- Attached file: ([^\r\n]+?) ---\r?\n/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
     const fileName = match[1].trim();
@@ -210,14 +216,17 @@ function parseAttachmentsFromContent(content: string): { attachments: MessageAtt
       });
     }
   }
-  // Remove attachment markers from content
-  const cleanContent = content.replace(/\r?\n\r?\n--- Attached file: .+? ---\r?\n/g, '');
+  const attachmentContextStart = content.search(/\r?\n\r?\n--- Attached file: [^\r\n]+? ---\r?\n/);
+  const cleanContent = attachmentContextStart >= 0
+    ? content.slice(0, attachmentContextStart)
+    : content;
   return { attachments: attachments.length > 0 ? attachments : undefined, cleanContent };
 }
 
 function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<string, "up" | "down"> = {}): ChatMessage[] {
   const hydrated: ChatMessage[] = [];
   const pendingToolCalls = new Map<string, ToolCall>();
+  let pendingSourceAgentId: string | undefined;
 
   for (const message of messages) {
     const parsedTimestamp =
@@ -225,6 +234,14 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         ? message.timestamp
         : Date.parse(message.timestamp ?? "");
     const timestamp = Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now();
+
+    if (message.role === "custom" && message.customType === "agent_collaboration_context") {
+      const details = message.details && typeof message.details === "object"
+        ? message.details as Record<string, unknown>
+        : {};
+      pendingSourceAgentId = typeof details.sourceAgentId === "string" ? details.sourceAgentId : undefined;
+      continue;
+    }
 
     if (message.role === "user") {
       const rawContent = messageText(message);
@@ -237,7 +254,9 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         content: cleanContent,
         timestamp,
         attachments,
+        sourceAgentId: pendingSourceAgentId,
       });
+      pendingSourceAgentId = undefined;
       continue;
     }
 
@@ -461,6 +480,25 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       return;
     }
 
+    if (event.type === "agent_delegated_task") {
+      set((s) => ({
+        agents: s.agents.map((agent) => agent.id === agentId
+          ? {
+              ...agent,
+              messages: [...agent.messages, {
+                id: nextId(),
+                role: "user",
+                content: event.task,
+                timestamp: Date.now(),
+                sourceAgentId: event.sourceAgentId,
+              }],
+              messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+            }
+          : agent),
+      }));
+      return;
+    }
+
     if (
       event.type === "response" &&
       event.command === "get_execution_traces" &&
@@ -470,6 +508,20 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       const executionTraces = event.data.traces as ExecutionTrace[];
       set((s) => ({
         agents: s.agents.map((agent) => agent.id === agentId ? { ...agent, executionTraces } : agent),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_context_snapshot" &&
+      event.success &&
+      event.data &&
+      typeof event.data.systemPrompt === "string"
+    ) {
+      const contextSnapshot = event.data as unknown as ContextSnapshot;
+      set((s) => ({
+        agents: s.agents.map((agent) => agent.id === agentId ? { ...agent, contextSnapshot } : agent),
       }));
       return;
     }

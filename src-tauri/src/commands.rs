@@ -323,6 +323,14 @@ pub async fn request_execution_traces(
 }
 
 #[tauri::command]
+pub async fn request_context_snapshot(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    state.0.request_context_snapshot(&agent_id).await
+}
+
+#[tauri::command]
 pub async fn request_available_models(
     state: State<'_, AgentManagerState>,
     agent_id: String,

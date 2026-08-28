@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
@@ -15,6 +15,7 @@ import {
   requestAvailableModels,
   requestSessionStats,
   requestExecutionTraces,
+  requestContextSnapshot,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
@@ -30,6 +31,12 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
+
+const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task", "hub_wait_tasks"]);
+
+function isAgentTrajectoryTool(name: string): boolean {
+  return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
+}
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { StreamingText } from "../chat/StreamingText";
@@ -46,6 +53,7 @@ import { findFileMention, insertFileMention } from "../../lib/file-mentions";
 import {
   Paperclip,
   ArrowUp,
+  ArrowDown,
   Square,
   FolderOpen,
   Pencil,
@@ -107,6 +115,44 @@ interface SelectedTrajectoryEntry {
 
 type TrajectoryDetailView = "execution" | "json";
 
+interface ChatHistoryProps {
+  messages: AgentState["messages"];
+  agentSenderLabels: Record<string, string>;
+  avatarId: AgentState["avatarId"];
+  actionableAssistantMessageIds: Set<string>;
+  turnFileChangesByAssistantId: Map<string, TurnFileChange[]>;
+  onFeedback: (message: AgentState["messages"][number], rating: "up" | "down" | null) => void;
+  onFork: (message: AgentState["messages"][number]) => void;
+}
+
+const ChatHistory = memo(function ChatHistory({
+  messages,
+  agentSenderLabels,
+  avatarId,
+  actionableAssistantMessageIds,
+  turnFileChangesByAssistantId,
+  onFeedback,
+  onFork,
+}: ChatHistoryProps) {
+  return messages.map((message) => (
+    <div
+      key={message.id}
+      id={message.role === "user" ? `conversation-turn-${message.id}` : undefined}
+      style={{ scrollMarginTop: 24 }}
+    >
+      <ChatMessage
+        message={message}
+        userLabel={message.sourceAgentId ? (agentSenderLabels[message.sourceAgentId] ?? "Main Agent") : "User"}
+        avatarId={avatarId}
+        showActions={actionableAssistantMessageIds.has(message.id)}
+        onFeedback={onFeedback}
+        onFork={onFork}
+        fileChanges={turnFileChangesByAssistantId.get(message.id)}
+      />
+    </div>
+  ));
+});
+
 function formatTrajectoryTime(value: unknown): string {
   if (typeof value !== "number" && typeof value !== "string") return "暂无时间数据";
   const date = new Date(value);
@@ -164,12 +210,24 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
         ? "模型思考"
         : role === "user"
           ? "用户输入"
+          : role === "context_system"
+            ? "系统提示词"
+            : role === "context_tools"
+              ? "工具定义集合"
+              : role === "context_skills"
+                ? "Skill 声明集合"
+                : role === "context_instructions"
+                  ? "项目指令集合"
           : role;
+  const isContextEntry = role.startsWith("context_");
 
   return (
     <div className="trajectory-execution-details">
       <dl className="trajectory-execution-summary">
         <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
+        {isContextEntry && Array.isArray(data.items) && <div><dt>资源数量</dt><dd>{data.items.length}</dd></div>}
+        {isContextEntry && typeof data.name === "string" && <div><dt>资源名称</dt><dd>{data.name}</dd></div>}
+        {isContextEntry && typeof data.path === "string" && <div><dt>来源路径</dt><dd>{data.path}</dd></div>}
         <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
         {(role === "assistant" || role === "streaming_assistant" || role === "thinking" || role === "streaming_thinking") && (
           <div><dt>调用模型</dt><dd>{modelTrace?.model ?? modelName}</dd></div>
@@ -214,11 +272,61 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
           </div>
         </section>
       )}
-      {matchingTraces.length === 0 && !thinkingTrace && (
+      {isContextEntry && (
+        <p className="trajectory-execution-note">该项在第一条用户消息之前进入模型上下文；System 仅展示基础系统指令，工具、Skill 和项目指令分别在独立条目中展示。</p>
+      )}
+      {!isContextEntry && matchingTraces.length === 0 && !thinkingTrace && (
         <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
       )}
     </div>
   );
+}
+
+function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
+  const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
+  const type = typeof data.type === "string" ? data.type : "";
+
+  if (type === "context_system") {
+    return <pre className="trajectory-detail-text">{typeof data.content === "string" ? data.content : ""}</pre>;
+  }
+
+  if (type === "context_tools" || type === "context_skills") {
+    const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
+    const suffix = type === "context_tools" ? "工具" : "Skill";
+    return (
+      <div className="trajectory-detail-resources">
+        {items.map((item, index) => (
+          <section key={`${String(item.name ?? suffix)}-${index}`} className="trajectory-detail-resource">
+            <strong>{String(item.name ?? "未命名")} {suffix}</strong>
+            <p>{typeof item.description === "string" && item.description ? item.description : "暂无描述"}</p>
+            {type === "context_skills" && typeof item.filePath === "string" && <span>{item.filePath}</span>}
+          </section>
+        ))}
+        {items.length === 0 && <p className="trajectory-detail-empty">暂无内容</p>}
+      </div>
+    );
+  }
+
+  if (type === "context_instructions") {
+    const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
+    return (
+      <div className="trajectory-detail-resources">
+        {items.map((item, index) => {
+          const path = typeof item.path === "string" ? item.path : "项目指令";
+          return (
+            <section key={`${path}-${index}`} className="trajectory-detail-resource trajectory-detail-instruction">
+              <strong>{path.split(/[\\/]/).pop() ?? path}</strong>
+              <span>{path}</span>
+              <pre>{typeof item.content === "string" ? item.content : ""}</pre>
+            </section>
+          );
+        })}
+        {items.length === 0 && <p className="trajectory-detail-empty">暂无内容</p>}
+      </div>
+    );
+  }
+
+  return <pre className="trajectory-detail-json">{JSON.stringify(entry.data, null, 2)}</pre>;
 }
 
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
@@ -599,7 +707,7 @@ interface AgentTreeNodeProps {
   depth?: number;
 }
 
-function AgentTreeNode({
+const AgentTreeNode = memo(function AgentTreeNode({
   agent,
   childrenByParent,
   agentsById,
@@ -696,7 +804,7 @@ function AgentTreeNode({
       )}
     </div>
   );
-}
+});
 
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
@@ -744,6 +852,7 @@ export function AppShell() {
   const [settingsSection, setSettingsSection] = useState<"appearance" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
   const [trajectoryDetailView, setTrajectoryDetailView] = useState<TrajectoryDetailView>("execution");
   const [pendingProjectCwd, setPendingProjectCwd] = useState<string | null>(null);
@@ -765,6 +874,7 @@ export function AppShell() {
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
   const isComposingRef = useRef(false);
 
   const userHistory = useMemo(() => {
@@ -799,21 +909,53 @@ export function AppShell() {
     autoResize();
   }, [autoResize, pendingAttachments]);
 
-  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const isAgentHidden = (agent: AgentState): boolean => {
-    if (hiddenAgentIds.has(agent.id)) return true;
-    let parentId = agent.parentAgentId;
-    while (parentId) {
-      if (hiddenAgentIds.has(parentId)) return true;
-      parentId = agentsById.get(parentId)?.parentAgentId ?? null;
+  const agentNavigationKey = agents.map((agent) => [
+    agent.id,
+    agent.parentAgentId ?? "",
+    agent.cwd,
+    agent.name ?? "",
+    agent.status,
+    agent.messageCount,
+  ].join("\u001f")).join("\u001e");
+  const { agentsById, visibleAgents, visibleAgentIds, childrenByParent, rootsByProject } = useMemo(() => {
+    const byId = new Map(agents.map((agent) => [agent.id, agent]));
+    const isAgentHidden = (agent: AgentState): boolean => {
+      if (hiddenAgentIds.has(agent.id)) return true;
+      let parentId = agent.parentAgentId;
+      while (parentId) {
+        if (hiddenAgentIds.has(parentId)) return true;
+        parentId = byId.get(parentId)?.parentAgentId ?? null;
+      }
+      return false;
+    };
+    const visible = agents.filter(
+      (agent) => !isAgentHidden(agent) && !isTemporaryRuntimeProject(agent.cwd),
+    );
+    const visibleById = new Map(visible.map((agent) => [agent.id, agent]));
+    const children = new Map<string, AgentState[]>();
+    const roots = new Map<string, AgentState[]>();
+    for (const agent of visible) {
+      if (agent.parentAgentId && visibleById.has(agent.parentAgentId)) {
+        const siblings = children.get(agent.parentAgentId) ?? [];
+        siblings.push(agent);
+        children.set(agent.parentAgentId, siblings);
+      } else {
+        const projectAgents = roots.get(agent.cwd) ?? [];
+        projectAgents.push(agent);
+        roots.set(agent.cwd, projectAgents);
+      }
     }
-    return false;
-  };
-  const visibleAgents = agents.filter(
-    (agent) => !isAgentHidden(agent) && !isTemporaryRuntimeProject(agent.cwd),
-  );
-  const visibleAgentsById = new Map(visibleAgents.map((agent) => [agent.id, agent]));
-  const activeAgent = visibleAgents.find((a) => a.id === activeId);
+    return {
+      agentsById: byId,
+      visibleAgents: visible,
+      visibleAgentIds: new Set(visible.map((agent) => agent.id)),
+      childrenByParent: children,
+      rootsByProject: roots,
+    };
+  }, [agentNavigationKey, hiddenAgentIds]);
+  const activeAgent = activeId && visibleAgentIds.has(activeId)
+    ? agents.find((agent) => agent.id === activeId)
+    : undefined;
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
   // possibly-stale `model` field that list_agents reports from spawn time.
@@ -824,22 +966,6 @@ export function AppShell() {
     () => availableModels.find((m) => m.id === activeModelId)?.name ?? activeModelId ?? "Model",
     [availableModels, activeModelId],
   );
-  const childrenByParent = new Map<string, AgentState[]>();
-  for (const agent of visibleAgents) {
-    if (!agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId)) continue;
-    const siblings = childrenByParent.get(agent.parentAgentId) ?? [];
-    siblings.push(agent);
-    childrenByParent.set(agent.parentAgentId, siblings);
-  }
-  const rootAgents = visibleAgents.filter(
-    (agent) => !agent.parentAgentId || !visibleAgentsById.has(agent.parentAgentId),
-  );
-  const rootsByProject = new Map<string, AgentState[]>();
-  for (const agent of rootAgents) {
-    const projectAgents = rootsByProject.get(agent.cwd) ?? [];
-    projectAgents.push(agent);
-    rootsByProject.set(agent.cwd, projectAgents);
-  }
   const hasMessages =
     (activeAgent?.messages.length ?? 0) > 0 ||
     (activeAgent?.messageCount ?? 0) > 0;
@@ -854,14 +980,13 @@ export function AppShell() {
   const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
   const inputProjectName =
     projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd;
-  const conversationParent = activeAgent?.parentAgentId
-    ? agentsById.get(activeAgent.parentAgentId)
-    : undefined;
-  const conversationUserLabel = conversationParent
-    ? agentDisplayName(conversationParent, agentNames)
-    : activeAgent?.parentAgentId
-      ? (agentNames[activeAgent.parentAgentId] ?? "Parent Agent")
-      : "You";
+  const agentSenderLabels = useMemo(
+    () => Object.fromEntries(agents.map((agent) => [
+      agent.id,
+      agentNames[agent.id] || (!agent.parentAgentId ? "Main Agent" : agentDisplayName(agent, agentNames)),
+    ])),
+    [agents, agentNames],
+  );
   const availableProjectCwds = Array.from(
     new Set([
       ...rootsByProject.keys(),
@@ -872,7 +997,10 @@ export function AppShell() {
   const streamingText = activeAgent?.streamingText ?? "";
   const slashCommands = slashCommandMenuDismissed ? [] : matchingSlashCommands(input);
   const fileMention = fileMentionMenuDismissed ? null : findFileMention(input, cursorPosition);
-  const conversationPairs = buildConversationPairs(activeAgent?.messages ?? []);
+  const conversationPairs = useMemo(
+    () => buildConversationPairs(activeAgent?.messages ?? []),
+    [activeAgent?.messages],
+  );
   const trajectoryRequests = useMemo(() => {
     const groups: Array<{ id: string; messages: AgentState["messages"] }> = [];
     for (const message of activeAgent?.messages ?? []) {
@@ -884,6 +1012,46 @@ export function AppShell() {
     }
     return groups;
   }, [activeAgent?.messages]);
+  const trajectoryContextEntries = useMemo(() => {
+    const snapshot = activeAgent?.contextSnapshot;
+    if (!snapshot) return [];
+    return [
+      {
+        id: "context-system",
+        role: "SYSTEM",
+        className: "system",
+        preview: snapshot.systemPrompt,
+        data: { type: "context_system", content: snapshot.systemPrompt },
+      },
+      {
+        id: "context-tools",
+        role: "TOOLS",
+        className: "tool-definition",
+        preview: snapshot.tools.length > 0
+          ? `${snapshot.tools.length} 个 · ${snapshot.tools.map((tool) => tool.name).join(" · ")}`
+          : "未启用工具",
+        data: { type: "context_tools", items: snapshot.tools },
+      },
+      {
+        id: "context-skills",
+        role: "SKILLS",
+        className: "skill",
+        preview: snapshot.skills.length > 0
+          ? `${snapshot.skills.length} 个 · ${snapshot.skills.map((skill) => skill.name).join(" · ")}`
+          : "未加载 Skill",
+        data: { type: "context_skills", items: snapshot.skills },
+      },
+      {
+        id: "context-instructions",
+        role: "INSTRUCTIONS",
+        className: "instruction",
+        preview: snapshot.contextFiles.length > 0
+          ? `${snapshot.contextFiles.length} 个 · ${snapshot.contextFiles.map((file) => file.path.split(/[\\/]/).pop() ?? file.path).join(" · ")}`
+          : "未加载项目指令",
+        data: { type: "context_instructions", items: snapshot.contextFiles },
+      },
+    ];
+  }, [activeAgent?.contextSnapshot]);
   const chatMessages = useMemo(() => {
     const grouped: AgentState["messages"] = [];
     for (const message of activeAgent?.messages ?? []) {
@@ -962,7 +1130,7 @@ export function AppShell() {
       });
       setError(feedbackError instanceof Error ? feedbackError.message : String(feedbackError));
     });
-  }, [activeAgent, updateAgent]);
+  }, [activeAgent?.id, activeAgent?.messages, updateAgent]);
 
   const handleForkMessage = useCallback((message: AgentState["messages"][number]) => {
     if (!activeAgent || !message.entryId) return;
@@ -974,12 +1142,37 @@ export function AppShell() {
         syncAgents(infos);
       })
       .catch((forkError) => setError(forkError instanceof Error ? forkError.message : String(forkError)));
-  }, [activeAgent, syncAgents]);
+  }, [activeAgent?.id, syncAgents]);
   const showConversationMinimap =
     conversationPairs.length >= CONVERSATION_MINIMAP_PAIR_THRESHOLD;
 
+  const handleConversationScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isNearBottom = distanceFromBottom <= 48;
+    isNearBottomRef.current = isNearBottom;
+    setShowScrollToBottom(!isNearBottom && container.scrollHeight > container.clientHeight);
+  }, []);
+
+  const scrollConversationToBottom = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    isNearBottomRef.current = true;
+    setShowScrollToBottom(false);
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    isNearBottomRef.current = true;
+    setShowScrollToBottom(false);
+    const frame = window.requestAnimationFrame(scrollConversationToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeId, scrollConversationToBottom]);
+
   useEffect(() => {
     if (conversationView !== "chat" || settingsOpen || activeAgent?.status !== "streaming") return;
+    if (!isNearBottomRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       const container = scrollRef.current;
       if (container) container.scrollTop = container.scrollHeight;
@@ -1002,8 +1195,11 @@ export function AppShell() {
 
   useEffect(() => {
     if (conversationView !== "trajectory" || !activeId) return;
-    void requestExecutionTraces(activeId).catch((traceError) => {
-      setError(traceError instanceof Error ? traceError.message : String(traceError));
+    void Promise.all([
+      requestExecutionTraces(activeId),
+      requestContextSnapshot(activeId),
+    ]).catch((trajectoryError) => {
+      setError(trajectoryError instanceof Error ? trajectoryError.message : String(trajectoryError));
     });
   }, [conversationView, activeId, activeAgent?.status]);
 
@@ -1299,6 +1495,7 @@ export function AppShell() {
           lastTurnUsage: null,
           sessionUsage: null,
           executionTraces: [],
+          contextSnapshot: null,
           autoCompactionEnabled: true,
           liveUsage: null,
           outputSinceLastUserInput: 0,
@@ -1432,7 +1629,7 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", abortOnEscape);
   }, [activeAgent?.status, handleAbort]);
 
-  const handleSelectAgent = (agentId: string) => {
+  const handleSelectAgent = useCallback((agentId: string) => {
     setSettingsOpen(false);
     setConversationView("chat");
     setActiveAgent(agentId);
@@ -1455,7 +1652,14 @@ export function AppShell() {
         updateAgent(agentId, { status: "error" });
         setError(message);
       });
-  };
+  }, [agentsById, setActiveAgent, updateAgent]);
+
+  const handleEditAgent = useCallback((agent: AgentState) => {
+    setEditingAgent({
+      id: agent.id,
+      name: agentDisplayName(agent, agentNames),
+    });
+  }, [agentNames]);
 
   const handleChooseBackground = async () => {
     const selected = await open({
@@ -1743,12 +1947,7 @@ export function AppShell() {
                             activeId={activeId}
                             onSelect={handleSelectAgent}
                             agentNames={agentNames}
-                            onEdit={(agent) =>
-                              setEditingAgent({
-                                id: agent.id,
-                                name: agentDisplayName(agent, agentNames),
-                              })
-                            }
+                            onEdit={handleEditAgent}
                             onHide={setHidingAgent}
                           />
                         ))}
@@ -1873,6 +2072,7 @@ export function AppShell() {
           {/* Content area */}
           <div
             ref={scrollRef}
+            onScroll={handleConversationScroll}
             className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
             }`}
@@ -1881,33 +2081,70 @@ export function AppShell() {
             {conversationView === "trajectory" && activeAgent ? (
               <div className={`trajectory-view ${selectedTrajectoryEntry ? "trajectory-view-inspecting" : ""}`}>
                 <div className="trajectory-main">
-                  {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking ? (
+                  {activeAgent.messages.length === 0 && activeAgent.activeToolCalls.size === 0 && !activeAgent.streamingThinking && trajectoryContextEntries.length === 0 ? (
                     <div className="trajectory-empty">当前会话还没有轨迹数据</div>
                   ) : (
                     <div className="trajectory-list">
-                    {trajectoryRequests.map((request, requestIndex) => (
-                      <section key={request.id} className="trajectory-request">
-                        <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>
+                    {trajectoryContextEntries.length > 0 && (
+                      <section className="trajectory-request trajectory-context-request">
+                        <span className="trajectory-request-label">CONTEXT</span>
                         <div className="trajectory-request-events">
-                          {request.messages.map((message) => (
+                          {trajectoryContextEntries.map((entry) => (
                             <div
-                              key={message.id}
-                              className={`trajectory-row trajectory-row-${message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              key={entry.id}
+                              className={`trajectory-row trajectory-row-${entry.className} ${selectedTrajectoryEntry?.id === entry.id ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
-                              aria-pressed={selectedTrajectoryEntry?.id === message.id}
-                              onClick={() => selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message })}
+                              aria-pressed={selectedTrajectoryEntry?.id === entry.id}
+                              onClick={() => selectTrajectoryEntry({ id: entry.id, label: entry.role, data: entry.data })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message });
+                                  selectTrajectoryEntry({ id: entry.id, label: entry.role, data: entry.data });
                                 }
                               }}
                             >
                               <span className="trajectory-node" />
-                              <span className="trajectory-role">
-                                {message.role === "user" ? "USER" : message.role === "assistant" ? "ASSISTANT" : message.role === "thinking" ? "THINK" : "TOOL"}
-                              </span>
+                              <span className="trajectory-role">{entry.role}</span>
+                              <div className="trajectory-content">{entry.preview || "—"}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                    {trajectoryRequests.map((request, requestIndex) => (
+                      <section key={request.id} className="trajectory-request">
+                        <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>
+                        <div className="trajectory-request-events">
+                          {request.messages.map((message) => {
+                            const isAgentTool = message.role === "tool"
+                              && Boolean(message.toolCalls?.some((tool) => isAgentTrajectoryTool(tool.name)));
+                            const trajectoryRole = isAgentTool
+                              ? "AGENT"
+                              : message.role === "user"
+                                ? "USER"
+                                : message.role === "assistant"
+                                  ? "ASSISTANT"
+                                  : message.role === "thinking"
+                                    ? "THINK"
+                                    : "TOOL";
+                            return (
+                            <div
+                              key={message.id}
+                              className={`trajectory-row trajectory-row-${isAgentTool ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              aria-pressed={selectedTrajectoryEntry?.id === message.id}
+                              onClick={() => selectTrajectoryEntry({ id: message.id, label: trajectoryRole, data: message })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectTrajectoryEntry({ id: message.id, label: trajectoryRole, data: message });
+                                }
+                              }}
+                            >
+                              <span className="trajectory-node" />
+                              <span className="trajectory-role">{trajectoryRole}</span>
                               <div className="trajectory-content">
                                 {message.role === "tool" && message.toolCalls?.length
                                   ? message.toolCalls.map((tool) => (
@@ -1920,7 +2157,8 @@ export function AppShell() {
                                   : message.content || "—"}
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                           {requestIndex === trajectoryRequests.length - 1 && activeAgent.streamingThinking && (
                             <div
                               className={`trajectory-row trajectory-row-thinking trajectory-row-live ${selectedTrajectoryEntry?.id === "live-thinking" ? "trajectory-row-selected" : ""}`}
@@ -1939,29 +2177,33 @@ export function AppShell() {
                               <div className="trajectory-content">{activeAgent.streamingThinking}</div>
                             </div>
                           )}
-                          {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => (
+                          {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => {
+                            const isAgentTool = isAgentTrajectoryTool(tool.name);
+                            const trajectoryRole = isAgentTool ? "AGENT" : "TOOL";
+                            return (
                             <div
                               key={tool.id}
-                              className={`trajectory-row trajectory-row-tool trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
+                              className={`trajectory-row trajectory-row-${isAgentTool ? "agent" : "tool"} trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
-                              onClick={() => selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } })}
+                              onClick={() => selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: trajectoryRole, data: { type: "active_tool_call", ...tool } })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } });
+                                  selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: trajectoryRole, data: { type: "active_tool_call", ...tool } });
                                 }
                               }}
                             >
                               <span className="trajectory-node" />
-                              <span className="trajectory-role">TOOL</span>
+                              <span className="trajectory-role">{trajectoryRole}</span>
                               <div className="trajectory-content trajectory-tool-line">
                                 <strong>{tool.name}</strong>
                                 <span>{JSON.stringify(tool.args)}</span>
                                 {tool.result !== undefined && <span>→ {String(tool.result)}</span>}
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                           {requestIndex === trajectoryRequests.length - 1 && streamingText && (
                             <div
                               className={`trajectory-row trajectory-row-assistant trajectory-row-live ${selectedTrajectoryEntry?.id === "live-assistant" ? "trajectory-row-selected" : ""}`}
@@ -1992,7 +2234,7 @@ export function AppShell() {
                 >
                     <header className="trajectory-detail-header">
                       <div>
-                        <span className="trajectory-detail-kicker">SESSION JSON</span>
+                        <span className="trajectory-detail-kicker">TRAJECTORY DETAIL</span>
                         <strong>{selectedTrajectoryEntry?.label ?? "DETAIL"}</strong>
                       </div>
                       <button
@@ -2006,14 +2248,12 @@ export function AppShell() {
                     </header>
                     <div className="trajectory-detail-tabs" role="tablist" aria-label="轨迹详情显示方式">
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "execution"} className={trajectoryDetailView === "execution" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("execution")}>执行信息</button>
-                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整 JSON</button>
+                      <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整信息</button>
                     </div>
                     {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
                       <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
                     ) : (
-                      <pre className="trajectory-detail-json">
-                        {selectedTrajectoryEntry ? JSON.stringify(selectedTrajectoryEntry.data, null, 2) : ""}
-                      </pre>
+                      selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
                     )}
                   </aside>
               </div>
@@ -2120,23 +2360,17 @@ export function AppShell() {
                     Loading conversation…
                   </div>
                 )}
-                {activeAgent && chatMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    id={msg.role === "user" ? `conversation-turn-${msg.id}` : undefined}
-                    style={{ scrollMarginTop: 24 }}
-                  >
-                    <ChatMessage
-                      message={msg}
-                      userLabel={conversationUserLabel}
-                      avatarId={activeAgent.avatarId}
-                      showActions={actionableAssistantMessageIds.has(msg.id)}
-                      onFeedback={handleMessageFeedback}
-                      onFork={handleForkMessage}
-                      fileChanges={turnFileChangesByAssistantId.get(msg.id)}
-                    />
-                  </div>
-                ))}
+                {activeAgent && (
+                  <ChatHistory
+                    messages={chatMessages}
+                    agentSenderLabels={agentSenderLabels}
+                    avatarId={activeAgent.avatarId}
+                    actionableAssistantMessageIds={actionableAssistantMessageIds}
+                    turnFileChangesByAssistantId={turnFileChangesByAssistantId}
+                    onFeedback={handleMessageFeedback}
+                    onFork={handleForkMessage}
+                  />
+                )}
 
                 {/* Active tool calls */}
                 {activeAgent && activeAgent.activeToolCalls.size > 0 && (
@@ -2198,7 +2432,18 @@ export function AppShell() {
               justifyContent: "center",
             }}
           >
-            <div style={{ width: "100%", maxWidth: 640 }}>
+            <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
+              {showScrollToBottom && activeAgent && (
+                <button
+                  type="button"
+                  className="scroll-to-bottom-button"
+                  onClick={scrollConversationToBottom}
+                  aria-label="滚动到对话底部"
+                  title="滚动到最新消息"
+                >
+                  <ArrowDown size={18} />
+                </button>
+              )}
               {activeAgent && <SessionStats agent={activeAgent} />}
               {/* Input card */}
               <div
@@ -2235,14 +2480,9 @@ export function AppShell() {
                       return (
                       <div
                         key={att.id}
+                        className="input-attachment"
                         style={{
-                          position: "relative",
                           width: att.isImage ? 64 : "auto",
-                          maxWidth: 200,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                          background: "rgba(255,255,255,0.05)",
                         }}
                       >
                         {att.isImage && att.previewUrl ? (
@@ -2258,21 +2498,12 @@ export function AppShell() {
                           />
                         ) : (
                           <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              padding: "6px 10px",
-                              fontSize: 11,
-                              color: "#d1d5db",
-                            }}
+                            className="input-attachment-content"
                           >
                             <IconComp size={14} color={typeInfo.color} style={{ flexShrink: 0 }} />
                             <span
+                              className="input-attachment-name"
                               style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
                                 maxWidth: 120,
                               }}
                             >
@@ -2293,24 +2524,10 @@ export function AppShell() {
                           </div>
                         )}
                         <button
+                          type="button"
+                          className="input-attachment-remove"
+                          aria-label={`Remove ${att.name}`}
                           onClick={() => removeAttachment(att.id)}
-                          style={{
-                            position: "absolute",
-                            top: 2,
-                            right: 2,
-                            width: 18,
-                            height: 18,
-                            borderRadius: "50%",
-                            background: "rgba(0,0,0,0.7)",
-                            border: "none",
-                            color: "#fff",
-                            fontSize: 10,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            padding: 0,
-                          }}
                         >
                           <X size={10} />
                         </button>

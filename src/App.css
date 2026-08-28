@@ -433,6 +433,89 @@ body {
   color: var(--text-placeholder);
 }
 
+.scroll-to-bottom-button {
+  position: absolute;
+  z-index: 20;
+  top: -48px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(151, 159, 204, 0.24);
+  border-radius: 50%;
+  color: #c8cdfc;
+  background: rgba(19, 22, 40, 0.88);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(129, 140, 248, 0.06);
+  backdrop-filter: blur(18px);
+  transform: translateX(-50%);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.scroll-to-bottom-button:hover {
+  color: #fff;
+  background: rgba(99, 110, 245, 0.92);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+/* Skip layout and paint work for expensive Markdown and trajectory rows until
+   they approach the viewport. The intrinsic size keeps scrolling stable. */
+.msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.trajectory-request {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+
+.input-attachment {
+  position: relative;
+  max-width: 200px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.input-attachment-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 34px 6px 10px;
+  color: #d1d5db;
+  font-size: 11px;
+}
+
+.input-attachment-name {
+  overflow: hidden;
+  color: inherit;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+
 .slash-command-menu {
   position: absolute;
   z-index: 50;
@@ -2888,6 +2971,42 @@ body {
     0 0 0 3px rgba(79, 125, 243, 0.1);
 }
 
+:root[data-theme="arctic-dawn"] .input-attachment {
+  border-color: rgba(79, 125, 243, 0.42);
+  background: rgba(242, 247, 255, 0.92);
+  box-shadow: 0 3px 10px rgba(55, 89, 143, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-content {
+  color: #29466f;
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-name {
+  font-weight: 600;
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-remove {
+  color: #fff;
+  background: #526787;
+  box-shadow: 0 1px 4px rgba(35, 55, 86, 0.24);
+}
+
+:root[data-theme="arctic-dawn"] .input-attachment-remove:hover {
+  background: #3c5275;
+}
+
+:root[data-theme="arctic-dawn"] .scroll-to-bottom-button {
+  color: #36598c;
+  border-color: rgba(79, 125, 243, 0.34);
+  background: rgba(248, 251, 255, 0.94);
+  box-shadow: 0 8px 22px rgba(55, 89, 143, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme="arctic-dawn"] .scroll-to-bottom-button:hover {
+  color: #fff;
+  background: #527be1;
+}
+
 :root[data-theme="arctic-dawn"] .slash-command-menu,
 :root[data-theme="arctic-dawn"] .project-modal {
   color: var(--color-text-primary);
@@ -4526,15 +4645,17 @@ body {
 
 .trajectory-request {
   position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
 }
 
 .trajectory-request-label {
-  position: absolute;
-  top: 10px;
-  left: -76px;
+  position: relative;
+  z-index: 4;
   display: inline-flex;
+  width: fit-content;
   height: 20px;
+  margin-top: 10px;
   align-items: center;
   justify-content: center;
   padding: 0 7px;
@@ -4549,12 +4670,21 @@ body {
 }
 
 .trajectory-request-events {
+  min-width: 0;
   display: block;
+}
+
+.trajectory-context-request {
+  margin-bottom: 18px;
+}
+
+.trajectory-context-request .trajectory-row {
+  grid-template-columns: 16px 96px minmax(0, 1fr);
 }
 
 .trajectory-list {
   position: relative;
-  padding: 4px 0 4px 82px;
+  padding: 4px 0;
 }
 
 .trajectory-list::before {
@@ -4562,7 +4692,7 @@ body {
   position: absolute;
   top: 17px;
   bottom: 17px;
-  left: 89px;
+  left: 85px;
   width: 1px;
   background: var(--color-border-glass);
 }
@@ -4713,6 +4843,71 @@ body {
   background: rgba(212, 138, 50, 0.2);
   box-shadow: 0 3px 10px rgba(182, 112, 31, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   text-shadow: 0 0 10px rgba(212, 138, 50, 0.32);
+}
+
+.trajectory-row-agent .trajectory-role {
+  border-color: rgba(45, 212, 191, 0.34);
+  color: #5eead4;
+  background: rgba(20, 184, 166, 0.2);
+  box-shadow: 0 3px 10px rgba(13, 148, 136, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  text-shadow: 0 0 10px rgba(45, 212, 191, 0.32);
+}
+
+.trajectory-row-agent .trajectory-node {
+  background: #2dd4bf;
+}
+
+.trajectory-row-system .trajectory-role,
+.trajectory-row-tool-definition .trajectory-role,
+.trajectory-row-skill .trajectory-role,
+.trajectory-row-instruction .trajectory-role {
+  min-width: 72px;
+  padding: 0 7px;
+  font-size: 8.5px;
+}
+
+.trajectory-row-system .trajectory-role {
+  border-color: rgba(167, 139, 250, 0.4);
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.trajectory-row-system .trajectory-node {
+  background: #a78bfa;
+}
+
+.trajectory-row-tool-definition .trajectory-role {
+  border-color: rgba(251, 146, 60, 0.42);
+  color: #fdba74;
+  background: rgba(234, 88, 12, 0.19);
+}
+
+.trajectory-row-tool-definition .trajectory-node {
+  background: #fb923c;
+}
+
+.trajectory-row-skill .trajectory-role {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #6ee7b7;
+  background: rgba(5, 150, 105, 0.19);
+}
+
+.trajectory-row-skill .trajectory-node {
+  background: #34d399;
+}
+
+.trajectory-row-instruction .trajectory-role {
+  border-color: rgba(34, 211, 238, 0.4);
+  color: #67e8f9;
+  background: rgba(8, 145, 178, 0.19);
+}
+
+.trajectory-row-instruction .trajectory-node {
+  background: #22d3ee;
+}
+
+.trajectory-row-system::before {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent-start) 14%, transparent), transparent 82%);
 }
 
 .trajectory-content {
@@ -4971,6 +5166,78 @@ body {
   overflow-wrap: anywhere;
 }
 
+.trajectory-detail-text,
+.trajectory-detail-resources {
+  max-height: calc(100vh - 250px);
+  margin: 0;
+  overflow: auto;
+  padding: 16px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-detail-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: inherit;
+  white-space: normal;
+}
+
+.trajectory-detail-resource {
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-control) 64%, transparent);
+}
+
+.trajectory-detail-resource strong,
+.trajectory-detail-resource p,
+.trajectory-detail-resource span {
+  display: block;
+}
+
+.trajectory-detail-resource strong {
+  color: var(--text-heading);
+  font-size: 11.5px;
+}
+
+.trajectory-detail-resource p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.trajectory-detail-resource span {
+  margin-top: 5px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-detail-instruction pre {
+  margin: 10px 0 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-detail-empty {
+  margin: 24px 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 :root[data-theme="arctic-dawn"] .conversation-view-switcher {
   border-color: rgba(110, 139, 179, 0.2);
   background: rgba(239, 247, 255, 0.3);
@@ -5024,6 +5291,57 @@ body {
   border-color: rgba(184, 110, 26, 0.24);
   color: #b56d1f;
   background: rgba(212, 138, 50, 0.17);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-agent .trajectory-role {
+  border-color: rgba(13, 148, 136, 0.28);
+  color: #0f766e;
+  background: rgba(20, 184, 166, 0.15);
+  text-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-agent .trajectory-node {
+  background: #0d9488;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-system .trajectory-role {
+  border-color: rgba(124, 58, 237, 0.34);
+  color: #6d28d9;
+  background: rgba(139, 92, 246, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-system .trajectory-node {
+  background: #7c3aed;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-tool-definition .trajectory-role {
+  border-color: rgba(194, 65, 12, 0.34);
+  color: #c2410c;
+  background: rgba(249, 115, 22, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-tool-definition .trajectory-node {
+  background: #ea580c;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-skill .trajectory-role {
+  border-color: rgba(4, 120, 87, 0.32);
+  color: #047857;
+  background: rgba(16, 185, 129, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-skill .trajectory-node {
+  background: #059669;
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-instruction .trajectory-role {
+  border-color: rgba(14, 116, 144, 0.32);
+  color: #0e7490;
+  background: rgba(6, 182, 212, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] .trajectory-row-instruction .trajectory-node {
+  background: #0891b2;
 }
 
 :root[data-theme="arctic-dawn"] .trajectory-row::before {
@@ -5085,15 +5403,15 @@ body {
   }
 
   .trajectory-list {
-    padding-left: 66px;
+    padding-left: 0;
   }
 
   .trajectory-list::before {
-    left: 73px;
+    left: 71px;
   }
 
-  .trajectory-request-label {
-    left: -62px;
+  .trajectory-request {
+    grid-template-columns: 64px minmax(0, 1fr);
   }
 }
 

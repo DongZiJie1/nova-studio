@@ -28,6 +28,7 @@ export type RpcCommand =
   | { type: "abort"; id?: string }
   | { type: "set_model"; id?: string; provider: string; modelId: string }
   | { type: "get_state"; id?: string }
+  | { type: "get_context_snapshot"; id?: string }
   | { type: "get_messages"; id?: string }
   | { type: "get_session_stats"; id?: string }
   | { type: "get_execution_traces"; id?: string }
@@ -120,6 +121,7 @@ export type AgentMessage =
     }
   | { type: "agent_settled" }
   | { type: "agent_name_update"; name: string }
+  | { type: "agent_delegated_task"; sourceAgentId: string; task: string }
   | {
       type: "extension_ui_request";
       id: string;
@@ -229,6 +231,28 @@ export interface ExecutionTrace {
   usage?: ExecutionTraceUsage;
 }
 
+export interface ContextSnapshotTool {
+  name: string;
+  description: string;
+  parameters: unknown;
+  sourceInfo: Record<string, unknown>;
+}
+
+export interface ContextSnapshotSkill {
+  name: string;
+  description: string;
+  filePath: string;
+  disableModelInvocation: boolean;
+  sourceInfo: Record<string, unknown>;
+}
+
+export interface ContextSnapshot {
+  systemPrompt: string;
+  tools: ContextSnapshotTool[];
+  skills: ContextSnapshotSkill[];
+  contextFiles: Array<{ path: string; content: string }>;
+}
+
 // ─── Agent status ───
 
 export type AgentStatus = "starting" | "idle" | "streaming" | "error" | "stopped";
@@ -266,6 +290,7 @@ export interface PersistedRpcMessage {
   details?: unknown;
   isError?: boolean;
   timestamp?: number | string;
+  customType?: string;
 }
 
 // ─── Tauri event payload (from Rust backend via emit) ───
