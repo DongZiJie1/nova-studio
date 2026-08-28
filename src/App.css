@@ -4682,17 +4682,6 @@ body {
   grid-template-columns: 16px 96px minmax(0, 1fr);
 }
 
-.trajectory-context-request-with-conversation::after {
-  content: "CONVERSATION";
-  display: block;
-  grid-column: 2;
-  margin: 12px 0 8px 28px;
-  color: var(--color-text-muted);
-  font-size: 8.5px;
-  font-weight: 760;
-  letter-spacing: 0.08em;
-}
-
 .trajectory-list {
   position: relative;
   padding: 4px 0;

@@ -129,6 +129,22 @@ function objectValue(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
+function hubErrorSummary(name: string, result: unknown): string {
+  if (name.toLowerCase() !== "hub_ask_agent") return "";
+  const details = objectValue(result, "details");
+  const code = objectString(details, "errorCode", "error");
+  const message = objectString(details, "error");
+  const labels: Record<string, string> = {
+    self_ask: "不能询问当前 Agent 自身",
+    cycle_detected: "已阻止 Agent 循环调用",
+    depth_limit: "已达到 Agent 调用深度上限",
+    duplicate_request: "已阻止重复的 Agent 请求",
+    rate_limit: "Agent 请求过于频繁",
+    timeout: "等待 Agent 回复超时",
+  };
+  return labels[code] || message;
+}
+
 function novaDataResult(result: unknown): unknown {
   const details = objectValue(result, "details");
   const data = objectValue(details, "data");
@@ -263,10 +279,12 @@ export function ToolCallCard({ name, status, args, result }: ToolCallCardProps) 
   const [open, setOpen] = useState(false);
   const Icon = toolIcon(name);
   const hasDetail = args !== undefined || result !== undefined;
-  const summary = toolSummary(name, args) || (status === "running" ? "Running…" : "Completed");
+  const collaborationError = hubErrorSummary(name, result);
+  const isError = status === "error" || Boolean(collaborationError);
+  const summary = collaborationError || toolSummary(name, args) || (status === "running" ? "Running…" : "Completed");
 
   return (
-    <div className={`activity-item tool-card-${status}${open ? " activity-item-open" : ""}`}>
+    <div className={`activity-item tool-card-${isError ? "error" : status}${open ? " activity-item-open" : ""}`}>
       <button className="activity-row" onClick={() => hasDetail && setOpen((o) => !o)}>
         <span className="activity-toggle-icon">
           <Icon className="activity-kind-icon" size={14} />
@@ -280,7 +298,7 @@ export function ToolCallCard({ name, status, args, result }: ToolCallCardProps) 
         <span className="activity-status">
           {status === "running" ? (
             <Loader2 size={12} className="tool-spin" />
-          ) : status === "error" ? (
+          ) : isError ? (
             <XCircle size={12} />
           ) : (
             <CheckCircle2 size={12} />

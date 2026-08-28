@@ -2081,7 +2081,7 @@ export function AppShell() {
                   ) : (
                     <div className="trajectory-list">
                     {trajectoryContextEntries.length > 0 && (
-                      <section className={`trajectory-request trajectory-context-request ${trajectoryRequests.length > 0 ? "trajectory-context-request-with-conversation" : ""}`}>
+                      <section className="trajectory-request trajectory-context-request">
                         <span className="trajectory-request-label">CONTEXT</span>
                         <div className="trajectory-request-events">
                           {trajectoryContextEntries.map((entry) => (

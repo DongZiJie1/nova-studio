@@ -16,6 +16,16 @@ pub struct FileReference {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollaborationContext {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "requestDepth")]
+    pub request_depth: u64,
+    #[serde(rename = "visitedAgentIds")]
+    pub visited_agent_ids: Vec<String>,
+}
+
 /// Commands sent from the bridge to the agent process (stdin)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -29,6 +39,9 @@ pub enum RpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "fileReferences")]
         file_references: Option<Vec<FileReference>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "collaborationContext")]
+        collaboration_context: Option<CollaborationContext>,
     },
     #[serde(rename = "abort")]
     Abort { id: Option<String> },
@@ -282,6 +295,7 @@ mod tests {
             file_references: Some(vec![FileReference {
                 path: "src/main.rs".into(),
             }]),
+            collaboration_context: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"mimeType\":\"image/png\""));

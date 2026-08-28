@@ -1,12 +1,16 @@
 use crate::agent_process::AgentProcess;
 use crate::nova_host_process::NovaHostProcess;
-use crate::rpc_types::{AgentInfo, FileReference, ImageContent, RpcCommand, SpawnRequest};
+use crate::rpc_types::{
+    AgentInfo, CollaborationContext, FileReference, ImageContent, RpcCommand, SpawnRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
+
+const MAX_AGENT_DEPTH: u64 = 2;
 
 /// Central manager for all agent processes.
 /// Shared between Tauri commands (UI-driven) and HTTP API (agent-driven).
@@ -22,6 +26,29 @@ pub struct AgentManager {
     state_path: PathBuf,
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
     host: Mutex<Option<Arc<NovaHostProcess>>>,
+}
+
+struct AskCancellationGuard {
+    agent: Arc<AgentProcess>,
+    armed: bool,
+}
+
+impl AskCancellationGuard {
+    fn new(agent: Arc<AgentProcess>) -> Self {
+        Self { agent, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AskCancellationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.agent.send_command(&RpcCommand::Abort { id: None });
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,9 +296,23 @@ impl AgentManager {
 
     /// Spawn a new agent process
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentInfo, String> {
+        if request.depth > MAX_AGENT_DEPTH {
+            return Err(format!(
+                "Agent depth {} exceeds maximum {}",
+                request.depth, MAX_AGENT_DEPTH
+            ));
+        }
         if let Some(parent_id) = request.parent_agent_id.as_deref() {
-            if !self.agents.read().await.contains_key(parent_id) {
-                return Err(format!("Parent agent not found: {}", parent_id));
+            let agents = self.agents.read().await;
+            let parent = agents
+                .get(parent_id)
+                .ok_or_else(|| format!("Parent agent not found: {}", parent_id))?;
+            let expected_depth = parent.depth + 1;
+            if request.depth != expected_depth {
+                return Err(format!(
+                    "Invalid child depth {} for parent {} at depth {}; expected {}",
+                    request.depth, parent_id, parent.depth, expected_depth
+                ));
             }
         }
 
@@ -493,6 +534,7 @@ impl AgentManager {
             message,
             images,
             file_references,
+            collaboration_context: None,
         };
         agent.send_command(&cmd)
     }
@@ -698,6 +740,7 @@ impl AgentManager {
         agent_id: &str,
         question: String,
         timeout_secs: u64,
+        collaboration_context: CollaborationContext,
     ) -> Result<String, String> {
         let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
         if !agent.is_alive().await {
@@ -713,7 +756,12 @@ impl AgentManager {
             message: question,
             images: None,
             file_references: None,
+            collaboration_context: Some(collaboration_context),
         })?;
+        // If the HTTP caller disconnects, the future is cancelled, or any
+        // error/timeout path returns early, stop the target turn before
+        // releasing its prompt lock. Successful completion disarms this.
+        let mut cancellation_guard = AskCancellationGuard::new(agent.clone());
 
         let mut reply = String::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -746,6 +794,7 @@ impl AgentManager {
                     }
                 }
                 "agent_settled" => {
+                    cancellation_guard.disarm();
                     return if reply.is_empty() {
                         Err("agent settled without a text reply".to_string())
                     } else {
@@ -1025,7 +1074,16 @@ mod tests {
         );
 
         let reply = manager
-            .ask(&info.id, "hello".to_string(), 15)
+            .ask(
+                &info.id,
+                "hello".to_string(),
+                15,
+                CollaborationContext {
+                    request_id: "test-request".to_string(),
+                    request_depth: 1,
+                    visited_agent_ids: vec![info.id.clone()],
+                },
+            )
             .await
             .expect("ask failed");
 
@@ -1063,7 +1121,16 @@ mod tests {
             std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4())),
         );
         let err = manager
-            .ask("agent-nope", "hi".to_string(), 5)
+            .ask(
+                "agent-nope",
+                "hi".to_string(),
+                5,
+                CollaborationContext {
+                    request_id: "missing-request".to_string(),
+                    request_depth: 1,
+                    visited_agent_ids: vec!["agent-parent".to_string()],
+                },
+            )
             .await
             .unwrap_err();
         assert_eq!(err, "Agent not found");
