@@ -4645,15 +4645,17 @@ body {
 
 .trajectory-request {
   position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
 }
 
 .trajectory-request-label {
-  position: absolute;
-  top: 10px;
-  left: -76px;
+  position: relative;
+  z-index: 4;
   display: inline-flex;
+  width: fit-content;
   height: 20px;
+  margin-top: 10px;
   align-items: center;
   justify-content: center;
   padding: 0 7px;
@@ -4668,6 +4670,7 @@ body {
 }
 
 .trajectory-request-events {
+  min-width: 0;
   display: block;
 }
 
@@ -4682,6 +4685,7 @@ body {
 .trajectory-context-request-with-conversation::after {
   content: "CONVERSATION";
   display: block;
+  grid-column: 2;
   margin: 12px 0 8px 28px;
   color: var(--color-text-muted);
   font-size: 8.5px;
@@ -4691,7 +4695,7 @@ body {
 
 .trajectory-list {
   position: relative;
-  padding: 4px 0 4px 82px;
+  padding: 4px 0;
 }
 
 .trajectory-list::before {
@@ -4699,7 +4703,7 @@ body {
   position: absolute;
   top: 17px;
   bottom: 17px;
-  left: 89px;
+  left: 85px;
   width: 1px;
   background: var(--color-border-glass);
 }
@@ -5387,15 +5391,15 @@ body {
   }
 
   .trajectory-list {
-    padding-left: 66px;
+    padding-left: 0;
   }
 
   .trajectory-list::before {
-    left: 73px;
+    left: 71px;
   }
 
-  .trajectory-request-label {
-    left: -62px;
+  .trajectory-request {
+    grid-template-columns: 64px minmax(0, 1fr);
   }
 }
 
