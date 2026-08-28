@@ -15,7 +15,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 const MAX_REQUEST_DEPTH: u64 = 2;
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(10);
@@ -27,6 +27,18 @@ const SOURCE_REQUEST_LIMIT: usize = 30;
 struct AppState {
     manager: Arc<AgentManager>,
     request_tracker: Arc<Mutex<RequestTracker>>,
+    tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
+}
+
+#[derive(Clone, Serialize)]
+struct AgentTask {
+    task_id: String,
+    agent_id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Default)]
@@ -141,6 +153,61 @@ fn default_ask_timeout() -> u64 {
 #[derive(Serialize)]
 struct AskResponse {
     reply: String,
+}
+
+#[derive(Deserialize)]
+struct DelegateBody {
+    task: String,
+    #[serde(default)]
+    agent_id: Option<String>,
+    cwd: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    depth: u64,
+    #[serde(default = "default_ask_timeout")]
+    timeout_secs: u64,
+    #[serde(default)]
+    source_agent_id: String,
+    #[serde(default)]
+    request_id: String,
+    #[serde(default)]
+    request_depth: u64,
+    #[serde(default)]
+    visited_agent_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct DelegateResponse {
+    task_id: String,
+    agent_id: String,
+    created_agent: bool,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct WaitTasksBody {
+    task_ids: Vec<String>,
+    #[serde(default = "default_wait_for")]
+    wait_for: String,
+    #[serde(default = "default_wait_timeout")]
+    timeout_secs: u64,
+}
+
+fn default_wait_for() -> String {
+    "all".to_string()
+}
+
+fn default_wait_timeout() -> u64 {
+    30
+}
+
+#[derive(Serialize)]
+struct WaitTasksResponse {
+    tasks: Vec<AgentTask>,
+    timed_out: bool,
 }
 
 #[derive(Serialize)]
@@ -312,6 +379,208 @@ async fn ask_agent(
     Ok(Json(AskResponse { reply }))
 }
 
+async fn delegate_task(
+    AxumState(state): AxumState<AppState>,
+    Json(body): Json<DelegateBody>,
+) -> Result<Json<DelegateResponse>, (StatusCode, Json<ApiError>)> {
+    let request_id = if body.request_id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        body.request_id.clone()
+    };
+    if body.request_depth > MAX_REQUEST_DEPTH {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "depth_limit",
+            format!(
+                "Agent request depth {} exceeds maximum {}",
+                body.request_depth, MAX_REQUEST_DEPTH
+            ),
+            Some(request_id),
+        ));
+    }
+
+    let (agent_id, created_agent) = if let Some(agent_id) = body.agent_id {
+        if body
+            .visited_agent_ids
+            .iter()
+            .any(|visited| visited == &agent_id)
+        {
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "cycle_detected",
+                format!("Agent request cycle blocked: target {agent_id} was already visited"),
+                Some(request_id),
+            ));
+        }
+        state.manager.get_info(&agent_id).await.map_err(|e| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "agent_not_found",
+                e,
+                Some(request_id.clone()),
+            )
+        })?;
+        (agent_id, false)
+    } else {
+        let info = state
+            .manager
+            .spawn(SpawnRequest {
+                cwd: body.cwd,
+                parent_agent_id: (!body.source_agent_id.is_empty())
+                    .then_some(body.source_agent_id.clone()),
+                model: body.model,
+                provider: body.provider,
+                args: None,
+                depth: body.depth,
+            })
+            .await
+            .map_err(|e| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "spawn_failed",
+                    e,
+                    Some(request_id.clone()),
+                )
+            })?;
+        (info.id, true)
+    };
+
+    let source_agent_id = if body.source_agent_id.is_empty() {
+        "unknown"
+    } else {
+        &body.source_agent_id
+    };
+    if let Err(code) =
+        state
+            .request_tracker
+            .lock()
+            .await
+            .check(source_agent_id, &agent_id, &body.task)
+    {
+        return Err(api_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            code,
+            if code == "duplicate_request" {
+                "Repeated agent request blocked"
+            } else {
+                "Agent request rate limit exceeded"
+            },
+            Some(request_id),
+        ));
+    }
+
+    let task_id = format!("task-{}", uuid::Uuid::new_v4());
+    let task = AgentTask {
+        task_id: task_id.clone(),
+        agent_id: agent_id.clone(),
+        status: "running".to_string(),
+        result: None,
+        error: None,
+    };
+    state.tasks.write().await.insert(task_id.clone(), task);
+
+    let manager = state.manager.clone();
+    let tasks = state.tasks.clone();
+    let background_task_id = task_id.clone();
+    let background_agent_id = agent_id.clone();
+    let mut visited_agent_ids = body.visited_agent_ids;
+    if !visited_agent_ids.iter().any(|visited| visited == &agent_id) {
+        visited_agent_ids.push(agent_id.clone());
+    }
+    tokio::spawn(async move {
+        let outcome = manager
+            .ask(
+                &background_agent_id,
+                body.task,
+                body.timeout_secs,
+                CollaborationContext {
+                    request_id,
+                    request_depth: body.request_depth,
+                    visited_agent_ids,
+                },
+            )
+            .await;
+        if let Some(task) = tasks.write().await.get_mut(&background_task_id) {
+            match outcome {
+                Ok(result) => {
+                    task.status = "completed".to_string();
+                    task.result = Some(result);
+                }
+                Err(error) => {
+                    task.status = if error.contains("timed out") {
+                        "timeout".to_string()
+                    } else {
+                        "error".to_string()
+                    };
+                    task.error = Some(error);
+                }
+            }
+        }
+    });
+
+    Ok(Json(DelegateResponse {
+        task_id,
+        agent_id,
+        created_agent,
+        status: "running".to_string(),
+    }))
+}
+
+async fn wait_tasks(
+    AxumState(state): AxumState<AppState>,
+    Json(body): Json<WaitTasksBody>,
+) -> Result<Json<WaitTasksResponse>, (StatusCode, Json<ApiError>)> {
+    if body.task_ids.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "missing_task_ids",
+            "At least one task id is required",
+            None,
+        ));
+    }
+    if body.wait_for != "any" && body.wait_for != "all" {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_wait_mode",
+            "wait_for must be 'any' or 'all'",
+            None,
+        ));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(body.timeout_secs.min(300));
+    loop {
+        let snapshots = {
+            let tasks = state.tasks.read().await;
+            body.task_ids
+                .iter()
+                .filter_map(|task_id| tasks.get(task_id).cloned())
+                .collect::<Vec<_>>()
+        };
+        if snapshots.len() != body.task_ids.len() {
+            return Err(api_error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                "One or more Agent tasks were not found",
+                None,
+            ));
+        }
+        let finished = |task: &AgentTask| task.status != "running";
+        let ready = if body.wait_for == "any" {
+            snapshots.iter().any(finished)
+        } else {
+            snapshots.iter().all(finished)
+        };
+        if ready || Instant::now() >= deadline || body.timeout_secs == 0 {
+            return Ok(Json(WaitTasksResponse {
+                tasks: snapshots,
+                timed_out: !ready,
+            }));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn get_status(
     AxumState(state): AxumState<AppState>,
     axum::extract::Path(agent_id): axum::extract::Path<String>,
@@ -359,6 +628,8 @@ fn build_router(state: AppState) -> Router {
         .route("/agents/{agent_id}", get(get_status).delete(stop_agent))
         .route("/agents/{agent_id}/prompt", post(send_prompt))
         .route("/agents/{agent_id}/ask", post(ask_agent))
+        .route("/tasks/delegate", post(delegate_task))
+        .route("/tasks/wait", post(wait_tasks))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_hub_token,
@@ -371,6 +642,7 @@ pub async fn start_api_server(manager: Arc<AgentManager>, port: u16) -> Result<u
     let state = AppState {
         manager: manager.clone(),
         request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
+        tasks: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let app = build_router(state);
@@ -403,6 +675,7 @@ mod tests {
         AppState {
             manager,
             request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
+            tasks: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -508,5 +781,95 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn delegate_returns_a_task_then_wait_collects_its_result() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let agent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+        let delegate_body = serde_json::json!({
+            "task": "background work",
+            "agent_id": agent.id,
+            "cwd": "/tmp",
+            "source_agent_id": "agent-parent",
+            "request_id": "request-delegate",
+            "request_depth": 1,
+            "visited_agent_ids": ["agent-parent"]
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/delegate")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(delegate_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            delegated.get("status").and_then(|value| value.as_str()),
+            Some("running")
+        );
+        let task_id = delegated
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .unwrap();
+
+        let wait_body = serde_json::json!({
+            "task_ids": [task_id],
+            "wait_for": "all",
+            "timeout_secs": 15
+        });
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/wait")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(wait_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let waited: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            waited
+                .pointer("/tasks/0/status")
+                .and_then(|value| value.as_str()),
+            Some("completed")
+        );
+        assert!(waited
+            .pointer("/tasks/0/result")
+            .and_then(|value| value.as_str())
+            .is_some());
+
+        manager.stop(&agent.id).await.unwrap();
     }
 }

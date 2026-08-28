@@ -25,6 +25,7 @@ pub struct AgentManager {
     hub_url: RwLock<String>,
     state_path: PathBuf,
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
+    persistence_lock: Arc<Mutex<()>>,
     host: Mutex<Option<Arc<NovaHostProcess>>>,
 }
 
@@ -99,6 +100,7 @@ impl AgentManager {
             hub_url: RwLock::new("http://127.0.0.1:9528".to_string()),
             state_path,
             records: Arc::new(RwLock::new(HashMap::new())),
+            persistence_lock: Arc::new(Mutex::new(())),
             host: Mutex::new(None),
         }
     }
@@ -198,7 +200,12 @@ impl AgentManager {
             Err(error) => return Err(error),
         };
         *self.records.write().await = records;
+        self.persist_records().await?;
         Ok(())
+    }
+
+    async fn persist_records(&self) -> Result<(), String> {
+        persist_records_to_path(&self.state_path, &self.records, &self.persistence_lock).await
     }
 
     async fn load_nova_sessions(&self) -> Result<NovaSessionCatalog, String> {
@@ -280,6 +287,8 @@ impl AgentManager {
         // files were deleted outside Studio, while retaining live agents until
         // they stop so a refresh cannot make an active conversation disappear.
         records.retain(|id, _| catalog_ids.contains(id) || running_ids.contains(id));
+        drop(records);
+        self.persist_records().await?;
         Ok(())
     }
 
@@ -448,6 +457,8 @@ impl AgentManager {
         let mut rx = process.subscribe();
         let global_tx = self.global_event_tx.clone();
         let records = self.records.clone();
+        let state_path = self.state_path.clone();
+        let persistence_lock = self.persistence_lock.clone();
         let aid = agent_id.clone();
         tokio::spawn(async move {
             while let Ok(msg) = rx.recv().await {
@@ -456,6 +467,11 @@ impl AgentManager {
                     {
                         if let Some(record) = records.write().await.get_mut(&aid) {
                             record.name = Some(name.to_string());
+                        }
+                        if let Err(error) =
+                            persist_records_to_path(&state_path, &records, &persistence_lock).await
+                        {
+                            log::warn!("Failed to persist Agent name update: {error}");
                         }
                     }
                 }
@@ -469,6 +485,7 @@ impl AgentManager {
             .insert(agent_id.clone(), Arc::new(process));
         if persist {
             self.records.write().await.insert(agent_id.clone(), record);
+            self.persist_records().await?;
         }
 
         if let Some(agent) = self.get_process(&agent_id).await {
@@ -899,6 +916,26 @@ impl AgentManager {
     }
 }
 
+async fn persist_records_to_path(
+    state_path: &std::path::Path,
+    records: &Arc<RwLock<HashMap<String, PersistedAgent>>>,
+    persistence_lock: &Arc<Mutex<()>>,
+) -> Result<(), String> {
+    let _guard = persistence_lock.lock().await;
+    let mut snapshot = records.read().await.values().cloned().collect::<Vec<_>>();
+    snapshot.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+    let contents = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|error| format!("Failed to serialize Studio Agent state: {error}"))?;
+    if let Some(parent) = state_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("Failed to create Studio state directory: {error}"))?;
+    }
+    tokio::fs::write(state_path, contents)
+        .await
+        .map_err(|error| format!("Failed to persist Studio Agent state: {error}"))
+}
+
 fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
     AgentInfo {
         id: record.id.clone(),
@@ -1138,10 +1175,8 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_records_parent_child_relationship() {
-        let manager = AgentManager::new(
-            mock_cli_path(),
-            std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4())),
-        );
+        let state_path = std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4()));
+        let manager = AgentManager::new(mock_cli_path(), state_path.clone());
         let parent = manager
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
@@ -1172,9 +1207,66 @@ mod tests {
             listed_child.parent_agent_id.as_deref(),
             Some(parent.id.as_str())
         );
+        let persisted: Vec<PersistedAgent> =
+            serde_json::from_str(&tokio::fs::read_to_string(&state_path).await.unwrap()).unwrap();
+        let persisted_child = persisted
+            .iter()
+            .find(|record| record.id == child.id)
+            .unwrap();
+        assert_eq!(
+            persisted_child.parent_agent_id.as_deref(),
+            Some(parent.id.as_str())
+        );
 
         manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
+        let _ = tokio::fs::remove_file(state_path).await;
+    }
+
+    #[tokio::test]
+    async fn restore_preserves_persisted_agent_relationships() {
+        let state_path =
+            std::env::temp_dir().join(format!("nova-studio-relation-{}.json", Uuid::new_v4()));
+        let records = vec![
+            PersistedAgent {
+                id: "agent-mock-parent".to_string(),
+                parent_agent_id: None,
+                name: Some("Parent".to_string()),
+                cwd: "/tmp".to_string(),
+                model: None,
+                provider: None,
+                args: Vec::new(),
+                session_id: "mock-parent".to_string(),
+                session_file: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                message_count: 0,
+                depth: 0,
+            },
+            PersistedAgent {
+                id: "agent-mock-child".to_string(),
+                parent_agent_id: Some("agent-mock-parent".to_string()),
+                name: Some("Child".to_string()),
+                cwd: "/tmp".to_string(),
+                model: None,
+                provider: None,
+                args: Vec::new(),
+                session_id: "mock-child".to_string(),
+                session_file: None,
+                created_at: "2026-01-01T00:00:01Z".to_string(),
+                message_count: 0,
+                depth: 1,
+            },
+        ];
+        tokio::fs::write(&state_path, serde_json::to_vec(&records).unwrap())
+            .await
+            .unwrap();
+
+        let restored = AgentManager::new(mock_cli_path(), state_path.clone());
+        restored.restore().await.unwrap();
+        let child = restored.get_info("agent-mock-child").await.unwrap();
+        assert_eq!(child.parent_agent_id.as_deref(), Some("agent-mock-parent"));
+
+        let _ = tokio::fs::remove_file(state_path).await;
     }
 
     #[tokio::test]

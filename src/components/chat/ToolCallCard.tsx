@@ -130,7 +130,7 @@ function objectValue(value: unknown, key: string): unknown {
 }
 
 function hubErrorSummary(name: string, result: unknown): string {
-  if (name.toLowerCase() !== "hub_ask_agent") return "";
+  if (!["hub_ask_agent", "hub_delegate_task", "hub_wait_tasks"].includes(name.toLowerCase())) return "";
   const details = objectValue(result, "details");
   const code = objectString(details, "errorCode", "error");
   const message = objectString(details, "error");
