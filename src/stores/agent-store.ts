@@ -48,6 +48,7 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCall[];
   attachments?: MessageAttachment[];
+  sourceAgentId?: string;
 }
 
 export interface AgentState {
@@ -225,6 +226,7 @@ function parseAttachmentsFromContent(content: string): { attachments: MessageAtt
 function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<string, "up" | "down"> = {}): ChatMessage[] {
   const hydrated: ChatMessage[] = [];
   const pendingToolCalls = new Map<string, ToolCall>();
+  let pendingSourceAgentId: string | undefined;
 
   for (const message of messages) {
     const parsedTimestamp =
@@ -232,6 +234,14 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         ? message.timestamp
         : Date.parse(message.timestamp ?? "");
     const timestamp = Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now();
+
+    if (message.role === "custom" && message.customType === "agent_collaboration_context") {
+      const details = message.details && typeof message.details === "object"
+        ? message.details as Record<string, unknown>
+        : {};
+      pendingSourceAgentId = typeof details.sourceAgentId === "string" ? details.sourceAgentId : undefined;
+      continue;
+    }
 
     if (message.role === "user") {
       const rawContent = messageText(message);
@@ -244,7 +254,9 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         content: cleanContent,
         timestamp,
         attachments,
+        sourceAgentId: pendingSourceAgentId,
       });
+      pendingSourceAgentId = undefined;
       continue;
     }
 
@@ -464,6 +476,25 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         agents: s.agents.map((agent) =>
           agent.id === agentId ? { ...agent, name: event.name } : agent,
         ),
+      }));
+      return;
+    }
+
+    if (event.type === "agent_delegated_task") {
+      set((s) => ({
+        agents: s.agents.map((agent) => agent.id === agentId
+          ? {
+              ...agent,
+              messages: [...agent.messages, {
+                id: nextId(),
+                role: "user",
+                content: event.task,
+                timestamp: Date.now(),
+                sourceAgentId: event.sourceAgentId,
+              }],
+              messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+            }
+          : agent),
       }));
       return;
     }

@@ -31,6 +31,12 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
+
+const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task", "hub_wait_tasks"]);
+
+function isAgentTrajectoryTool(name: string): boolean {
+  return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
+}
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { StreamingText } from "../chat/StreamingText";
@@ -111,7 +117,7 @@ type TrajectoryDetailView = "execution" | "json";
 
 interface ChatHistoryProps {
   messages: AgentState["messages"];
-  userLabel: string;
+  agentSenderLabels: Record<string, string>;
   avatarId: AgentState["avatarId"];
   actionableAssistantMessageIds: Set<string>;
   turnFileChangesByAssistantId: Map<string, TurnFileChange[]>;
@@ -121,7 +127,7 @@ interface ChatHistoryProps {
 
 const ChatHistory = memo(function ChatHistory({
   messages,
-  userLabel,
+  agentSenderLabels,
   avatarId,
   actionableAssistantMessageIds,
   turnFileChangesByAssistantId,
@@ -136,7 +142,7 @@ const ChatHistory = memo(function ChatHistory({
     >
       <ChatMessage
         message={message}
-        userLabel={userLabel}
+        userLabel={message.sourceAgentId ? (agentSenderLabels[message.sourceAgentId] ?? "Main Agent") : "User"}
         avatarId={avatarId}
         showActions={actionableAssistantMessageIds.has(message.id)}
         onFeedback={onFeedback}
@@ -974,14 +980,13 @@ export function AppShell() {
   const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
   const inputProjectName =
     projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd;
-  const conversationParent = activeAgent?.parentAgentId
-    ? agentsById.get(activeAgent.parentAgentId)
-    : undefined;
-  const conversationUserLabel = conversationParent
-    ? agentDisplayName(conversationParent, agentNames)
-    : activeAgent?.parentAgentId
-      ? (agentNames[activeAgent.parentAgentId] ?? "Parent Agent")
-      : "You";
+  const agentSenderLabels = useMemo(
+    () => Object.fromEntries(agents.map((agent) => [
+      agent.id,
+      agentNames[agent.id] || (!agent.parentAgentId ? "Main Agent" : agentDisplayName(agent, agentNames)),
+    ])),
+    [agents, agentNames],
+  );
   const availableProjectCwds = Array.from(
     new Set([
       ...rootsByProject.keys(),
@@ -2111,25 +2116,35 @@ export function AppShell() {
                       <section key={request.id} className="trajectory-request">
                         <span className="trajectory-request-label">REQUEST {requestIndex + 1}</span>
                         <div className="trajectory-request-events">
-                          {request.messages.map((message) => (
+                          {request.messages.map((message) => {
+                            const isAgentTool = message.role === "tool"
+                              && Boolean(message.toolCalls?.some((tool) => isAgentTrajectoryTool(tool.name)));
+                            const trajectoryRole = isAgentTool
+                              ? "AGENT"
+                              : message.role === "user"
+                                ? "USER"
+                                : message.role === "assistant"
+                                  ? "ASSISTANT"
+                                  : message.role === "thinking"
+                                    ? "THINK"
+                                    : "TOOL";
+                            return (
                             <div
                               key={message.id}
-                              className={`trajectory-row trajectory-row-${message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              className={`trajectory-row trajectory-row-${isAgentTool ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
                               aria-pressed={selectedTrajectoryEntry?.id === message.id}
-                              onClick={() => selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message })}
+                              onClick={() => selectTrajectoryEntry({ id: message.id, label: trajectoryRole, data: message })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  selectTrajectoryEntry({ id: message.id, label: message.role.toUpperCase(), data: message });
+                                  selectTrajectoryEntry({ id: message.id, label: trajectoryRole, data: message });
                                 }
                               }}
                             >
                               <span className="trajectory-node" />
-                              <span className="trajectory-role">
-                                {message.role === "user" ? "USER" : message.role === "assistant" ? "ASSISTANT" : message.role === "thinking" ? "THINK" : "TOOL"}
-                              </span>
+                              <span className="trajectory-role">{trajectoryRole}</span>
                               <div className="trajectory-content">
                                 {message.role === "tool" && message.toolCalls?.length
                                   ? message.toolCalls.map((tool) => (
@@ -2142,7 +2157,8 @@ export function AppShell() {
                                   : message.content || "—"}
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                           {requestIndex === trajectoryRequests.length - 1 && activeAgent.streamingThinking && (
                             <div
                               className={`trajectory-row trajectory-row-thinking trajectory-row-live ${selectedTrajectoryEntry?.id === "live-thinking" ? "trajectory-row-selected" : ""}`}
@@ -2161,29 +2177,33 @@ export function AppShell() {
                               <div className="trajectory-content">{activeAgent.streamingThinking}</div>
                             </div>
                           )}
-                          {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => (
+                          {requestIndex === trajectoryRequests.length - 1 && Array.from(activeAgent.activeToolCalls.values()).map((tool) => {
+                            const isAgentTool = isAgentTrajectoryTool(tool.name);
+                            const trajectoryRole = isAgentTool ? "AGENT" : "TOOL";
+                            return (
                             <div
                               key={tool.id}
-                              className={`trajectory-row trajectory-row-tool trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
+                              className={`trajectory-row trajectory-row-${isAgentTool ? "agent" : "tool"} trajectory-row-live ${selectedTrajectoryEntry?.id === `live-tool-${tool.id}` ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
-                              onClick={() => selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } })}
+                              onClick={() => selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: trajectoryRole, data: { type: "active_tool_call", ...tool } })}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: "TOOL", data: { type: "active_tool_call", ...tool } });
+                                  selectTrajectoryEntry({ id: `live-tool-${tool.id}`, label: trajectoryRole, data: { type: "active_tool_call", ...tool } });
                                 }
                               }}
                             >
                               <span className="trajectory-node" />
-                              <span className="trajectory-role">TOOL</span>
+                              <span className="trajectory-role">{trajectoryRole}</span>
                               <div className="trajectory-content trajectory-tool-line">
                                 <strong>{tool.name}</strong>
                                 <span>{JSON.stringify(tool.args)}</span>
                                 {tool.result !== undefined && <span>→ {String(tool.result)}</span>}
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                           {requestIndex === trajectoryRequests.length - 1 && streamingText && (
                             <div
                               className={`trajectory-row trajectory-row-assistant trajectory-row-live ${selectedTrajectoryEntry?.id === "live-assistant" ? "trajectory-row-selected" : ""}`}
@@ -2343,7 +2363,7 @@ export function AppShell() {
                 {activeAgent && (
                   <ChatHistory
                     messages={chatMessages}
-                    userLabel={conversationUserLabel}
+                    agentSenderLabels={agentSenderLabels}
                     avatarId={activeAgent.avatarId}
                     actionableAssistantMessageIds={actionableAssistantMessageIds}
                     turnFileChangesByAssistantId={turnFileChangesByAssistantId}

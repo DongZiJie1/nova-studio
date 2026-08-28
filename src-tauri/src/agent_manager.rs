@@ -895,6 +895,17 @@ impl AgentManager {
         self.global_event_tx.subscribe()
     }
 
+    pub fn notify_delegated_task(&self, agent_id: &str, source_agent_id: &str, task: &str) {
+        let _ = self.global_event_tx.send((
+            agent_id.to_string(),
+            serde_json::json!({
+                "type": "agent_delegated_task",
+                "sourceAgentId": source_agent_id,
+                "task": task,
+            }),
+        ));
+    }
+
     /// Get the number of running agents
     pub async fn count(&self) -> usize {
         self.agents.read().await.len()
@@ -1118,6 +1129,7 @@ mod tests {
                 CollaborationContext {
                     request_id: "test-request".to_string(),
                     request_depth: 1,
+                    source_agent_id: "agent-parent".to_string(),
                     visited_agent_ids: vec![info.id.clone()],
                 },
             )
@@ -1165,6 +1177,7 @@ mod tests {
                 CollaborationContext {
                     request_id: "missing-request".to_string(),
                     request_depth: 1,
+                    source_agent_id: "agent-parent".to_string(),
                     visited_agent_ids: vec!["agent-parent".to_string()],
                 },
             )

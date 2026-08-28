@@ -24,6 +24,8 @@ pub struct CollaborationContext {
     pub request_depth: u64,
     #[serde(rename = "visitedAgentIds")]
     pub visited_agent_ids: Vec<String>,
+    #[serde(rename = "sourceAgentId")]
+    pub source_agent_id: String,
 }
 
 /// Commands sent from the bridge to the agent process (stdin)

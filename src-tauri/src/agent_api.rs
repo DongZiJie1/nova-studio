@@ -321,16 +321,16 @@ async fn ask_agent(
         ));
     }
     let source_agent_id = if body.source_agent_id.is_empty() {
-        "unknown"
+        "unknown".to_string()
     } else {
-        &body.source_agent_id
+        body.source_agent_id.clone()
     };
     if let Err(code) =
         state
             .request_tracker
             .lock()
             .await
-            .check(source_agent_id, &agent_id, &body.question)
+            .check(&source_agent_id, &agent_id, &body.question)
     {
         let message = if code == "duplicate_request" {
             "Repeated agent request blocked"
@@ -347,6 +347,7 @@ async fn ask_agent(
     let collaboration_context = CollaborationContext {
         request_id: request_id.clone(),
         request_depth: body.request_depth,
+        source_agent_id: source_agent_id.to_string(),
         visited_agent_ids: {
             let mut visited = body.visited_agent_ids;
             if !visited.iter().any(|visited| visited == &agent_id) {
@@ -447,16 +448,16 @@ async fn delegate_task(
     };
 
     let source_agent_id = if body.source_agent_id.is_empty() {
-        "unknown"
+        "unknown".to_string()
     } else {
-        &body.source_agent_id
+        body.source_agent_id.clone()
     };
     if let Err(code) =
         state
             .request_tracker
             .lock()
             .await
-            .check(source_agent_id, &agent_id, &body.task)
+            .check(&source_agent_id, &agent_id, &body.task)
     {
         return Err(api_error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -479,6 +480,9 @@ async fn delegate_task(
         error: None,
     };
     state.tasks.write().await.insert(task_id.clone(), task);
+    state
+        .manager
+        .notify_delegated_task(&agent_id, &source_agent_id, &body.task);
 
     let manager = state.manager.clone();
     let tasks = state.tasks.clone();
@@ -497,6 +501,7 @@ async fn delegate_task(
                 CollaborationContext {
                     request_id,
                     request_depth: body.request_depth,
+                    source_agent_id,
                     visited_agent_ids,
                 },
             )
@@ -621,11 +626,47 @@ async fn list_agents(AxumState(state): AxumState<AppState>) -> Json<Vec<AgentInf
     Json(state.manager.list().await)
 }
 
+async fn list_child_agents(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+) -> Result<Json<Vec<AgentInfo>>, (StatusCode, Json<ApiError>)> {
+    state
+        .manager
+        .get_info(&agent_id)
+        .await
+        .map_err(|error| api_error(StatusCode::NOT_FOUND, "agent_not_found", error, None))?;
+    let agents = state.manager.list().await;
+    let mut descendant_ids = std::collections::HashSet::from([agent_id]);
+    let mut descendants = Vec::new();
+    loop {
+        let mut found_new = false;
+        for agent in &agents {
+            if descendant_ids.contains(&agent.id) {
+                continue;
+            }
+            if agent
+                .parent_agent_id
+                .as_ref()
+                .is_some_and(|parent_id| descendant_ids.contains(parent_id))
+            {
+                descendant_ids.insert(agent.id.clone());
+                descendants.push(agent.clone());
+                found_new = true;
+            }
+        }
+        if !found_new {
+            break;
+        }
+    }
+    Ok(Json(descendants))
+}
+
 /// Build the hub API router with token auth applied.
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/agents", get(list_agents).post(spawn_agent))
         .route("/agents/{agent_id}", get(get_status).delete(stop_agent))
+        .route("/agents/{agent_id}/children", get(list_child_agents))
         .route("/agents/{agent_id}/prompt", post(send_prompt))
         .route("/agents/{agent_id}/ask", post(ask_agent))
         .route("/tasks/delegate", post(delegate_task))
@@ -871,5 +912,88 @@ mod tests {
             .is_some());
 
         manager.stop(&agent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn child_agent_list_excludes_self_and_unrelated_conversations() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let grandchild = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(child.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 2,
+            })
+            .await
+            .unwrap();
+        let unrelated = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/agents/{}/children", parent.id))
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let listed: Vec<AgentInfo> = serde_json::from_slice(&bytes).unwrap();
+        let listed_ids = listed
+            .iter()
+            .map(|agent| agent.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(listed_ids.len(), 2);
+        assert!(listed_ids.contains(child.id.as_str()));
+        assert!(listed_ids.contains(grandchild.id.as_str()));
+        assert!(!listed_ids.contains(parent.id.as_str()));
+        assert!(!listed_ids.contains(unrelated.id.as_str()));
+
+        manager.stop(&grandchild.id).await.unwrap();
+        manager.stop(&child.id).await.unwrap();
+        manager.stop(&unrelated.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
     }
 }
