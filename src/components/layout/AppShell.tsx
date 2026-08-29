@@ -1090,6 +1090,7 @@ export function AppShell() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
+  const lastConversationScrollTopRef = useRef(0);
   const isComposingRef = useRef(false);
 
   const userHistory = useMemo(() => {
@@ -1399,10 +1400,19 @@ export function AppShell() {
   const handleConversationScroll = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
+    const currentScrollTop = container.scrollTop;
+    const isScrollingUp = currentScrollTop < lastConversationScrollTopRef.current - 0.5;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     const isNearBottom = distanceFromBottom <= 48;
-    isNearBottomRef.current = isNearBottom;
+    // Any upward movement is explicit user intent. Stop following the stream
+    // immediately instead of waiting until the viewport is 48px from bottom.
+    isNearBottomRef.current = isScrollingUp ? false : isNearBottom;
+    lastConversationScrollTopRef.current = currentScrollTop;
     setShowScrollToBottom(!isNearBottom && container.scrollHeight > container.clientHeight);
+  }, []);
+
+  const handleConversationWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) isNearBottomRef.current = false;
   }, []);
 
   const scrollConversationToBottom = useCallback(() => {
@@ -1411,6 +1421,7 @@ export function AppShell() {
     isNearBottomRef.current = true;
     setShowScrollToBottom(false);
     container.scrollTop = container.scrollHeight;
+    lastConversationScrollTopRef.current = container.scrollTop;
   }, []);
 
   useEffect(() => {
@@ -2332,6 +2343,7 @@ export function AppShell() {
           <div
             ref={scrollRef}
             onScroll={handleConversationScroll}
+            onWheelCapture={handleConversationWheel}
             className={`conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
             } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}

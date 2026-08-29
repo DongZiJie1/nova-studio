@@ -2913,6 +2913,14 @@ body {
   overscroll-behavior-x: contain;
 }
 
+/* Real message heights must remain stable while the user rapidly scrolls.
+   The generic off-screen rendering optimization guesses row heights and can
+   otherwise make the browser correct scrollTop after a row becomes visible. */
+.conversation-thread .msg-row {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 .conversation-thread .md-body th,
 .conversation-thread .md-body td {
   white-space: nowrap;
@@ -7300,10 +7308,10 @@ body {
   background: linear-gradient(
     180deg,
     transparent 0%,
-    rgba(109, 128, 238, 0.07) 19%,
-    rgba(147, 171, 255, 0.2) 43%,
-    rgba(147, 171, 255, 0.2) 57%,
-    rgba(109, 128, 238, 0.07) 81%,
+    rgba(109, 128, 238, 0.035) 19%,
+    rgba(147, 171, 255, 0.1) 43%,
+    rgba(147, 171, 255, 0.1) 57%,
+    rgba(109, 128, 238, 0.035) 81%,
     transparent 100%
   );
   mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.5) 9%, #000 22%, #000 88%, transparent 100%);
@@ -7315,7 +7323,7 @@ body {
 }
 
 .studio-sidebar .agent-tree-node:hover::after {
-  opacity: 0.72;
+  opacity: 0.46;
   transform: scaleX(1) scaleY(0.96);
 }
 
@@ -7328,12 +7336,12 @@ body {
   background: linear-gradient(
     180deg,
     transparent 0%,
-    rgba(84, 101, 218, 0.045) 12%,
-    rgba(106, 124, 240, 0.13) 27%,
-    rgba(157, 179, 255, 0.32) 44%,
-    rgba(157, 179, 255, 0.32) 56%,
-    rgba(106, 124, 240, 0.13) 73%,
-    rgba(84, 101, 218, 0.045) 88%,
+    rgba(84, 101, 218, 0.02) 12%,
+    rgba(106, 124, 240, 0.065) 27%,
+    rgba(157, 179, 255, 0.17) 44%,
+    rgba(157, 179, 255, 0.17) 56%,
+    rgba(106, 124, 240, 0.065) 73%,
+    rgba(84, 101, 218, 0.02) 88%,
     transparent 100%
   );
   opacity: 1;
