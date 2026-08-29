@@ -8,6 +8,7 @@ import {
   abortAgent,
   cancelAgent,
   retryAgent,
+  retryTask,
   steerAgent,
   activateAgent,
   listAgents,
@@ -990,7 +991,9 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                           title="重试任务"
                           onClick={(event) => {
                             event.stopPropagation();
-                            void retryAgent(task.agentId);
+                            void retryTask(task.taskId)
+                              .then(() => useAgentStore.getState().refreshAgentTasks())
+                              .catch(() => useAgentStore.getState().refreshAgentTasks());
                           }}
                         >
                           <RotateCcw size={12} />

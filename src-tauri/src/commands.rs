@@ -283,6 +283,15 @@ pub async fn retry_agent(
 }
 
 #[tauri::command]
+pub async fn retry_task(
+    manager: State<'_, AgentManagerState>,
+    registry: State<'_, TaskRegistryState>,
+    task_id: String,
+) -> Result<crate::agent_api::AgentTask, String> {
+    crate::agent_api::retry_task_impl(manager.0.clone(), registry.0.clone(), &task_id).await
+}
+
+#[tauri::command]
 pub async fn list_agent_tasks(
     state: State<'_, TaskRegistryState>,
 ) -> Result<TaskSnapshot, String> {

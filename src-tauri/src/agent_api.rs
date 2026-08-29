@@ -189,7 +189,7 @@ impl TaskStatus {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AgentTask {
+pub struct AgentTask {
     task_id: String,
     batch_id: String,
     agent_id: String,
@@ -204,6 +204,8 @@ struct AgentTask {
     last_activity_at: String,
     token_budget: u64,
     cost_budget_micro_usd: u64,
+    #[serde(default = "default_ask_timeout")]
+    timeout_secs: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     summary: String,
     #[serde(default)]
@@ -647,6 +649,85 @@ async fn cancel_task(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Reset a finished (failed/stopped/orphaned) task to running and re-run it
+/// against the same child agent with the original task text and timeout.
+/// Shared by the hub HTTP endpoint and the Studio task-panel command.
+pub async fn retry_task_impl(
+    manager: Arc<AgentManager>,
+    registry: TaskRegistry,
+    task_id: &str,
+) -> Result<AgentTask, String> {
+    let task = registry
+        .tasks
+        .read()
+        .await
+        .get(task_id)
+        .cloned()
+        .ok_or_else(|| "Agent task not found".to_string())?;
+    if task.status == TaskStatus::Completed {
+        return Err("A completed task does not need a retry".to_string());
+    }
+    if !task.status.is_terminal() {
+        return Err("Only a finished task can be retried".to_string());
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut retried = task.clone();
+    retried.status = TaskStatus::Running;
+    retried.started_at = Some(now.clone());
+    retried.completed_at = None;
+    retried.last_activity_at = now;
+    retried.error = None;
+    retried.summary = String::new();
+    registry
+        .tasks
+        .write()
+        .await
+        .insert(task_id.to_string(), retried.clone());
+    registry.persist().await;
+    let manager = manager.clone();
+    let tasks = registry.tasks.clone();
+    let task_batches = registry.task_batches.clone();
+    let registry = registry.clone();
+    let run_task_id = task_id.to_string();
+    tokio::spawn(async move {
+        execute_delegated_task(
+            manager,
+            tasks,
+            task_batches,
+            registry,
+            run_task_id,
+            task.batch_id.clone(),
+            task.agent_id.clone(),
+            task.parent_agent_id.clone(),
+            task.delegated_task.clone(),
+            task.timeout_secs,
+            uuid::Uuid::new_v4().to_string(),
+            0,
+            task.parent_agent_id.clone(),
+            vec![task.agent_id.clone()],
+        )
+        .await;
+    });
+    Ok(retried)
+}
+
+async fn retry_task(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(task_id): axum::extract::Path<String>,
+) -> Result<Json<AgentTask>, (StatusCode, Json<ApiError>)> {
+    retry_task_impl(state.manager, state.registry, &task_id)
+        .await
+        .map(Json)
+        .map_err(|error| {
+            let status = if error.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::CONFLICT
+            };
+            api_error(status, "retry_failed", error, None)
+        })
+}
+
 async fn try_resume_task_batch(
     manager: Arc<AgentManager>,
     tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
@@ -710,6 +791,157 @@ async fn try_resume_task_batch(
         if let Some(batch) = batches.write().await.get_mut(batch_id) {
             batch.resume_triggered = false;
         }
+    }
+}
+
+/// Run one delegated task to completion: ask the child agent, reconcile the
+/// structured result against its real tool traces, persist the outcome,
+/// backfill the parent, and resume the sealed batch once. Shared by first
+/// dispatch and task-level retry.
+#[allow(clippy::too_many_arguments)]
+async fn execute_delegated_task(
+    manager: Arc<AgentManager>,
+    tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
+    task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+    registry: TaskRegistry,
+    task_id: String,
+    batch_id: String,
+    agent_id: String,
+    parent_agent_id: String,
+    delegated_task: String,
+    timeout_secs: u64,
+    request_id: String,
+    request_depth: u64,
+    source_agent_id: String,
+    visited_agent_ids: Vec<String>,
+) {
+    if let Some(batch) = task_batches.write().await.get_mut(&batch_id) {
+        batch.status = BatchStatus::Running;
+    }
+    let outcome = {
+        let activity = Arc::new(Mutex::new(CollectedToolActivity::default()));
+        let (trace_collector, stop_collector) =
+            spawn_tool_trace_collector(&manager, &agent_id, activity.clone());
+        let outcome = manager
+            .ask(
+                &agent_id,
+                delegated_task.clone(),
+                timeout_secs,
+                CollaborationContext {
+                    request_id,
+                    request_depth,
+                    source_agent_id: source_agent_id.clone(),
+                    visited_agent_ids,
+                },
+            )
+            .await;
+        let _ = stop_collector.send(true);
+        let _ = trace_collector.await;
+        let collected = activity.lock().await.clone();
+        (outcome, collected)
+    };
+    let (outcome, collected) = outcome;
+    let mut completed_task = tasks
+        .read()
+        .await
+        .get(&task_id)
+        .cloned()
+        .expect("delegated task must exist");
+    let completed_at = chrono::Utc::now().to_rfc3339();
+    completed_task.completed_at = Some(completed_at.clone());
+    completed_task.last_activity_at = completed_at;
+    if completed_task.status == TaskStatus::Stopped {
+        // A control-plane cancellation won the race; do not overwrite it
+        // with the abort error returned by the in-flight ask operation.
+    } else {
+        match outcome {
+            Ok(final_text) => {
+                let mut generated = sanitize_generated_summary(
+                    match manager
+                        .summarize_task_result(&agent_id, delegated_task, final_text.clone(), 120)
+                        .await
+                    {
+                        Ok(text) => parse_generated_task_summary(&text)
+                            .unwrap_or_else(|error| fallback_summary(&final_text, &error)),
+                        Err(error) => fallback_summary(&final_text, &error),
+                    },
+                );
+                // Cross-check the summarizer's claims against the tool
+                // traces the child agent actually produced: real file
+                // edits are merged in, uncorroborated claims are flagged,
+                // and successful commands become verification evidence.
+                for file in &collected.changed_files {
+                    if !generated.changed_files.iter().any(|seen| seen == file) {
+                        generated.changed_files.push(file.clone());
+                    }
+                }
+                if !generated.changed_files.is_empty() && collected.changed_files.is_empty() {
+                    generated
+                        .remaining_risks
+                        .push("Summarizer-reported files were not observed in tool traces"
+                            .to_string());
+                }
+                if !collected.verified_commands.is_empty() {
+                    generated.verification.push(format!(
+                        "Tool trace: `{}` succeeded",
+                        collected.verified_commands.join("`, `")
+                    ));
+                }
+                if !collected.failed_test_commands.is_empty() {
+                    generated.remaining_risks.push(format!(
+                        "Failing test commands observed in tool traces: `{}`",
+                        collected.failed_test_commands.join("`, `")
+                    ));
+                }
+                completed_task.status = TaskStatus::Completed;
+                completed_task.summary = generated.summary;
+                completed_task.changed_files = generated.changed_files;
+                completed_task.verification = generated.verification;
+                completed_task.remaining_risks = generated.remaining_risks;
+                completed_task.final_text = truncate_chars(&final_text, MAX_FINAL_TEXT_CHARS);
+                if !collected.failed_test_commands.is_empty() {
+                    // A failed test run invalidates the summarizer's
+                    // success verdict: report the task as an error so the
+                    // parent and the Studio panel never treat it as done.
+                    completed_task.status = TaskStatus::Error;
+                    completed_task.error = Some(format!(
+                        "A test command failed during the task: `{}`",
+                        collected.failed_test_commands.join("`, `")
+                    ));
+                }
+            }
+            Err(error) => {
+                completed_task.status = TaskStatus::Error;
+                completed_task.error = Some(error);
+            }
+        }
+    }
+    tasks
+        .write()
+        .await
+        .insert(task_id.clone(), completed_task.clone());
+    registry.persist().await;
+    if parent_agent_id != "unknown" {
+        match serde_json::to_value(&completed_task) {
+            Ok(result) => {
+                manager.notify_agent_task_result(&parent_agent_id, &result);
+                if let Err(error) = manager
+                    .append_agent_task_result(&parent_agent_id, &result)
+                    .await
+                {
+                    log::warn!("Failed to backfill Agent task result: {error}");
+                }
+            }
+            Err(error) => log::warn!("Failed to serialize Agent task result: {error}"),
+        }
+        try_resume_task_batch(
+            manager.clone(),
+            tasks.clone(),
+            task_batches,
+            &batch_id,
+            &registry,
+        )
+        .await;
     }
 }
 
@@ -1256,6 +1488,7 @@ async fn delegate_task(
         last_activity_at: now,
         token_budget: body.token_budget,
         cost_budget_micro_usd: body.cost_budget_micro_usd,
+        timeout_secs: body.timeout_secs,
         summary: String::new(),
         changed_files: Vec::new(),
         verification: Vec::new(),
@@ -1383,143 +1616,23 @@ async fn delegate_task(
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         drop(_queue_permit);
-        if let Some(batch) = task_batches.write().await.get_mut(&background_batch_id) {
-            batch.status = BatchStatus::Running;
-        }
-        let outcome = {
-            let activity = Arc::new(Mutex::new(CollectedToolActivity::default()));
-            let (trace_collector, stop_collector) =
-                spawn_tool_trace_collector(&manager, &background_agent_id, activity.clone());
-            let outcome = manager
-                .ask(
-                    &background_agent_id,
-                    delegated_task.clone(),
-                    body.timeout_secs,
-                    CollaborationContext {
-                        request_id,
-                        request_depth: body.request_depth,
-                        source_agent_id: source_agent_id.clone(),
-                        visited_agent_ids,
-                    },
-                )
-                .await;
-            let _ = stop_collector.send(true);
-            let _ = trace_collector.await;
-            let collected = activity.lock().await.clone();
-            (outcome, collected)
-        };
-        let (outcome, collected) = outcome;
-        let mut completed_task = tasks
-            .read()
-            .await
-            .get(&background_task_id)
-            .cloned()
-            .expect("delegated task must exist");
-        let completed_at = chrono::Utc::now().to_rfc3339();
-        completed_task.completed_at = Some(completed_at.clone());
-        completed_task.last_activity_at = completed_at;
-        if completed_task.status == TaskStatus::Stopped {
-            // A control-plane cancellation won the race; do not overwrite it
-            // with the abort error returned by the in-flight ask operation.
-        } else {
-            match outcome {
-                Ok(final_text) => {
-                    let mut generated = sanitize_generated_summary(
-                        match manager
-                            .summarize_task_result(
-                                &background_agent_id,
-                                delegated_task,
-                                final_text.clone(),
-                                120,
-                            )
-                            .await
-                        {
-                            Ok(text) => parse_generated_task_summary(&text)
-                                .unwrap_or_else(|error| fallback_summary(&final_text, &error)),
-                            Err(error) => fallback_summary(&final_text, &error),
-                        },
-                    );
-                    // Cross-check the summarizer's claims against the tool
-                    // traces the child agent actually produced: real file
-                    // edits are merged in, uncorroborated claims are flagged,
-                    // and successful commands become verification evidence.
-                    for file in &collected.changed_files {
-                        if !generated
-                            .changed_files
-                            .iter()
-                            .any(|seen| seen == file)
-                        {
-                            generated.changed_files.push(file.clone());
-                        }
-                    }
-                    if !generated.changed_files.is_empty() && collected.changed_files.is_empty() {
-                        generated
-                            .remaining_risks
-                            .push("Summarizer-reported files were not observed in tool traces"
-                                .to_string());
-                    }
-                    if !collected.verified_commands.is_empty() {
-                        generated.verification.push(format!(
-                            "Tool trace: `{}` succeeded",
-                            collected.verified_commands.join("`, `")
-                        ));
-                    }
-                    if !collected.failed_test_commands.is_empty() {
-                        generated.remaining_risks.push(format!(
-                            "Failing test commands observed in tool traces: `{}`",
-                            collected.failed_test_commands.join("`, `")
-                        ));
-                    }
-                    completed_task.status = TaskStatus::Completed;
-                    completed_task.summary = generated.summary;
-                    completed_task.changed_files = generated.changed_files;
-                    completed_task.verification = generated.verification;
-                    completed_task.remaining_risks = generated.remaining_risks;
-                    completed_task.final_text = truncate_chars(&final_text, MAX_FINAL_TEXT_CHARS);
-                    if !collected.failed_test_commands.is_empty() {
-                        // A failed test run invalidates the summarizer's
-                        // success verdict: report the task as an error so the
-                        // parent and the Studio panel never treat it as done.
-                        completed_task.status = TaskStatus::Error;
-                        completed_task.error = Some(format!(
-                            "A test command failed during the task: `{}`",
-                            collected.failed_test_commands.join("`, `")
-                        ));
-                    }
-                }
-                Err(error) => {
-                    completed_task.status = TaskStatus::Error;
-                    completed_task.error = Some(error);
-                }
-            }
-        }
-        tasks
-            .write()
-            .await
-            .insert(background_task_id.clone(), completed_task.clone());
-        registry.persist().await;
-        if parent_agent_id != "unknown" {
-            match serde_json::to_value(&completed_task) {
-                Ok(result) => {
-                    manager.notify_agent_task_result(&parent_agent_id, &result);
-                    if let Err(error) = manager
-                        .append_agent_task_result(&parent_agent_id, &result)
-                        .await
-                    {
-                        log::warn!("Failed to backfill Agent task result: {error}");
-                    }
-                }
-                Err(error) => log::warn!("Failed to serialize Agent task result: {error}"),
-            }
-            try_resume_task_batch(
-                manager.clone(),
-                tasks.clone(),
-                task_batches,
-                &background_batch_id,
-                &registry,
-            )
-            .await;
-        }
+        execute_delegated_task(
+            manager,
+            tasks,
+            task_batches,
+            registry,
+            background_task_id,
+            background_batch_id,
+            background_agent_id,
+            parent_agent_id,
+            delegated_task,
+            body.timeout_secs,
+            request_id,
+            body.request_depth,
+            source_agent_id,
+            visited_agent_ids,
+        )
+        .await;
     });
 
     Ok(Json(DelegateResponse {
@@ -1674,6 +1787,7 @@ fn build_router(state: AppState) -> Router {
         .route("/tasks/{task_id}", get(get_task))
         .route("/tasks/{task_id}/steer", post(steer_task))
         .route("/tasks/{task_id}/cancel", post(cancel_task))
+        .route("/tasks/{task_id}/retry", post(retry_task))
         .route("/tasks/batches/{batch_id}/seal", post(seal_task_batch))
         .route("/tasks/batches/{batch_id}", get(get_task_batch))
         .route("/tasks/wait", post(wait_tasks))
@@ -1760,6 +1874,7 @@ mod tests {
             last_activity_at: "2026-01-01T00:00:00Z".to_string(),
             token_budget: 100,
             cost_budget_micro_usd: 100,
+            timeout_secs: 300,
             summary: String::new(),
             changed_files: Vec::new(),
             verification: Vec::new(),
@@ -2735,6 +2850,150 @@ mod tests {
         let found_parent: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(found_parent.is_null());
 
+        manager.stop(&child.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_task_can_be_retried_and_reset_to_running() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+        let delegate_body = serde_json::json!({
+            "task": "NOVA_MOCK_SLOW retryable work",
+            "agent_id": child.id,
+            "cwd": "/tmp",
+            "source_agent_id": parent.id.clone(),
+            "request_id": "request-retry",
+            "request_depth": 1,
+            "visited_agent_ids": [parent.id.clone()]
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/delegate")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(delegate_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
+
+        // Cancel the in-flight task so it lands in a terminal stopped state.
+        let cancelled = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/tasks/{}/cancel", task_id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(serde_json::json!({}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled.status(), StatusCode::NO_CONTENT);
+
+        // Retrying resets the task and re-dispatches it to the same agent.
+        let retried = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/tasks/{}/retry", task_id))
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retried.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(retried.into_body(), usize::MAX).await.unwrap();
+        let retried_task: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(retried_task["status"].as_str(), Some("running"));
+        assert!(retried_task["error"].is_null());
+        assert!(retried_task["completedAt"].is_null());
+        assert_eq!(
+            retried_task["agentId"].as_str(),
+            Some(child.id.as_str()),
+            "retry must reuse the same child agent"
+        );
+
+        // Retrying a running task again is rejected.
+        let again = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/tasks/{}/retry", task_id))
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.status(), StatusCode::CONFLICT);
+
+        // Unknown task ids are 404.
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/task-does-not-exist/retry")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        // Tear down the re-dispatched slow task and the agents.
+        let _ = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/tasks/{}/cancel", task_id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(serde_json::json!({}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
     }

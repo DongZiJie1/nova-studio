@@ -187,6 +187,7 @@ pub fn run() {
             commands::cancel_agent,
             commands::force_stop_agent,
             commands::retry_agent,
+            commands::retry_task,
             commands::list_agent_tasks,
             commands::new_session,
             commands::request_messages,

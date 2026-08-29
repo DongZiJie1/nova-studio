@@ -124,6 +124,14 @@ export async function listAgentTasks(): Promise<AgentTaskSnapshot> {
   return invoke("list_agent_tasks");
 }
 
+/**
+ * Re-run a finished (failed/stopped/orphaned) delegated task against the
+ * same child agent with the original task text and timeout.
+ */
+export async function retryTask(taskId: string): Promise<AgentTaskInfo> {
+  return invoke<AgentTaskInfo>("retry_task", { taskId });
+}
+
 export async function startNewSession(agentId: string): Promise<void> {
   return invoke("new_session", { agentId });
 }
