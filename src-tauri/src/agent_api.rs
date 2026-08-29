@@ -425,6 +425,117 @@ async fn get_task(
         })
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskQuery {
+    batch_id: Option<String>,
+    status: Option<String>,
+    agent_id: Option<String>,
+    parent_agent_id: Option<String>,
+}
+
+/// Query delegated tasks with optional batch/status/agent filters. Powers
+/// "list this batch's tasks" and "list all running tasks" style checks.
+async fn list_tasks(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Query(query): axum::extract::Query<TaskQuery>,
+) -> Result<Json<TaskSnapshot>, (StatusCode, Json<ApiError>)> {
+    let status_filter = match &query.status {
+        None => None,
+        Some(raw) => Some(serde_json::from_value::<TaskStatus>(serde_json::Value::String(
+            raw.clone(),
+        ))
+        .map_err(|_| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_status_filter",
+                format!("Unknown task status filter: {raw}"),
+                None,
+            )
+        })?),
+    };
+    let tasks = state
+        .tasks
+        .read()
+        .await
+        .values()
+        .filter(|task| {
+            query
+                .batch_id
+                .as_ref()
+                .is_none_or(|batch_id| &task.batch_id == batch_id)
+                && status_filter.is_none_or(|status| task.status == status)
+                && query
+                    .agent_id
+                    .as_ref()
+                    .is_none_or(|agent_id| &task.agent_id == agent_id)
+                && query
+                    .parent_agent_id
+                    .as_ref()
+                    .is_none_or(|parent_id| &task.parent_agent_id == parent_id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(Json(TaskSnapshot { tasks, batches: Vec::new() }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchDetail {
+    batch: AgentTaskBatch,
+    tasks: Vec<AgentTask>,
+}
+
+/// Full detail for one batch: its sealed/resume state plus every task in it.
+async fn get_task_batch(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(batch_id): axum::extract::Path<String>,
+) -> Result<Json<BatchDetail>, (StatusCode, Json<ApiError>)> {
+    let batches = state.task_batches.read().await;
+    let Some(batch) = batches.get(&batch_id).cloned() else {
+        return Err(api_error(
+            StatusCode::NOT_FOUND,
+            "batch_not_found",
+            "Agent task batch not found",
+            None,
+        ));
+    };
+    let tasks = {
+        let tasks = state.tasks.read().await;
+        batch
+            .task_ids
+            .iter()
+            .filter_map(|task_id| tasks.get(task_id).cloned())
+            .collect::<Vec<_>>()
+    };
+    Ok(Json(BatchDetail { batch, tasks }))
+}
+
+/// The parent of an agent, or null for a root agent.
+async fn get_parent_agent(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+) -> Result<Json<Option<AgentInfo>>, (StatusCode, Json<ApiError>)> {
+    let agents = state.manager.list().await;
+    let agent = agents
+        .iter()
+        .find(|candidate| candidate.id == agent_id)
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "agent_not_found",
+                "Agent not found",
+                None,
+            )
+        })?;
+    let parent = agent
+        .parent_agent_id
+        .as_ref()
+        .and_then(|parent_id| agents.iter().find(|candidate| &candidate.id == parent_id))
+        .cloned();
+    Ok(Json(parent))
+}
+
 async fn steer_task(
     AxumState(state): AxumState<AppState>,
     axum::extract::Path(task_id): axum::extract::Path<String>,
@@ -1555,13 +1666,16 @@ fn build_router(state: AppState) -> Router {
         .route("/agents", get(list_agents).post(spawn_agent))
         .route("/agents/{agent_id}", get(get_status).delete(stop_agent))
         .route("/agents/{agent_id}/children", get(list_child_agents))
+        .route("/agents/{agent_id}/parent", get(get_parent_agent))
         .route("/agents/{agent_id}/prompt", post(send_prompt))
         .route("/agents/{agent_id}/ask", post(ask_agent))
         .route("/tasks/delegate", post(delegate_task))
+        .route("/tasks", get(list_tasks))
         .route("/tasks/{task_id}", get(get_task))
         .route("/tasks/{task_id}/steer", post(steer_task))
         .route("/tasks/{task_id}/cancel", post(cancel_task))
         .route("/tasks/batches/{batch_id}/seal", post(seal_task_batch))
+        .route("/tasks/batches/{batch_id}", get(get_task_batch))
         .route("/tasks/wait", post(wait_tasks))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2505,6 +2619,121 @@ mod tests {
             .is_some_and(|risks| risks.iter().any(|risk| risk
                 .as_str()
                 .is_some_and(|text| text.contains("npm test")))));
+
+        manager.stop(&child.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn task_query_endpoints_filter_by_batch_status_and_parent() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+        let delegate_body = serde_json::json!({
+            "task": "queryable work",
+            "agent_id": child.id,
+            "cwd": "/tmp",
+            "source_agent_id": parent.id.clone(),
+            "request_id": "request-query",
+            "request_depth": 1,
+            "visited_agent_ids": [parent.id.clone()]
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/delegate")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(delegate_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let batch_id = delegated.get("batch_id").and_then(|v| v.as_str()).unwrap();
+
+        let query = |app: Router, uri: String| {
+            let app = app.clone();
+            let token = manager.hub_token.clone();
+            async move {
+                app.oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header("x-nova-token", token.as_str())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        // Filter by batch id.
+        let response = query(app.clone(), format!("/tasks?batchId={batch_id}")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let listed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(listed["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["tasks"][0]["batchId"].as_str(), Some(batch_id));
+
+        // Filter by an unknown status is a validation error.
+        let response = query(app.clone(), "/tasks?status=bogus".to_string()).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Batch detail includes the sealed/resume markers and its tasks.
+        let response = query(app.clone(), format!("/tasks/batches/{batch_id}")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(detail["batch"]["batchId"].as_str(), Some(batch_id));
+        assert_eq!(detail["batch"]["parentAgentId"].as_str(), Some(parent.id.as_str()));
+        assert_eq!(detail["tasks"].as_array().unwrap().len(), 1);
+
+        // Unknown batch is a 404.
+        let response = query(app.clone(), "/tasks/batches/batch-does-not-exist".to_string()).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Parent lookup resolves the child's parent to the root agent, and a
+        // root agent has a null parent.
+        let response = query(app.clone(), format!("/agents/{}/parent", child.id)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let found_parent: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(found_parent["id"].as_str(), Some(parent.id.as_str()));
+
+        let response = query(app, format!("/agents/{}/parent", parent.id)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let found_parent: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(found_parent.is_null());
 
         manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
