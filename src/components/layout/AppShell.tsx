@@ -465,6 +465,7 @@ function SessionStats({ agent }: { agent: AgentState }) {
 
   return (
     <div
+      className="session-stats"
       style={{
         display: "flex",
         alignItems: "center",
@@ -491,14 +492,14 @@ function SessionStats({ agent }: { agent: AgentState }) {
         </>
       )}
       <span
-        className="session-stat-item"
+        className="session-stat-item session-stat-cache"
         tabIndex={0}
         data-tooltip="Session 输入中通过模型缓存读取的比例。命中率越高，重复上下文的处理成本通常越低。"
         style={itemStyle}
       >缓存命中率<span style={{ ...valueStyle, color: cacheHitRate != null && cacheHitRate > 90 ? "#34d399" : cacheHitRate != null && cacheHitRate > 70 ? "#f59e0b" : "#818cf8" }}>{cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}</span></span>
       <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
       <span
-        className="session-stat-item"
+        className="session-stat-item session-stat-input"
         tabIndex={0}
         data-tooltip="整个 Session 内模型调用产生的累计未缓存输入，可能包含系统提示和未命中缓存的历史内容，不等于当前用户消息长度。"
         style={itemStyle}
@@ -742,7 +743,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
   const isChild = depth > 0;
 
   return (
-    <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""}`}>
+    <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""} ${isActive ? "agent-tree-node-active" : ""}`}>
       <button
         onClick={() => onSelect(agent.id)}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
@@ -1937,6 +1938,9 @@ export function AppShell() {
       data-custom-background={customBgUrl ? "true" : "false"}
     >
       <Background />
+      <div className="app-titlebar-drag" data-tauri-drag-region>
+        <span data-tauri-drag-region>Nova Studio</span>
+      </div>
 
       {/* Full-window drag overlay */}
       {isDragOver && (
@@ -2013,7 +2017,7 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="relative z-10 flex h-full flex-col pt-3">
+      <div className="app-workspace relative z-10 flex h-full flex-col">
         {/* Body row: sidebar + main */}
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
@@ -2226,7 +2230,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className="relative w-full flex flex-col overflow-hidden">
+        <main className="studio-main relative w-full flex flex-col overflow-hidden">
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -2328,9 +2332,9 @@ export function AppShell() {
           <div
             ref={scrollRef}
             onScroll={handleConversationScroll}
-            className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
+            className={`conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
-            } ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
+            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
@@ -2607,7 +2611,7 @@ export function AppShell() {
             ) : (
               /* Messages view */
               <div
-                className="w-full max-w-3xl pt-6"
+                className="conversation-thread w-full pt-6"
                 style={{ paddingBottom: 48 }}
               >
                 {activeAgent && activeAgent.messages.length === 0 && (
@@ -2659,7 +2663,7 @@ export function AppShell() {
             )}
           </div>
 
-          {conversationView === "chat" && activeDelegatedTasks.length > 0 && (
+          {!settingsOpen && conversationView === "chat" && activeDelegatedTasks.length > 0 && (
             <aside className="conversation-task-summary">
               <BatchTaskPanel
                 tasks={activeDelegatedTasks}
@@ -2671,7 +2675,7 @@ export function AppShell() {
             </aside>
           )}
 
-          {conversationView === "chat" && activeDelegatedTasks.length === 0 && showConversationMinimap && (
+          {!settingsOpen && conversationView === "chat" && activeDelegatedTasks.length === 0 && showConversationMinimap && (
             <nav
               className="conversation-minimap"
               aria-label="Conversation navigation"
@@ -2703,21 +2707,21 @@ export function AppShell() {
 
           {/* Input area */}
           <div
+            className={activeDelegatedTasks.length > 0 ? "conversation-input-area conversation-input-with-task-summary" : "conversation-input-area"}
             style={{
               flexShrink: 0,
               padding: "60px 24px 56px",
-              display: conversationView === "chat" ? "flex" : "none",
+              display: !settingsOpen && conversationView === "chat" ? "flex" : "none",
               justifyContent: "center",
             }}
           >
-            <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
+            <div style={{ position: "relative", width: "100%", maxWidth: 660 }}>
               {showScrollToBottom && activeAgent && (
                 <button
                   type="button"
                   className="scroll-to-bottom-button"
                   onClick={scrollConversationToBottom}
                   aria-label="滚动到对话底部"
-                  title="滚动到最新消息"
                 >
                   <ArrowDown size={18} />
                 </button>
@@ -3007,6 +3011,7 @@ export function AppShell() {
                   }}
                 >
                   <button
+                    className="input-attach-button"
                     onClick={() => fileInputRef.current?.click()}
                     style={{
                       display: "flex",
@@ -3302,6 +3307,7 @@ export function AppShell() {
                     {/* Abort button (visible during streaming) */}
                     {activeAgent?.status === "streaming" ? (
                       <button
+                        className="input-action-button input-abort-button"
                         onClick={handleAbort}
                         style={{
                           display: "flex",
@@ -3320,6 +3326,7 @@ export function AppShell() {
                       </button>
                     ) : (
                       <button
+                        className="input-action-button input-send-button"
                         onClick={handleSubmit}
                         disabled={!input.trim() || isSending}
                         style={{
