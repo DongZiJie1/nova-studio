@@ -55,8 +55,14 @@ while IFS= read -r line; do
         # cross-checking of the structured task result.
         printf '{"type":"tool_execution_start","agentId":"%s","toolCallId":"tool-1","toolName":"edit","args":{"path":"/tmp/mock-changed.ts"}}\n' "$agent_id"
         printf '{"type":"tool_execution_end","agentId":"%s","toolCallId":"tool-1","toolName":"edit","isError":false}\n' "$agent_id"
-        printf '{"type":"tool_execution_start","agentId":"%s","toolCallId":"tool-2","toolName":"bash","args":{"command":"npm test"}}\n' "$agent_id"
-        printf '{"type":"tool_execution_end","agentId":"%s","toolCallId":"tool-2","toolName":"bash","isError":false}\n' "$agent_id"
+        if [[ "$line" != *"NOVA_MOCK_TOOLS_FAIL"* ]]; then
+          printf '{"type":"tool_execution_start","agentId":"%s","toolCallId":"tool-2","toolName":"bash","args":{"command":"npm test"}}\n' "$agent_id"
+          printf '{"type":"tool_execution_end","agentId":"%s","toolCallId":"tool-2","toolName":"bash","isError":false}\n' "$agent_id"
+        fi
+      fi
+      if [[ "$line" == *"NOVA_MOCK_TOOLS_FAIL"* ]]; then
+        printf '{"type":"tool_execution_start","agentId":"%s","toolCallId":"tool-3","toolName":"bash","args":{"command":"npm test"}}\n' "$agent_id"
+        printf '{"type":"tool_execution_end","agentId":"%s","toolCallId":"tool-3","toolName":"bash","isError":true}\n' "$agent_id"
       fi
       printf '{"type":"message_start","agentId":"%s","message":{"role":"assistant"}}\n' "$agent_id"
       printf '{"type":"message_end","agentId":"%s","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$agent_id" "$reply"
