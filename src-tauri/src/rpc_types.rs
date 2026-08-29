@@ -292,6 +292,8 @@ pub struct AgentInfo {
     pub id: String,
     #[serde(default)]
     pub parent_agent_id: Option<String>,
+    /// "user" for user-created roots, otherwise the delegating Agent ID.
+    pub created_by: Option<String>,
     /// Display name, initially "Nova", then LLM-generated after first prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,

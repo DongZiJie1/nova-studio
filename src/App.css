@@ -2200,66 +2200,6 @@ body {
   text-shadow: 0 0 14px rgba(165, 180, 252, 0.28);
 }
 
-.agent-lifecycle-badge {
-  display: inline-flex;
-  min-width: 0;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-radius: 999px;
-  color: var(--color-text-muted);
-  background: color-mix(in srgb, currentColor 7%, transparent);
-  font-size: 9.5px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.agent-lifecycle-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 7px currentColor;
-}
-
-.agent-lifecycle-badge-queued,
-.agent-lifecycle-badge-starting {
-  color: #d6a85f;
-}
-
-.agent-lifecycle-badge-running {
-  color: var(--color-accent-start);
-}
-
-.agent-lifecycle-badge-running .agent-lifecycle-dot,
-.agent-lifecycle-badge-starting .agent-lifecycle-dot {
-  animation: agent-lifecycle-pulse 1.4s ease-in-out infinite;
-}
-
-.agent-lifecycle-badge-waiting {
-  color: #76a8ce;
-}
-
-.agent-lifecycle-badge-completed {
-  color: var(--color-success);
-}
-
-.agent-lifecycle-badge-error,
-.agent-lifecycle-badge-orphaned {
-  color: var(--color-error);
-}
-
-.agent-lifecycle-badge-stopped {
-  color: var(--color-text-muted);
-}
-
-@keyframes agent-lifecycle-pulse {
-  50% { opacity: 0.35; transform: scale(0.78); }
-}
-
 .agent-tile {
   position: relative;
   flex-shrink: 0;

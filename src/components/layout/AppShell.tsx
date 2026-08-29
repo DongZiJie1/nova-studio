@@ -713,24 +713,6 @@ function agentSubtitle(agent: AgentState): string {
   return agent.cwd;
 }
 
-const AGENT_LIFECYCLE_LABELS: Record<string, string> = {
-  queued: "排队中",
-  starting: "启动中",
-  running: "运行中",
-  waiting: "等待中",
-  completed: "已完成",
-  error: "失败",
-  stopped: "已停止",
-  orphaned: "已中断",
-};
-
-function agentLifecycleStatus(agent: AgentState): string {
-  if (agent.lifecycle?.taskStatus) return agent.lifecycle.taskStatus;
-  if (agent.status === "streaming") return "running";
-  if (agent.status === "idle") return "waiting";
-  return agent.status;
-}
-
 interface AgentTreeNodeProps {
   agent: AgentState;
   childrenByParent: Map<string, AgentState[]>;
@@ -758,10 +740,6 @@ const AgentTreeNode = memo(function AgentTreeNode({
   const [childrenExpanded, setChildrenExpanded] = useState(false);
   const isActive = agent.id === activeId;
   const isChild = depth > 0;
-  const lifecycleStatus = agentLifecycleStatus(agent);
-  const lifecycleReason = agent.lifecycle?.errorReason
-    ?? agent.lifecycle?.cancelReason
-    ?? agent.lifecycle?.timeoutReason;
 
   return (
     <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""}`}>
@@ -776,13 +754,6 @@ const AgentTreeNode = memo(function AgentTreeNode({
               {agentSubtitle(agent)}
             </span>
           )}
-        </span>
-        <span
-          className={`agent-lifecycle-badge agent-lifecycle-badge-${lifecycleStatus}`}
-          title={lifecycleReason ?? `Agent 状态：${AGENT_LIFECYCLE_LABELS[lifecycleStatus] ?? lifecycleStatus}`}
-        >
-          <span className="agent-lifecycle-dot" />
-          {AGENT_LIFECYCLE_LABELS[lifecycleStatus] ?? lifecycleStatus}
         </span>
         <span
           role="button"
@@ -1757,6 +1728,7 @@ export function AppShell() {
         const newAgent: AgentState = {
           id: info.id,
           parentAgentId: info.parent_agent_id,
+          createdBy: info.created_by,
           name: null,
           avatarId: getOrAssignAgentAvatar(info.id),
           status: info.status,

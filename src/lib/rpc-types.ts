@@ -281,6 +281,7 @@ export interface AgentLifecycleSnapshot {
 export interface AgentInfo {
   id: string;
   parent_agent_id: string | null;
+  created_by: string | null;
   name: string | null;
   status: AgentStatus;
   lifecycle?: AgentLifecycleSnapshot;

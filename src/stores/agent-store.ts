@@ -62,6 +62,7 @@ export interface ChatMessage {
 export interface AgentState {
   id: string;
   parentAgentId: string | null;
+  createdBy: string | null;
   name: string | null;
   avatarId: AgentAvatarId;
   status: AgentStatus;
@@ -170,6 +171,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
   return {
     id: info.id,
     parentAgentId: info.parent_agent_id,
+    createdBy: info.created_by,
     name: info.name ?? "Nova",
     avatarId: getOrAssignAgentAvatar(info.id),
     status: info.status,
@@ -198,6 +200,7 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
   return {
     ...agent,
     parentAgentId: info.parent_agent_id,
+    createdBy: info.created_by,
     name: info.name ?? agent.name,
     status: info.status,
     lifecycle: info.lifecycle,

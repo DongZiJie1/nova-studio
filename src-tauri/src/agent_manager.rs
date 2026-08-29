@@ -56,6 +56,8 @@ impl Drop for AskCancellationGuard {
 struct PersistedAgent {
     id: String,
     parent_agent_id: Option<String>,
+    #[serde(default)]
+    created_by: Option<String>,
     name: Option<String>,
     cwd: String,
     model: Option<String>,
@@ -173,6 +175,7 @@ impl AgentManager {
                             // not an Agent collaboration hierarchy. Only Studio's persisted
                             // parent_agent_id is authoritative for nested Agent rendering.
                             parent_agent_id: legacy.and_then(|item| item.parent_agent_id.clone()),
+                            created_by: legacy.and_then(|item| item.created_by.clone()),
                             name,
                             cwd,
                             model: legacy.and_then(|item| item.model.clone()),
@@ -269,6 +272,7 @@ impl AgentManager {
                         // Newly discovered sessions may be forks, clones, or sessions
                         // created outside Studio. Session lineage must remain flat here.
                         parent_agent_id: None,
+                        created_by: Some("user".to_string()),
                         name: session.name.or(fallback_name),
                         cwd,
                         model: None,
@@ -352,6 +356,7 @@ impl AgentManager {
         }
         let record = PersistedAgent {
             id: format!("agent-{short_id}"),
+            created_by: Some(request.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())),
             parent_agent_id: request.parent_agent_id,
             name: Some("Nova".to_string()),
             cwd,
@@ -1136,6 +1141,7 @@ impl AgentManager {
         AgentInfo {
             id: id.to_string(),
             parent_agent_id: process.parent_agent_id.clone(),
+            created_by: Some(process.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())),
             name: process.name.lock().await.clone(),
             status: process.get_status().await,
             lifecycle: None,
@@ -1173,6 +1179,9 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
     AgentInfo {
         id: record.id.clone(),
         parent_agent_id: record.parent_agent_id.clone(),
+        created_by: Some(record.created_by.clone().unwrap_or_else(|| {
+            record.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())
+        })),
         name: record.name.clone(),
         status: crate::rpc_types::AgentStatus::Stopped,
         lifecycle: None,
@@ -1318,6 +1327,7 @@ mod tests {
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
+                created_by: Some("user".to_string()),
                 model: Some("test-model".to_string()),
                 provider: None,
                 args: None,
@@ -1481,6 +1491,7 @@ mod tests {
             PersistedAgent {
                 id: "agent-mock-child".to_string(),
                 parent_agent_id: Some("agent-mock-parent".to_string()),
+                created_by: Some("agent-mock-parent".to_string()),
                 name: Some("Child".to_string()),
                 cwd: "/tmp".to_string(),
                 model: None,
