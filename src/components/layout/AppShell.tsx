@@ -43,6 +43,7 @@ function isAgentTrajectoryTool(name: string): boolean {
   return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
 }
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
+import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
@@ -3319,6 +3320,7 @@ export function AppShell() {
         </main>
         </div>
       </div>
+      <NotificationToasts />
       {editingProject && (
         <div className="project-modal-backdrop" onMouseDown={() => setEditingProject(null)}>
           <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>

@@ -27,6 +27,7 @@ import {
   type AgentTaskInfo,
 } from "../lib/tauri-bridge";
 import { recordTokenUsage, recordUserInteraction } from "../lib/activity-tracker";
+import { useNotificationStore, type AgentNotificationStatus } from "./notification-store";
 
 // ─── Frontend-side types ───
 
@@ -577,6 +578,26 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       void get().refreshAgentTasks();
       const details = event.result;
       const formatted = formatAgentTaskResult(details);
+      // Non-intrusive toast for background results; skip when the user is
+      // already looking at this agent's conversation.
+      if (get().activeAgentId !== agentId) {
+        const agent = get().agents.find((candidate) => candidate.id === agentId);
+        const status = typeof details.status === "string" ? details.status : "completed";
+        useNotificationStore.getState().push({
+          agentId,
+          agentName: agent?.name ?? "子 Agent",
+          status: status === "completed" || status === "error" || status === "stopped" || status === "orphaned"
+            ? (status as AgentNotificationStatus)
+            : "completed",
+          detail: typeof details.summary === "string" && details.summary
+            ? details.summary
+            : typeof details.error === "string" && details.error
+              ? details.error
+              : typeof details.delegatedTask === "string"
+                ? details.delegatedTask
+                : "",
+        });
+      }
       set((s) => ({
         agents: s.agents.map((agent) => {
           if (agent.id !== agentId) return agent;

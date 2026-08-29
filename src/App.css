@@ -5735,3 +5735,100 @@ body {
 .session-stat-item:focus-visible::after {
   transform: translate(-50%, 0);
 }
+
+/* ─── Notification toasts (background agent results) ─── */
+
+.notification-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 320px;
+  pointer-events: none;
+}
+
+.notification-toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-glass);
+  background: var(--stats-tooltip-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  color: var(--stats-tooltip-text);
+  font-size: 12px;
+  line-height: 1.5;
+  animation: notification-in 180ms ease-out;
+}
+
+@keyframes notification-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.notification-toast-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notification-status-chip {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+
+.notification-status-chip.status-completed {
+  color: var(--color-success);
+}
+
+.notification-status-chip.status-error,
+.notification-status-chip.status-stopped,
+.notification-status-chip.status-orphaned {
+  color: var(--color-error);
+}
+
+.notification-agent-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-close {
+  margin-left: auto;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.notification-close:hover {
+  opacity: 1;
+}
+
+.notification-detail {
+  margin-top: 4px;
+  opacity: 0.85;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
