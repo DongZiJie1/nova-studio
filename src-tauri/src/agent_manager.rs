@@ -913,7 +913,39 @@ impl AgentManager {
                 content: serde_json::to_string(result)
                     .map_err(|error| format!("Failed to serialize Agent task result: {error}"))?,
                 display: Some(true),
+                trigger_turn: Some(false),
                 details: result.clone(),
+            },
+            &request_id,
+            30,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn append_agent_task_batch_completed(
+        &self,
+        parent_agent_id: &str,
+        details: &serde_json::Value,
+        content: String,
+    ) -> Result<(), String> {
+        if self.get_process(parent_agent_id).await.is_none() {
+            self.activate(parent_agent_id).await?;
+        }
+        let agent = self
+            .get_process(parent_agent_id)
+            .await
+            .ok_or("Parent Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.request_agent_command(
+            agent,
+            RpcCommand::AppendCustomMessage {
+                id: Some(request_id.clone()),
+                custom_type: "agent_task_batch_completed".to_string(),
+                content,
+                display: Some(false),
+                trigger_turn: Some(true),
+                details: details.clone(),
             },
             &request_id,
             30,

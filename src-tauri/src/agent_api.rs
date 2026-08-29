@@ -28,12 +28,22 @@ struct AppState {
     manager: Arc<AgentManager>,
     request_tracker: Arc<Mutex<RequestTracker>>,
     tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
+    task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+}
+
+#[derive(Clone, Default)]
+struct AgentTaskBatch {
+    parent_agent_id: String,
+    task_ids: Vec<String>,
+    sealed: bool,
+    resume_triggered: bool,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentTask {
     task_id: String,
+    batch_id: String,
     agent_id: String,
     status: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -180,6 +190,8 @@ struct AskResponse {
 struct DelegateBody {
     task: String,
     #[serde(default)]
+    batch_id: String,
+    #[serde(default)]
     agent_id: Option<String>,
     cwd: String,
     #[serde(default)]
@@ -203,9 +215,97 @@ struct DelegateBody {
 #[derive(Serialize)]
 struct DelegateResponse {
     task_id: String,
+    batch_id: String,
     agent_id: String,
     created_agent: bool,
     status: String,
+}
+
+#[derive(Deserialize)]
+struct SealBatchBody {
+    source_agent_id: String,
+}
+
+async fn try_resume_task_batch(
+    manager: Arc<AgentManager>,
+    tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
+    batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+    batch_id: &str,
+) {
+    let (parent_agent_id, task_ids) = {
+        let tasks_guard = tasks.read().await;
+        let mut batches_guard = batches.write().await;
+        let Some(batch) = batches_guard.get_mut(batch_id) else {
+            return;
+        };
+        let all_finished = !batch.task_ids.is_empty()
+            && batch.task_ids.iter().all(|task_id| {
+                tasks_guard
+                    .get(task_id)
+                    .is_some_and(|task| task.status != "running")
+            });
+        if !batch.sealed || !all_finished || batch.resume_triggered {
+            return;
+        }
+        batch.resume_triggered = true;
+        (batch.parent_agent_id.clone(), batch.task_ids.clone())
+    };
+
+    let results = {
+        let tasks_guard = tasks.read().await;
+        task_ids
+            .iter()
+            .filter_map(|task_id| tasks_guard.get(task_id).cloned())
+            .collect::<Vec<_>>()
+    };
+    let details = serde_json::json!({
+        "batchId": batch_id,
+        "results": results,
+    });
+    let content = format!(
+        "[SUB_AGENT_BATCH_COMPLETED]\n\nAll delegated tasks in batch {batch_id} have finished. Continue the original task using the structured results in this message. Synthesize the findings instead of merely repeating them, resolve conflicts or omissions, perform any necessary verification or remaining work, and answer the user when the task is complete. Do not wait for or poll these finished Agents.\n\n{}",
+        serde_json::to_string_pretty(&details).unwrap_or_else(|_| "{}".to_string())
+    );
+    if let Err(error) = manager
+        .append_agent_task_batch_completed(&parent_agent_id, &details, content)
+        .await
+    {
+        log::warn!("Failed to resume completed Agent task batch: {error}");
+        if let Some(batch) = batches.write().await.get_mut(batch_id) {
+            batch.resume_triggered = false;
+        }
+    }
+}
+
+async fn seal_task_batch(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(batch_id): axum::extract::Path<String>,
+    Json(body): Json<SealBatchBody>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    {
+        let mut batches = state.task_batches.write().await;
+        let Some(batch) = batches.get_mut(&batch_id) else {
+            // A turn with no delegation has nothing to seal.
+            return Ok(StatusCode::NO_CONTENT);
+        };
+        if batch.parent_agent_id != body.source_agent_id {
+            return Err(api_error(
+                StatusCode::FORBIDDEN,
+                "batch_owner_mismatch",
+                "Task batch belongs to another Agent",
+                None,
+            ));
+        }
+        batch.sealed = true;
+    }
+    try_resume_task_batch(
+        state.manager.clone(),
+        state.tasks.clone(),
+        state.task_batches.clone(),
+        &batch_id,
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -518,8 +618,14 @@ async fn delegate_task(
     }
 
     let task_id = format!("task-{}", uuid::Uuid::new_v4());
+    let batch_id = if body.batch_id.is_empty() {
+        format!("batch-{}", uuid::Uuid::new_v4())
+    } else {
+        body.batch_id.clone()
+    };
     let task = AgentTask {
         task_id: task_id.clone(),
+        batch_id: batch_id.clone(),
         agent_id: agent_id.clone(),
         status: "running".to_string(),
         summary: String::new(),
@@ -530,12 +636,32 @@ async fn delegate_task(
         error: None,
     };
     state.tasks.write().await.insert(task_id.clone(), task);
+    {
+        let mut batches = state.task_batches.write().await;
+        let batch = batches
+            .entry(batch_id.clone())
+            .or_insert_with(|| AgentTaskBatch {
+                parent_agent_id: source_agent_id.clone(),
+                ..AgentTaskBatch::default()
+            });
+        if batch.parent_agent_id != source_agent_id {
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "batch_owner_mismatch",
+                "Task batch belongs to another Agent",
+                Some(request_id),
+            ));
+        }
+        batch.task_ids.push(task_id.clone());
+    }
     state
         .manager
         .notify_delegated_task(&agent_id, &source_agent_id, &body.task);
 
     let manager = state.manager.clone();
     let tasks = state.tasks.clone();
+    let task_batches = state.task_batches.clone();
+    let background_batch_id = batch_id.clone();
     let background_task_id = task_id.clone();
     let background_agent_id = agent_id.clone();
     let parent_agent_id = source_agent_id.clone();
@@ -575,6 +701,7 @@ async fn delegate_task(
                 };
                 AgentTask {
                     task_id: background_task_id.clone(),
+                    batch_id: background_batch_id.clone(),
                     agent_id: background_agent_id.clone(),
                     status: "completed".to_string(),
                     summary: generated.summary,
@@ -587,6 +714,7 @@ async fn delegate_task(
             }
             Err(error) => AgentTask {
                 task_id: background_task_id.clone(),
+                batch_id: background_batch_id.clone(),
                 agent_id: background_agent_id.clone(),
                 status: if error.contains("timed out") {
                     "timeout".to_string()
@@ -618,11 +746,19 @@ async fn delegate_task(
                 }
                 Err(error) => log::warn!("Failed to serialize Agent task result: {error}"),
             }
+            try_resume_task_batch(
+                manager.clone(),
+                tasks.clone(),
+                task_batches,
+                &background_batch_id,
+            )
+            .await;
         }
     });
 
     Ok(Json(DelegateResponse {
         task_id,
+        batch_id,
         agent_id,
         created_agent,
         status: "running".to_string(),
@@ -767,6 +903,7 @@ fn build_router(state: AppState) -> Router {
         .route("/agents/{agent_id}/prompt", post(send_prompt))
         .route("/agents/{agent_id}/ask", post(ask_agent))
         .route("/tasks/delegate", post(delegate_task))
+        .route("/tasks/batches/{batch_id}/seal", post(seal_task_batch))
         .route("/tasks/wait", post(wait_tasks))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -781,6 +918,7 @@ pub async fn start_api_server(manager: Arc<AgentManager>, port: u16) -> Result<u
         manager: manager.clone(),
         request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
         tasks: Arc::new(RwLock::new(HashMap::new())),
+        task_batches: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let app = build_router(state);
@@ -814,6 +952,7 @@ mod tests {
             manager,
             request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
             tasks: Arc::new(RwLock::new(HashMap::new())),
+            task_batches: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

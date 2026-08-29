@@ -62,6 +62,9 @@ pub enum RpcCommand {
         custom_type: String,
         content: String,
         display: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "triggerTurn")]
+        trigger_turn: Option<bool>,
         details: serde_json::Value,
     },
     #[serde(rename = "abort")]

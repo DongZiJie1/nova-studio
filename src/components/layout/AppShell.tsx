@@ -213,6 +213,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
           ? "用户输入"
           : role === "agent_result"
             ? "子 Agent 回传"
+            : role === "agent_batch"
+              ? "子任务批次完成指令"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
@@ -1076,6 +1078,7 @@ export function AppShell() {
   const chatMessages = useMemo(() => {
     const grouped: AgentState["messages"] = [];
     for (const message of activeAgent?.messages ?? []) {
+      if (message.role === "agent_batch") continue;
       const previous = grouped[grouped.length - 1];
       if (message.role === "tool" && previous?.role === "tool") {
         grouped[grouped.length - 1] = {
@@ -2142,8 +2145,11 @@ export function AppShell() {
                             const isAgentTool = message.role === "tool"
                               && Boolean(message.toolCalls?.some((tool) => isAgentTrajectoryTool(tool.name)));
                             const isSubAgentResult = message.role === "agent_result";
-                            const isAgentEntry = isAgentTool || isSubAgentResult;
-                            const trajectoryRole = isSubAgentResult
+                            const isAgentBatch = message.role === "agent_batch";
+                            const isAgentEntry = isAgentTool || isSubAgentResult || isAgentBatch;
+                            const trajectoryRole = isAgentBatch
+                              ? "AGENT_BATCH"
+                              : isSubAgentResult
                               ? "SUB_AGENT"
                               : isAgentTool
                                 ? "AGENT"
@@ -2157,7 +2163,7 @@ export function AppShell() {
                             return (
                             <div
                               key={message.id}
-                              className={`trajectory-row trajectory-row-${isSubAgentResult ? "sub-agent" : isAgentEntry ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              className={`trajectory-row trajectory-row-${isAgentBatch ? "agent-batch" : isSubAgentResult ? "sub-agent" : isAgentEntry ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
                               aria-pressed={selectedTrajectoryEntry?.id === message.id}

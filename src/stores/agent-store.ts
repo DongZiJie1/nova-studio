@@ -43,7 +43,7 @@ export interface ChatMessage {
   id: string;
   entryId?: string;
   feedback?: "up" | "down";
-  role: "user" | "assistant" | "thinking" | "tool" | "agent_result";
+  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
@@ -276,6 +276,16 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         content: formatted.content,
         timestamp,
         authorLabel: formatted.agentId,
+      });
+      continue;
+    }
+
+    if (message.role === "custom" && message.customType === "agent_task_batch_completed") {
+      hydrated.push({
+        id: nextId(),
+        role: "agent_batch",
+        content: messageText(message),
+        timestamp,
       });
       continue;
     }
@@ -610,15 +620,15 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           const hydrated = hydrateMessages(messages, feedback);
           const persistedResultKeys = new Set(
             hydrated
-              .filter((message) => message.role === "agent_result")
+              .filter((message) => message.role === "agent_result" || message.role === "agent_batch")
               .map((message) => `${message.authorLabel ?? ""}\u001f${message.content}`),
           );
           const liveResultsMissingFromSnapshot = agent.messages.filter(
-            (message) => message.role === "agent_result"
+            (message) => (message.role === "agent_result" || message.role === "agent_batch")
               && !persistedResultKeys.has(`${message.authorLabel ?? ""}\u001f${message.content}`),
           );
           const reconciled = liveResultsMissingFromSnapshot.length > 0
-            ? [...hydrated, ...liveResultsMissingFromSnapshot]
+            ? [...hydrated, ...liveResultsMissingFromSnapshot].sort((left, right) => left.timestamp - right.timestamp)
             : hydrated;
           return {
             ...agent,
@@ -800,6 +810,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "message_lifecycle": {
       if (event.phase === "start") {
+        if (event.message?.role === "custom") return agent;
         return { ...agent, status: "streaming" as const };
       }
       if (event.phase === "end") {
@@ -824,6 +835,26 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
               content: formatted.content,
               timestamp: Date.now(),
               authorLabel: formatted.agentId,
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
+        if (
+          lifecycleMessage?.role === "custom" &&
+          lifecycleMessage.customType === "agent_task_batch_completed"
+        ) {
+          const content = messageText(lifecycleMessage as PersistedRpcMessage);
+          const duplicate = agent.messages.some(
+            (message) => message.role === "agent_batch" && message.content === content,
+          );
+          if (duplicate) return agent;
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "agent_batch",
+              content,
+              timestamp: Date.now(),
             }],
             messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
           };

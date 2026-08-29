@@ -4915,6 +4915,19 @@ body {
   box-shadow: 0 0 0 3px var(--color-bg-primary), 0 0 12px rgba(56, 189, 248, 0.52);
 }
 
+.trajectory-row-agent-batch .trajectory-role {
+  min-width: 96px;
+  border-color: rgba(168, 85, 247, 0.38);
+  color: #c084fc;
+  background: rgba(126, 34, 206, 0.2);
+  box-shadow: 0 3px 10px rgba(126, 34, 206, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.trajectory-row-agent-batch .trajectory-node {
+  background: #a855f7;
+  box-shadow: 0 0 0 3px var(--color-bg-primary), 0 0 12px rgba(168, 85, 247, 0.5);
+}
+
 .trajectory-row-system .trajectory-role,
 .trajectory-row-tool-definition .trajectory-role,
 .trajectory-row-skill .trajectory-role,
