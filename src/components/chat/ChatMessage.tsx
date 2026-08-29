@@ -137,7 +137,7 @@ export const ChatMessage = memo(function ChatMessage({
       )}
       <div className="msg-column">
         <div className="msg-meta">
-          <span className="msg-author">{isUser ? userLabel : "Nova"}</span>
+          <span className="msg-author">{isUser ? userLabel : (message.authorLabel ?? "Nova")}</span>
           <span className="msg-time">{formatTime(message.timestamp)}</span>
         </div>
         {isUser && message.attachments && message.attachments.length > 0 && (

@@ -43,12 +43,13 @@ export interface ChatMessage {
   id: string;
   entryId?: string;
   feedback?: "up" | "down";
-  role: "user" | "assistant" | "thinking" | "tool";
+  role: "user" | "assistant" | "thinking" | "tool" | "agent_result";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
   attachments?: MessageAttachment[];
   sourceAgentId?: string;
+  authorLabel?: string;
 }
 
 export interface AgentState {
@@ -128,6 +129,27 @@ interface AgentStoreState {
 let messageCounter = 0;
 function nextId(): string {
   return `msg-${Date.now()}-${++messageCounter}`;
+}
+
+function formatAgentTaskResult(details: Record<string, unknown>): { content: string; agentId: string } {
+  const taskId = typeof details.taskId === "string" ? details.taskId : "Agent task";
+  const agentId = typeof details.agentId === "string" ? details.agentId : "Child Agent";
+  const status = typeof details.status === "string" ? details.status : "completed";
+  const summary = typeof details.summary === "string" ? details.summary : `${taskId} completed`;
+  const stringList = (key: string): string[] => Array.isArray(details[key])
+    ? details[key].filter((item): item is string => typeof item === "string")
+    : [];
+  const changedFiles = stringList("changedFiles");
+  const verification = stringList("verification");
+  const remainingRisks = stringList("remainingRisks");
+  const sections = [
+    `**${summary}**`,
+    `状态：${status} · 任务：${taskId}`,
+    changedFiles.length > 0 ? `修改文件：\n${changedFiles.map((file) => `- ${file}`).join("\n")}` : "修改文件：无",
+    verification.length > 0 ? `验证：\n${verification.map((item) => `- ${item}`).join("\n")}` : "验证：未提供",
+    remainingRisks.length > 0 ? `剩余风险：\n${remainingRisks.map((risk) => `- ${risk}`).join("\n")}` : "剩余风险：无",
+  ];
+  return { content: sections.join("\n\n"), agentId };
 }
 
 function agentStateFromInfo(info: AgentInfo): AgentState {
@@ -240,6 +262,21 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         ? message.details as Record<string, unknown>
         : {};
       pendingSourceAgentId = typeof details.sourceAgentId === "string" ? details.sourceAgentId : undefined;
+      continue;
+    }
+
+    if (message.role === "custom" && message.customType === "agent_task_result") {
+      const details = message.details && typeof message.details === "object"
+        ? message.details as Record<string, unknown>
+        : {};
+      const formatted = formatAgentTaskResult(details);
+      hydrated.push({
+        id: nextId(),
+        role: "agent_result",
+        content: formatted.content,
+        timestamp,
+        authorLabel: formatted.agentId,
+      });
       continue;
     }
 
@@ -499,6 +536,32 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       return;
     }
 
+    if (event.type === "agent_task_result") {
+      const details = event.result;
+      const formatted = formatAgentTaskResult(details);
+      set((s) => ({
+        agents: s.agents.map((agent) => {
+          if (agent.id !== agentId) return agent;
+          const duplicate = agent.messages.some(
+            (message) => message.role === "agent_result" && message.content === formatted.content && message.authorLabel === formatted.agentId,
+          );
+          if (duplicate) return agent;
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "agent_result",
+              content: formatted.content,
+              timestamp: Date.now(),
+              authorLabel: formatted.agentId,
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }),
+      }));
+      return;
+    }
+
     if (
       event.type === "response" &&
       event.command === "get_execution_traces" &&
@@ -545,10 +608,22 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           // so never replace messages already rendered.
           if (messages.length === 0 && agent.messages.length > 0) return agent;
           const hydrated = hydrateMessages(messages, feedback);
+          const persistedResultKeys = new Set(
+            hydrated
+              .filter((message) => message.role === "agent_result")
+              .map((message) => `${message.authorLabel ?? ""}\u001f${message.content}`),
+          );
+          const liveResultsMissingFromSnapshot = agent.messages.filter(
+            (message) => message.role === "agent_result"
+              && !persistedResultKeys.has(`${message.authorLabel ?? ""}\u001f${message.content}`),
+          );
+          const reconciled = liveResultsMissingFromSnapshot.length > 0
+            ? [...hydrated, ...liveResultsMissingFromSnapshot]
+            : hydrated;
           return {
             ...agent,
-            messages: hydrated,
-            messageCount: Math.max(agent.messageCount, hydrated.length),
+            messages: reconciled,
+            messageCount: Math.max(agent.messageCount, reconciled.length),
           };
         }),
       }));
@@ -728,6 +803,31 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
         return { ...agent, status: "streaming" as const };
       }
       if (event.phase === "end") {
+        const lifecycleMessage = event.message;
+        if (
+          lifecycleMessage?.role === "custom" &&
+          lifecycleMessage.customType === "agent_task_result"
+        ) {
+          const details = lifecycleMessage.details && typeof lifecycleMessage.details === "object"
+            ? lifecycleMessage.details as Record<string, unknown>
+            : {};
+          const formatted = formatAgentTaskResult(details);
+          const duplicate = agent.messages.some(
+            (message) => message.role === "agent_result" && message.content === formatted.content && message.authorLabel === formatted.agentId,
+          );
+          if (duplicate) return agent;
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "agent_result",
+              content: formatted.content,
+              timestamp: Date.now(),
+              authorLabel: formatted.agentId,
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
         const text = extractAssistantText(event.message);
 
         // Check for provider error (e.g. 400 from model API)

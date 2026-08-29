@@ -535,6 +535,7 @@ impl AgentManager {
         message: String,
         images: Option<Vec<ImageContent>>,
         file_references: Option<Vec<FileReference>>,
+        background_agent_ids: Option<Vec<String>>,
     ) -> Result<(), String> {
         if self.get_process(agent_id).await.is_none() {
             self.activate(agent_id).await?;
@@ -552,6 +553,7 @@ impl AgentManager {
             images,
             file_references,
             collaboration_context: None,
+            background_agent_ids,
         };
         agent.send_command(&cmd)
     }
@@ -774,6 +776,7 @@ impl AgentManager {
             images: None,
             file_references: None,
             collaboration_context: Some(collaboration_context),
+            background_agent_ids: None,
         })?;
         // If the HTTP caller disconnects, the future is cancelled, or any
         // error/timeout path returns early, stop the target turn before
@@ -821,6 +824,102 @@ impl AgentManager {
                 _ => {}
             }
         }
+    }
+
+    async fn request_agent_command(
+        &self,
+        agent: Arc<AgentProcess>,
+        command: RpcCommand,
+        request_id: &str,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String> {
+        let mut rx = agent.subscribe();
+        agent.send_command(&command)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(format!("Agent RPC request timed out after {timeout_secs}s"));
+            }
+            let event = tokio::time::timeout(remaining, rx.recv())
+                .await
+                .map_err(|_| format!("Agent RPC request timed out after {timeout_secs}s"))?
+                .map_err(|_| "Agent event stream closed".to_string())?;
+            if event.get("type").and_then(serde_json::Value::as_str) != Some("response")
+                || event.get("id").and_then(serde_json::Value::as_str) != Some(request_id)
+            {
+                continue;
+            }
+            if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+                return Ok(event
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null));
+            }
+            return Err(event
+                .get("error")
+                .or_else(|| event.pointer("/data/error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Agent RPC request failed")
+                .to_string());
+        }
+    }
+
+    pub async fn summarize_task_result(
+        &self,
+        agent_id: &str,
+        task: String,
+        final_text: String,
+        timeout_secs: u64,
+    ) -> Result<String, String> {
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let data = self
+            .request_agent_command(
+                agent,
+                RpcCommand::SummarizeTaskResult {
+                    id: Some(request_id.clone()),
+                    task,
+                    final_text,
+                },
+                &request_id,
+                timeout_secs,
+            )
+            .await?;
+        data.get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "Task summarizer returned no text".to_string())
+    }
+
+    pub async fn append_agent_task_result(
+        &self,
+        parent_agent_id: &str,
+        result: &serde_json::Value,
+    ) -> Result<(), String> {
+        if self.get_process(parent_agent_id).await.is_none() {
+            self.activate(parent_agent_id).await?;
+        }
+        let agent = self
+            .get_process(parent_agent_id)
+            .await
+            .ok_or("Parent Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.request_agent_command(
+            agent.clone(),
+            RpcCommand::AppendCustomMessage {
+                id: Some(request_id.clone()),
+                custom_type: "agent_task_result".to_string(),
+                content: serde_json::to_string(result)
+                    .map_err(|error| format!("Failed to serialize Agent task result: {error}"))?,
+                display: Some(true),
+                details: result.clone(),
+            },
+            &request_id,
+            30,
+        )
+        .await?;
+        Ok(())
     }
 
     /// Send an extension UI response (from a frontend dialog) to an agent
@@ -902,6 +1001,16 @@ impl AgentManager {
                 "type": "agent_delegated_task",
                 "sourceAgentId": source_agent_id,
                 "task": task,
+            }),
+        ));
+    }
+
+    pub fn notify_agent_task_result(&self, parent_agent_id: &str, result: &serde_json::Value) {
+        let _ = self.global_event_tx.send((
+            parent_agent_id.to_string(),
+            serde_json::json!({
+                "type": "agent_task_result",
+                "result": result,
             }),
         ));
     }

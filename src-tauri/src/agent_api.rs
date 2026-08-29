@@ -31,14 +31,35 @@ struct AppState {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AgentTask {
     task_id: String,
     agent_id: String,
     status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    summary: String,
+    #[serde(default)]
+    changed_files: Vec<String>,
+    #[serde(default)]
+    verification: Vec<String>,
+    #[serde(default)]
+    remaining_risks: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    final_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeneratedTaskSummary {
+    summary: String,
+    #[serde(default)]
+    changed_files: Vec<String>,
+    #[serde(default)]
+    verification: Vec<String>,
+    #[serde(default)]
+    remaining_risks: Vec<String>,
 }
 
 #[derive(Default)]
@@ -234,6 +255,25 @@ fn api_error(
     )
 }
 
+fn parse_generated_task_summary(text: &str) -> Result<GeneratedTaskSummary, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| "Task summarizer returned no JSON object".to_string())?;
+    let end = text
+        .rfind('}')
+        .ok_or_else(|| "Task summarizer returned incomplete JSON".to_string())?;
+    serde_json::from_str(&text[start..=end])
+        .map_err(|error| format!("Task summarizer returned invalid JSON: {error}"))
+}
+
+fn fallback_summary(final_text: &str, error: &str) -> GeneratedTaskSummary {
+    GeneratedTaskSummary {
+        summary: final_text.chars().take(240).collect(),
+        remaining_risks: vec![format!("Structured summary generation failed: {error}")],
+        ..GeneratedTaskSummary::default()
+    }
+}
+
 async fn spawn_agent(
     AxumState(state): AxumState<AppState>,
     Json(body): Json<SpawnBody>,
@@ -278,7 +318,13 @@ async fn send_prompt(
     let _guard = process.prompt_lock.lock().await;
     state
         .manager
-        .send_prompt(&agent_id, body.message, body.images, body.file_references)
+        .send_prompt(
+            &agent_id,
+            body.message,
+            body.images,
+            body.file_references,
+            None,
+        )
         .await
         .map_err(|e| api_error(StatusCode::NOT_FOUND, "prompt_failed", e, None))?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -476,7 +522,11 @@ async fn delegate_task(
         task_id: task_id.clone(),
         agent_id: agent_id.clone(),
         status: "running".to_string(),
-        result: None,
+        summary: String::new(),
+        changed_files: Vec::new(),
+        verification: Vec::new(),
+        remaining_risks: Vec::new(),
+        final_text: String::new(),
         error: None,
     };
     state.tasks.write().await.insert(task_id.clone(), task);
@@ -488,6 +538,8 @@ async fn delegate_task(
     let tasks = state.tasks.clone();
     let background_task_id = task_id.clone();
     let background_agent_id = agent_id.clone();
+    let parent_agent_id = source_agent_id.clone();
+    let delegated_task = body.task.clone();
     let mut visited_agent_ids = body.visited_agent_ids;
     if !visited_agent_ids.iter().any(|visited| visited == &agent_id) {
         visited_agent_ids.push(agent_id.clone());
@@ -496,30 +548,75 @@ async fn delegate_task(
         let outcome = manager
             .ask(
                 &background_agent_id,
-                body.task,
+                delegated_task.clone(),
                 body.timeout_secs,
                 CollaborationContext {
                     request_id,
                     request_depth: body.request_depth,
-                    source_agent_id,
+                    source_agent_id: source_agent_id.clone(),
                     visited_agent_ids,
                 },
             )
             .await;
-        if let Some(task) = tasks.write().await.get_mut(&background_task_id) {
-            match outcome {
+        let completed_task = match outcome {
+            Ok(final_text) => {
+                let generated = match manager
+                    .summarize_task_result(
+                        &background_agent_id,
+                        delegated_task,
+                        final_text.clone(),
+                        120,
+                    )
+                    .await
+                {
+                    Ok(text) => parse_generated_task_summary(&text)
+                        .unwrap_or_else(|error| fallback_summary(&final_text, &error)),
+                    Err(error) => fallback_summary(&final_text, &error),
+                };
+                AgentTask {
+                    task_id: background_task_id.clone(),
+                    agent_id: background_agent_id.clone(),
+                    status: "completed".to_string(),
+                    summary: generated.summary,
+                    changed_files: generated.changed_files,
+                    verification: generated.verification,
+                    remaining_risks: generated.remaining_risks,
+                    final_text,
+                    error: None,
+                }
+            }
+            Err(error) => AgentTask {
+                task_id: background_task_id.clone(),
+                agent_id: background_agent_id.clone(),
+                status: if error.contains("timed out") {
+                    "timeout".to_string()
+                } else {
+                    "error".to_string()
+                },
+                summary: String::new(),
+                changed_files: Vec::new(),
+                verification: Vec::new(),
+                remaining_risks: Vec::new(),
+                final_text: String::new(),
+                error: Some(error),
+            },
+        };
+        tasks
+            .write()
+            .await
+            .insert(background_task_id.clone(), completed_task.clone());
+        if parent_agent_id != "unknown" {
+            match serde_json::to_value(&completed_task) {
                 Ok(result) => {
-                    task.status = "completed".to_string();
-                    task.result = Some(result);
+                    manager.notify_agent_task_result(&parent_agent_id, &result);
+                    if let Err(error) = manager
+                        .append_agent_task_result(&parent_agent_id, &result)
+                        .await
+                    {
+                        log::warn!("Failed to backfill Agent task result: {error}");
+                    }
                 }
-                Err(error) => {
-                    task.status = if error.contains("timed out") {
-                        "timeout".to_string()
-                    } else {
-                        "error".to_string()
-                    };
-                    task.error = Some(error);
-                }
+                Err(error) => log::warn!("Failed to serialize Agent task result: {error}"),
             }
         }
     });
@@ -830,7 +927,7 @@ mod tests {
             format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
             std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
         ));
-        let agent = manager
+        let parent = manager
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
@@ -841,15 +938,27 @@ mod tests {
             })
             .await
             .unwrap();
+        let agent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let mut events = manager.subscribe_global();
         let app = build_router(test_state(manager.clone()));
         let delegate_body = serde_json::json!({
             "task": "background work",
             "agent_id": agent.id,
             "cwd": "/tmp",
-            "source_agent_id": "agent-parent",
+            "source_agent_id": parent.id.clone(),
             "request_id": "request-delegate",
             "request_depth": 1,
-            "visited_agent_ids": ["agent-parent"]
+            "visited_agent_ids": [parent.id.clone()]
         });
         let response = app
             .clone()
@@ -907,11 +1016,36 @@ mod tests {
             Some("completed")
         );
         assert!(waited
-            .pointer("/tasks/0/result")
+            .pointer("/tasks/0/finalText")
             .and_then(|value| value.as_str())
             .is_some());
-
+        assert_eq!(
+            waited
+                .pointer("/tasks/0/summary")
+                .and_then(|value| value.as_str()),
+            Some("mock summary")
+        );
+        let result_event = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let (event_agent_id, event) = events.recv().await.unwrap();
+                if event_agent_id == parent.id
+                    && event.get("type").and_then(serde_json::Value::as_str)
+                        == Some("agent_task_result")
+                {
+                    break event;
+                }
+            }
+        })
+        .await
+        .expect("parent did not receive the structured Agent result event");
+        assert_eq!(
+            result_event
+                .pointer("/result/summary")
+                .and_then(serde_json::Value::as_str),
+            Some("mock summary")
+        );
         manager.stop(&agent.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
     }
 
     #[tokio::test]

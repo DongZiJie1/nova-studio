@@ -13,6 +13,11 @@ fi
 last_depth=0
 while IFS= read -r line; do
   agent_id=$(printf '%s' "$line" | sed -n 's/.*"agentId":"\([^"]*\)".*/\1/p')
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  if [[ "$line" == *'"type":"append_custom_message"'* ]]; then
+    printf '{"type":"response","id":"%s","command":"append_custom_message","success":true,"agentId":"%s","data":{"appended":true}}\n' "$request_id" "$agent_id"
+    continue
+  fi
   case "$line" in
     *'"type":"agent_create"'*)
       last_depth=$(printf '%s' "$line" | sed -n 's/.*"depth":\([0-9]*\).*/\1/p')
@@ -29,6 +34,9 @@ while IFS= read -r line; do
       printf '{"type":"message_start","agentId":"%s","message":{"role":"assistant"}}\n' "$agent_id"
       printf '{"type":"message_end","agentId":"%s","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$agent_id" "$reply"
       printf '{"type":"agent_settled","agentId":"%s"}\n' "$agent_id"
+      ;;
+    *'"type":"summarize_task_result"'*)
+      printf '{"type":"response","id":"%s","command":"summarize_task_result","success":true,"agentId":"%s","data":{"text":"{\\"summary\\":\\"mock summary\\",\\"changedFiles\\":[],\\"verification\\":[\\"mock check\\"],\\"remainingRisks\\":[]}"}}\n' "$request_id" "$agent_id"
       ;;
   esac
 done

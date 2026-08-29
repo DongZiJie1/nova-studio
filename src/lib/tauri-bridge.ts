@@ -48,8 +48,9 @@ export async function sendPrompt(
   message: string,
   images?: ImageContent[],
   fileReferences?: FileReference[],
+  backgroundAgentIds?: string[],
 ): Promise<void> {
-  return invoke("send_prompt", { agentId, message, images, fileReferences });
+  return invoke("send_prompt", { agentId, message, images, fileReferences, backgroundAgentIds });
 }
 
 export async function abortAgent(agentId: string): Promise<void> {

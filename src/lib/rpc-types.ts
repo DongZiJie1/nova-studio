@@ -122,6 +122,7 @@ export type AgentMessage =
   | { type: "agent_settled" }
   | { type: "agent_name_update"; name: string }
   | { type: "agent_delegated_task"; sourceAgentId: string; task: string }
+  | { type: "agent_task_result"; result: Record<string, unknown> }
   | {
       type: "extension_ui_request";
       id: string;

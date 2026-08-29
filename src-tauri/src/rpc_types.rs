@@ -44,6 +44,25 @@ pub enum RpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "collaborationContext")]
         collaboration_context: Option<CollaborationContext>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "backgroundAgentIds")]
+        background_agent_ids: Option<Vec<String>>,
+    },
+    #[serde(rename = "summarize_task_result")]
+    SummarizeTaskResult {
+        id: Option<String>,
+        task: String,
+        #[serde(rename = "finalText")]
+        final_text: String,
+    },
+    #[serde(rename = "append_custom_message")]
+    AppendCustomMessage {
+        id: Option<String>,
+        #[serde(rename = "customType")]
+        custom_type: String,
+        content: String,
+        display: Option<bool>,
+        details: serde_json::Value,
     },
     #[serde(rename = "abort")]
     Abort { id: Option<String> },
@@ -298,6 +317,7 @@ mod tests {
                 path: "src/main.rs".into(),
             }]),
             collaboration_context: None,
+            background_agent_ids: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"mimeType\":\"image/png\""));

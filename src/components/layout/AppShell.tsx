@@ -32,7 +32,7 @@ import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
 
-const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task", "hub_wait_tasks"]);
+const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 
 function isAgentTrajectoryTool(name: string): boolean {
   return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
@@ -79,6 +79,7 @@ import {
   Route,
   PanelLeftClose,
   PanelLeftOpen,
+  LoaderCircle,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -210,6 +211,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
         ? "模型思考"
         : role === "user"
           ? "用户输入"
+          : role === "agent_result"
+            ? "子 Agent 回传"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
@@ -956,6 +959,24 @@ export function AppShell() {
   const activeAgent = activeId && visibleAgentIds.has(activeId)
     ? agents.find((agent) => agent.id === activeId)
     : undefined;
+  const activeDelegatedAgents = useMemo(() => {
+    if (!activeAgent) return [];
+    const descendants = new Set<string>();
+    const pending = [activeAgent.id];
+    while (pending.length > 0) {
+      const parentId = pending.pop();
+      if (!parentId) continue;
+      for (const agent of agents) {
+        if (agent.parentAgentId === parentId && !descendants.has(agent.id)) {
+          descendants.add(agent.id);
+          pending.push(agent.id);
+        }
+      }
+    }
+    return agents.filter(
+      (agent) => descendants.has(agent.id) && (agent.status === "starting" || agent.status === "streaming"),
+    );
+  }, [activeAgent, agents]);
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
   // possibly-stale `model` field that list_agents reports from spawn time.
@@ -1570,6 +1591,7 @@ export function AppShell() {
         finalMessage,
         images.length > 0 ? images : undefined,
         fileReferences.length > 0 ? fileReferences : undefined,
+        activeDelegatedAgents.length > 0 ? activeDelegatedAgents.map((agent) => agent.id) : undefined,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2119,8 +2141,12 @@ export function AppShell() {
                           {request.messages.map((message) => {
                             const isAgentTool = message.role === "tool"
                               && Boolean(message.toolCalls?.some((tool) => isAgentTrajectoryTool(tool.name)));
-                            const trajectoryRole = isAgentTool
-                              ? "AGENT"
+                            const isSubAgentResult = message.role === "agent_result";
+                            const isAgentEntry = isAgentTool || isSubAgentResult;
+                            const trajectoryRole = isSubAgentResult
+                              ? "SUB_AGENT"
+                              : isAgentTool
+                                ? "AGENT"
                               : message.role === "user"
                                 ? "USER"
                                 : message.role === "assistant"
@@ -2131,7 +2157,7 @@ export function AppShell() {
                             return (
                             <div
                               key={message.id}
-                              className={`trajectory-row trajectory-row-${isAgentTool ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              className={`trajectory-row trajectory-row-${isSubAgentResult ? "sub-agent" : isAgentEntry ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
                               aria-pressed={selectedTrajectoryEntry?.id === message.id}
@@ -2445,6 +2471,19 @@ export function AppShell() {
                 </button>
               )}
               {activeAgent && <SessionStats agent={activeAgent} />}
+              {activeDelegatedAgents.length > 0 && (
+                <div className="delegated-task-status" role="status" aria-live="polite">
+                  <LoaderCircle className="delegated-task-status-icon" size={15} />
+                  <div>
+                    <strong>
+                      {activeDelegatedAgents.length === 1
+                        ? `${agentDisplayName(activeDelegatedAgents[0], agentNames)} 正在执行子任务`
+                        : `${activeDelegatedAgents.length} 个子 Agent 正在执行任务`}
+                    </strong>
+                    <span>你可以继续问我任何问题；子任务完成后，我会带着结果自动继续处理。</span>
+                  </div>
+                </div>
+              )}
               {/* Input card */}
               <div
                 ref={inputCardRef}

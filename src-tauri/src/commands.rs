@@ -209,6 +209,7 @@ pub async fn send_prompt(
     message: String,
     images: Option<Vec<ImageContent>>,
     file_references: Option<Vec<FileReference>>,
+    background_agent_ids: Option<Vec<String>>,
 ) -> Result<(), String> {
     log::info!(
         "[cmd] send_prompt agent_id={} len={} images={:?}",
@@ -218,7 +219,13 @@ pub async fn send_prompt(
     );
     state
         .0
-        .send_prompt(&agent_id, message, images, file_references)
+        .send_prompt(
+            &agent_id,
+            message,
+            images,
+            file_references,
+            background_agent_ids,
+        )
         .await
 }
 
