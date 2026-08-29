@@ -414,6 +414,7 @@ impl AgentManager {
                 .windows(2)
                 .find(|pair| pair[0] == "--parent-session")
                 .map(|pair| pair[1].clone()),
+            "parentAgentId": record.parent_agent_id.clone(),
             "depth": record.depth,
         }))?;
         let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -564,6 +565,52 @@ impl AgentManager {
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         let cmd = RpcCommand::Abort { id: None };
         agent.send_command(&cmd)
+    }
+
+    pub async fn steer(&self, agent_id: &str, message: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::Steer {
+            id: None,
+            message,
+            images: None,
+        })
+    }
+
+    pub async fn cancel(&self, agent_id: &str, reason: Option<String>) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::AgentCancel {
+            id: None,
+            agent_id: agent_id.to_string(),
+            reason,
+        })
+    }
+
+    pub async fn force_stop(
+        &self,
+        agent_id: &str,
+        reason: Option<String>,
+        timed_out: bool,
+    ) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::AgentForceStop {
+            id: None,
+            agent_id: agent_id.to_string(),
+            reason,
+            timed_out,
+        })
+    }
+
+    pub async fn retry(&self, agent_id: &str, message: Option<String>) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::AgentRetry {
+            id: None,
+            agent_id: agent_id.to_string(),
+            message,
+        })
     }
 
     /// Request session stats (context usage, token counts) from an agent
@@ -978,10 +1025,32 @@ impl AgentManager {
     }
 
     /// Stop an agent process while retaining its persisted session record.
+    /// Child agents are stopped first so a parent cannot leave live delegated
+    /// work behind after its control context disappears.
     pub async fn stop(&self, agent_id: &str) -> Result<(), String> {
-        let mut agents = self.agents.write().await;
-        let agent = agents.remove(agent_id).ok_or("Agent not found")?;
-        agent.stop().await?;
+        let records = self.records.read().await;
+        if !records.contains_key(agent_id) {
+            return Err("Agent not found".to_string());
+        }
+        let mut pending = vec![agent_id.to_string()];
+        let mut subtree = Vec::new();
+        while let Some(parent_id) = pending.pop() {
+            subtree.push(parent_id.clone());
+            pending.extend(
+                records
+                    .values()
+                    .filter(|record| record.parent_agent_id.as_deref() == Some(&parent_id))
+                    .map(|record| record.id.clone()),
+            );
+        }
+        drop(records);
+
+        for id in subtree.into_iter().rev() {
+            let agent = self.agents.write().await.remove(&id);
+            if let Some(agent) = agent {
+                agent.stop().await?;
+            }
+        }
         Ok(())
     }
 

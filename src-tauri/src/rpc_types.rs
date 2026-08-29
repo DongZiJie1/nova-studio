@@ -48,6 +48,13 @@ pub enum RpcCommand {
         #[serde(rename = "backgroundAgentIds")]
         background_agent_ids: Option<Vec<String>>,
     },
+    #[serde(rename = "steer")]
+    Steer {
+        id: Option<String>,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<ImageContent>>,
+    },
     #[serde(rename = "summarize_task_result")]
     SummarizeTaskResult {
         id: Option<String>,
@@ -69,6 +76,29 @@ pub enum RpcCommand {
     },
     #[serde(rename = "abort")]
     Abort { id: Option<String> },
+    #[serde(rename = "agent_cancel")]
+    AgentCancel {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        reason: Option<String>,
+    },
+    #[serde(rename = "agent_force_stop")]
+    AgentForceStop {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        reason: Option<String>,
+        #[serde(rename = "timedOut")]
+        timed_out: bool,
+    },
+    #[serde(rename = "agent_retry")]
+    AgentRetry {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        message: Option<String>,
+    },
     #[serde(rename = "set_model")]
     SetModel {
         id: Option<String>,

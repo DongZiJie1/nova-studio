@@ -6,6 +6,9 @@ import { useSettingsStore } from "../../stores/settings-store";
 import { useUiStore } from "../../stores/ui-store";
 import {
   abortAgent,
+  cancelAgent,
+  retryAgent,
+  steerAgent,
   activateAgent,
   listAgents,
   listProjectFiles,
@@ -80,6 +83,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LoaderCircle,
+  RotateCcw,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -754,6 +758,34 @@ const AgentTreeNode = memo(function AgentTreeNode({
         >
           <Pencil size={12} />
         </span>
+        {isChild && agent.status === "streaming" && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="agent-action"
+            title="Cancel delegated task"
+            onClick={(event) => {
+              event.stopPropagation();
+              void cancelAgent(agent.id, "cancelled from parent task");
+            }}
+          >
+            <Square size={12} />
+          </span>
+        )}
+        {isChild && (agent.status === "error" || agent.status === "stopped") && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="agent-action"
+            title="Retry delegated task"
+            onClick={(event) => {
+              event.stopPropagation();
+              void retryAgent(agent.id);
+            }}
+          >
+            <RotateCcw size={12} />
+          </span>
+        )}
         <span
           role="button"
           tabIndex={0}
@@ -1589,13 +1621,17 @@ export function AppShell() {
       }));
 
       // Send to agent via Tauri backend
-      await sendPrompt(
-        agentId,
-        finalMessage,
-        images.length > 0 ? images : undefined,
-        fileReferences.length > 0 ? fileReferences : undefined,
-        activeDelegatedAgents.length > 0 ? activeDelegatedAgents.map((agent) => agent.id) : undefined,
-      );
+      if (activeAgent?.parentAgentId && activeAgent.status === "streaming") {
+        await steerAgent(agentId, finalMessage);
+      } else {
+        await sendPrompt(
+          agentId,
+          finalMessage,
+          images.length > 0 ? images : undefined,
+          fileReferences.length > 0 ? fileReferences : undefined,
+          activeDelegatedAgents.length > 0 ? activeDelegatedAgents.map((agent) => agent.id) : undefined,
+        );
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to send prompt:", msg);

@@ -57,6 +57,22 @@ export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
 }
 
+export async function steerAgent(agentId: string, message: string): Promise<void> {
+  return invoke("steer_agent", { agentId, message });
+}
+
+export async function cancelAgent(agentId: string, reason?: string): Promise<void> {
+  return invoke("cancel_agent", { agentId, reason });
+}
+
+export async function forceStopAgent(agentId: string, reason?: string, timedOut = false): Promise<void> {
+  return invoke("force_stop_agent", { agentId, reason, timedOut });
+}
+
+export async function retryAgent(agentId: string, message?: string): Promise<void> {
+  return invoke("retry_agent", { agentId, message });
+}
+
 export async function startNewSession(agentId: string): Promise<void> {
   return invoke("new_session", { agentId });
 }

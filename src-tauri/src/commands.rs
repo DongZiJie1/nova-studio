@@ -239,6 +239,46 @@ pub async fn abort_agent(
 }
 
 #[tauri::command]
+pub async fn steer_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    message: String,
+) -> Result<(), String> {
+    state.0.steer(&agent_id, message).await
+}
+
+#[tauri::command]
+pub async fn cancel_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    reason: Option<String>,
+) -> Result<(), String> {
+    state.0.cancel(&agent_id, reason).await
+}
+
+#[tauri::command]
+pub async fn force_stop_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    reason: Option<String>,
+    timed_out: Option<bool>,
+) -> Result<(), String> {
+    state
+        .0
+        .force_stop(&agent_id, reason, timed_out.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub async fn retry_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    message: Option<String>,
+) -> Result<(), String> {
+    state.0.retry(&agent_id, message).await
+}
+
+#[tauri::command]
 pub async fn new_session(
     state: State<'_, AgentManagerState>,
     agent_id: String,

@@ -15,13 +15,21 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 const MAX_REQUEST_DEPTH: u64 = 2;
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(10);
 const DUPLICATE_REQUEST_LIMIT: usize = 3;
 const SOURCE_WINDOW: Duration = Duration::from_secs(60);
 const SOURCE_REQUEST_LIMIT: usize = 30;
+const MAX_GLOBAL_RUNNING_TASKS: usize = 8;
+const MAX_PARENT_RUNNING_TASKS: usize = 4;
+const MAX_BATCH_RUNNING_TASKS: usize = 4;
+const MAX_QUEUED_TASKS: usize = 64;
+const MAX_TASK_TOKEN_BUDGET: u64 = 100_000;
+const MAX_BATCH_TOKEN_BUDGET: u64 = 300_000;
+const MAX_TASK_COST_BUDGET_MICRO_USD: u64 = 5_000_000;
+const MAX_BATCH_COST_BUDGET_MICRO_USD: u64 = 20_000_000;
 
 #[derive(Clone)]
 struct AppState {
@@ -29,14 +37,51 @@ struct AppState {
     request_tracker: Arc<Mutex<RequestTracker>>,
     tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
     task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+    task_slots: Arc<Semaphore>,
+    queue_slots: Arc<Semaphore>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AgentTaskBatch {
     parent_agent_id: String,
     task_ids: Vec<String>,
     sealed: bool,
     resume_triggered: bool,
+    status: BatchStatus,
+    token_budget: u64,
+    cost_budget_micro_usd: u64,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BatchStatus {
+    #[default]
+    Open,
+    Running,
+    Completed,
+    Error,
+    Stopped,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TaskStatus {
+    Queued,
+    Running,
+    Completed,
+    Error,
+    Stopped,
+    Orphaned,
+}
+
+impl TaskStatus {
+    fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Error | Self::Stopped | Self::Orphaned
+        )
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -45,7 +90,17 @@ struct AgentTask {
     task_id: String,
     batch_id: String,
     agent_id: String,
-    status: String,
+    status: TaskStatus,
+    parent_agent_id: String,
+    delegated_task: String,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<String>,
+    last_activity_at: String,
+    token_budget: u64,
+    cost_budget_micro_usd: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     summary: String,
     #[serde(default)]
@@ -210,6 +265,18 @@ struct DelegateBody {
     request_depth: u64,
     #[serde(default)]
     visited_agent_ids: Vec<String>,
+    #[serde(default = "default_task_token_budget")]
+    token_budget: u64,
+    #[serde(default = "default_task_cost_budget")]
+    cost_budget_micro_usd: u64,
+}
+
+fn default_task_token_budget() -> u64 {
+    MAX_TASK_TOKEN_BUDGET
+}
+
+fn default_task_cost_budget() -> u64 {
+    MAX_TASK_COST_BUDGET_MICRO_USD
 }
 
 #[derive(Serialize)]
@@ -224,6 +291,138 @@ struct DelegateResponse {
 #[derive(Deserialize)]
 struct SealBatchBody {
     source_agent_id: String,
+}
+
+#[derive(Deserialize)]
+struct TaskControlBody {
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+async fn get_task(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(task_id): axum::extract::Path<String>,
+) -> Result<Json<AgentTask>, (StatusCode, Json<ApiError>)> {
+    state
+        .tasks
+        .read()
+        .await
+        .get(&task_id)
+        .cloned()
+        .map(Json)
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                "Agent task not found",
+                None,
+            )
+        })
+}
+
+async fn steer_task(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(task_id): axum::extract::Path<String>,
+    Json(body): Json<TaskControlBody>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let task = state
+        .tasks
+        .read()
+        .await
+        .get(&task_id)
+        .cloned()
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                "Agent task not found",
+                None,
+            )
+        })?;
+    if task.status != TaskStatus::Running {
+        return Err(api_error(
+            StatusCode::CONFLICT,
+            "task_not_running",
+            "Only a running task can be steered",
+            None,
+        ));
+    }
+    let message = body
+        .message
+        .filter(|message| !message.trim().is_empty())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "missing_message",
+                "Steering message is required",
+                None,
+            )
+        })?;
+    state
+        .manager
+        .steer(&task.agent_id, message)
+        .await
+        .map_err(|error| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "steer_failed",
+                error,
+                None,
+            )
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn cancel_task(
+    AxumState(state): AxumState<AppState>,
+    axum::extract::Path(task_id): axum::extract::Path<String>,
+    Json(body): Json<TaskControlBody>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let (agent_id, batch_id) = {
+        let mut tasks = state.tasks.write().await;
+        let task = tasks.get_mut(&task_id).ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                "Agent task not found",
+                None,
+            )
+        })?;
+        if task.status.is_terminal() {
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "task_already_finished",
+                "Agent task has already finished",
+                None,
+            ));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        task.status = TaskStatus::Stopped;
+        task.error = Some(
+            body.reason
+                .clone()
+                .unwrap_or_else(|| "cancelled by user".to_string()),
+        );
+        task.completed_at = Some(now.clone());
+        task.last_activity_at = now;
+        (task.agent_id.clone(), task.batch_id.clone())
+    };
+    state
+        .manager
+        .cancel(&agent_id, body.reason)
+        .await
+        .map_err(|error| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "cancel_failed",
+                error,
+                None,
+            )
+        })?;
+    try_resume_task_batch(state.manager, state.tasks, state.task_batches, &batch_id).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn try_resume_task_batch(
@@ -242,12 +441,21 @@ async fn try_resume_task_batch(
             && batch.task_ids.iter().all(|task_id| {
                 tasks_guard
                     .get(task_id)
-                    .is_some_and(|task| task.status != "running")
+                    .is_some_and(|task| task.status.is_terminal())
             });
         if !batch.sealed || !all_finished || batch.resume_triggered {
             return;
         }
         batch.resume_triggered = true;
+        batch.status = if batch.task_ids.iter().any(|task_id| {
+            tasks_guard
+                .get(task_id)
+                .is_some_and(|task| task.status != TaskStatus::Completed)
+        }) {
+            BatchStatus::Error
+        } else {
+            BatchStatus::Completed
+        };
         (batch.parent_agent_id.clone(), batch.task_ids.clone())
     };
 
@@ -535,6 +743,34 @@ async fn delegate_task(
     } else {
         body.request_id.clone()
     };
+    if body.token_budget == 0 || body.token_budget > MAX_TASK_TOKEN_BUDGET {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "task_token_budget_exceeded",
+            format!("Task token budget must be between 1 and {MAX_TASK_TOKEN_BUDGET}"),
+            Some(request_id),
+        ));
+    }
+    if body.cost_budget_micro_usd == 0
+        || body.cost_budget_micro_usd > MAX_TASK_COST_BUDGET_MICRO_USD
+    {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "task_cost_budget_exceeded",
+            format!(
+                "Task cost budget must be between 1 and {MAX_TASK_COST_BUDGET_MICRO_USD} micro-USD"
+            ),
+            Some(request_id),
+        ));
+    }
+    let queue_permit = state.queue_slots.clone().try_acquire_owned().map_err(|_| {
+        api_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "task_queue_full",
+            format!("Agent task queue limit ({MAX_QUEUED_TASKS}) reached"),
+            Some(request_id.clone()),
+        )
+    })?;
     if body.request_depth > MAX_REQUEST_DEPTH {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
@@ -623,11 +859,20 @@ async fn delegate_task(
     } else {
         body.batch_id.clone()
     };
+    let now = chrono::Utc::now().to_rfc3339();
     let task = AgentTask {
         task_id: task_id.clone(),
         batch_id: batch_id.clone(),
         agent_id: agent_id.clone(),
-        status: "running".to_string(),
+        status: TaskStatus::Queued,
+        parent_agent_id: source_agent_id.clone(),
+        delegated_task: body.task.clone(),
+        created_at: now.clone(),
+        started_at: None,
+        completed_at: None,
+        last_activity_at: now,
+        token_budget: body.token_budget,
+        cost_budget_micro_usd: body.cost_budget_micro_usd,
         summary: String::new(),
         changed_files: Vec::new(),
         verification: Vec::new(),
@@ -642,6 +887,8 @@ async fn delegate_task(
             .entry(batch_id.clone())
             .or_insert_with(|| AgentTaskBatch {
                 parent_agent_id: source_agent_id.clone(),
+                token_budget: 0,
+                cost_budget_micro_usd: 0,
                 ..AgentTaskBatch::default()
             });
         if batch.parent_agent_id != source_agent_id {
@@ -652,6 +899,30 @@ async fn delegate_task(
                 Some(request_id),
             ));
         }
+        if batch.token_budget.saturating_add(body.token_budget) > MAX_BATCH_TOKEN_BUDGET {
+            state.tasks.write().await.remove(&task_id);
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "batch_token_budget_exceeded",
+                format!("Batch token budget limit ({MAX_BATCH_TOKEN_BUDGET}) exceeded"),
+                Some(request_id),
+            ));
+        }
+        if batch
+            .cost_budget_micro_usd
+            .saturating_add(body.cost_budget_micro_usd)
+            > MAX_BATCH_COST_BUDGET_MICRO_USD
+        {
+            state.tasks.write().await.remove(&task_id);
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "batch_cost_budget_exceeded",
+                format!("Batch cost budget limit ({MAX_BATCH_COST_BUDGET_MICRO_USD} micro-USD) exceeded"),
+                Some(request_id),
+            ));
+        }
+        batch.token_budget += body.token_budget;
+        batch.cost_budget_micro_usd += body.cost_budget_micro_usd;
         batch.task_ids.push(task_id.clone());
     }
     state
@@ -661,6 +932,7 @@ async fn delegate_task(
     let manager = state.manager.clone();
     let tasks = state.tasks.clone();
     let task_batches = state.task_batches.clone();
+    let task_slots = state.task_slots.clone();
     let background_batch_id = batch_id.clone();
     let background_task_id = task_id.clone();
     let background_agent_id = agent_id.clone();
@@ -671,6 +943,63 @@ async fn delegate_task(
         visited_agent_ids.push(agent_id.clone());
     }
     tokio::spawn(async move {
+        let _queue_permit = queue_permit;
+        let _task_permit = match task_slots.acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => return,
+        };
+        loop {
+            let (can_start, cancelled_while_queued) = {
+                let mut all_tasks = tasks.write().await;
+                let already_finished = all_tasks
+                    .get(&background_task_id)
+                    .is_some_and(|task| task.status.is_terminal());
+                if already_finished {
+                    // A control-plane cancellation landed while the task was
+                    // still queued; never start it.
+                    (true, true)
+                } else {
+                    let parent_running = all_tasks
+                        .values()
+                        .filter(|task| {
+                            task.parent_agent_id == parent_agent_id
+                                && task.status == TaskStatus::Running
+                        })
+                        .count();
+                    let batch_running = all_tasks
+                        .values()
+                        .filter(|task| {
+                            task.batch_id == background_batch_id
+                                && task.status == TaskStatus::Running
+                        })
+                        .count();
+                    if parent_running < MAX_PARENT_RUNNING_TASKS
+                        && batch_running < MAX_BATCH_RUNNING_TASKS
+                    {
+                        if let Some(task) = all_tasks.get_mut(&background_task_id) {
+                            let now = chrono::Utc::now().to_rfc3339();
+                            task.status = TaskStatus::Running;
+                            task.started_at = Some(now.clone());
+                            task.last_activity_at = now;
+                        }
+                        (true, false)
+                    } else {
+                        (false, false)
+                    }
+                }
+            };
+            if can_start {
+                if cancelled_while_queued {
+                    return;
+                }
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        drop(_queue_permit);
+        if let Some(batch) = task_batches.write().await.get_mut(&background_batch_id) {
+            batch.status = BatchStatus::Running;
+        }
         let outcome = manager
             .ask(
                 &background_agent_id,
@@ -684,51 +1013,47 @@ async fn delegate_task(
                 },
             )
             .await;
-        let completed_task = match outcome {
-            Ok(final_text) => {
-                let generated = match manager
-                    .summarize_task_result(
-                        &background_agent_id,
-                        delegated_task,
-                        final_text.clone(),
-                        120,
-                    )
-                    .await
-                {
-                    Ok(text) => parse_generated_task_summary(&text)
-                        .unwrap_or_else(|error| fallback_summary(&final_text, &error)),
-                    Err(error) => fallback_summary(&final_text, &error),
-                };
-                AgentTask {
-                    task_id: background_task_id.clone(),
-                    batch_id: background_batch_id.clone(),
-                    agent_id: background_agent_id.clone(),
-                    status: "completed".to_string(),
-                    summary: generated.summary,
-                    changed_files: generated.changed_files,
-                    verification: generated.verification,
-                    remaining_risks: generated.remaining_risks,
-                    final_text,
-                    error: None,
+        let mut completed_task = tasks
+            .read()
+            .await
+            .get(&background_task_id)
+            .cloned()
+            .expect("delegated task must exist");
+        let completed_at = chrono::Utc::now().to_rfc3339();
+        completed_task.completed_at = Some(completed_at.clone());
+        completed_task.last_activity_at = completed_at;
+        if completed_task.status == TaskStatus::Stopped {
+            // A control-plane cancellation won the race; do not overwrite it
+            // with the abort error returned by the in-flight ask operation.
+        } else {
+            match outcome {
+                Ok(final_text) => {
+                    let generated = match manager
+                        .summarize_task_result(
+                            &background_agent_id,
+                            delegated_task,
+                            final_text.clone(),
+                            120,
+                        )
+                        .await
+                    {
+                        Ok(text) => parse_generated_task_summary(&text)
+                            .unwrap_or_else(|error| fallback_summary(&final_text, &error)),
+                        Err(error) => fallback_summary(&final_text, &error),
+                    };
+                    completed_task.status = TaskStatus::Completed;
+                    completed_task.summary = generated.summary;
+                    completed_task.changed_files = generated.changed_files;
+                    completed_task.verification = generated.verification;
+                    completed_task.remaining_risks = generated.remaining_risks;
+                    completed_task.final_text = final_text;
+                }
+                Err(error) => {
+                    completed_task.status = TaskStatus::Error;
+                    completed_task.error = Some(error);
                 }
             }
-            Err(error) => AgentTask {
-                task_id: background_task_id.clone(),
-                batch_id: background_batch_id.clone(),
-                agent_id: background_agent_id.clone(),
-                status: if error.contains("timed out") {
-                    "timeout".to_string()
-                } else {
-                    "error".to_string()
-                },
-                summary: String::new(),
-                changed_files: Vec::new(),
-                verification: Vec::new(),
-                remaining_risks: Vec::new(),
-                final_text: String::new(),
-                error: Some(error),
-            },
-        };
+        }
         tasks
             .write()
             .await
@@ -761,7 +1086,7 @@ async fn delegate_task(
         batch_id,
         agent_id,
         created_agent,
-        status: "running".to_string(),
+        status: "queued".to_string(),
     }))
 }
 
@@ -803,7 +1128,7 @@ async fn wait_tasks(
                 None,
             ));
         }
-        let finished = |task: &AgentTask| task.status != "running";
+        let finished = |task: &AgentTask| task.status.is_terminal();
         let ready = if body.wait_for == "any" {
             snapshots.iter().any(finished)
         } else {
@@ -903,6 +1228,9 @@ fn build_router(state: AppState) -> Router {
         .route("/agents/{agent_id}/prompt", post(send_prompt))
         .route("/agents/{agent_id}/ask", post(ask_agent))
         .route("/tasks/delegate", post(delegate_task))
+        .route("/tasks/{task_id}", get(get_task))
+        .route("/tasks/{task_id}/steer", post(steer_task))
+        .route("/tasks/{task_id}/cancel", post(cancel_task))
         .route("/tasks/batches/{batch_id}/seal", post(seal_task_batch))
         .route("/tasks/wait", post(wait_tasks))
         .route_layer(middleware::from_fn_with_state(
@@ -919,6 +1247,8 @@ pub async fn start_api_server(manager: Arc<AgentManager>, port: u16) -> Result<u
         request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
         tasks: Arc::new(RwLock::new(HashMap::new())),
         task_batches: Arc::new(RwLock::new(HashMap::new())),
+        task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
+        queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
     };
 
     let app = build_router(state);
@@ -953,6 +1283,8 @@ mod tests {
             request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
             tasks: Arc::new(RwLock::new(HashMap::new())),
             task_batches: Arc::new(RwLock::new(HashMap::new())),
+            task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
+            queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
         }
     }
 
@@ -1016,6 +1348,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_task_budget_before_spawning() {
+        let manager = Arc::new(AgentManager::new(
+            "true".to_string(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let app = build_router(test_state(manager.clone()));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/delegate")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(
+                        serde_json::json!({
+                            "task": "too expensive",
+                            "cwd": "/tmp",
+                            "token_budget": MAX_TASK_TOKEN_BUDGET + 1
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
@@ -1119,7 +1480,7 @@ mod tests {
         let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             delegated.get("status").and_then(|value| value.as_str()),
-            Some("running")
+            Some("queued")
         );
         let task_id = delegated
             .get("task_id")
@@ -1267,6 +1628,349 @@ mod tests {
         manager.stop(&grandchild.id).await.unwrap();
         manager.stop(&child.id).await.unwrap();
         manager.stop(&unrelated.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hub_answers_concurrent_asks_without_losing_replies() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child_a = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let child_b = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+        let ask_body = |target: &str, question: &str| {
+            serde_json::json!({
+                "question": question,
+                "timeout_secs": 10,
+                "source_agent_id": parent.id.clone(),
+                "request_id": format!("request-{question}"),
+                "request_depth": 1,
+                "visited_agent_ids": [parent.id.clone()]
+            })
+            .to_string()
+        };
+
+        // Two asks to different agents plus two to the same agent: the
+        // per-agent prompt lock must serialize the same-agent pair without
+        // dropping or swapping either reply.
+        let (res_a, res_b, res_a1, res_a2) = tokio::join!(
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/agents/{}/ask", child_a.id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(ask_body(&child_a.id, "what is A?")))
+                    .unwrap(),
+            ),
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/agents/{}/ask", child_b.id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(ask_body(&child_b.id, "what is B?")))
+                    .unwrap(),
+            ),
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/agents/{}/ask", child_a.id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(ask_body(&child_a.id, "first concurrent")))
+                    .unwrap(),
+            ),
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/agents/{}/ask", child_a.id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(ask_body(&child_a.id, "second concurrent")))
+                    .unwrap(),
+            ),
+        );
+        let res_a = res_a.unwrap();
+        let res_b = res_b.unwrap();
+        let res_a1 = res_a1.unwrap();
+        let res_a2 = res_a2.unwrap();
+        assert_eq!(res_a.status(), StatusCode::OK);
+        assert_eq!(res_b.status(), StatusCode::OK);
+        assert_eq!(res_a1.status(), StatusCode::OK);
+        assert_eq!(res_a2.status(), StatusCode::OK);
+        for (res, target) in [
+            (res_a, &child_a.id),
+            (res_b, &child_b.id),
+            (res_a1, &child_a.id),
+            (res_a2, &child_a.id),
+        ] {
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                reply["reply"]
+                    .as_str()
+                    .unwrap()
+                    .contains(format!("id={target}").as_str()),
+                "reply should come from the asked agent {target}: {reply}"
+            );
+        }
+
+        manager.stop(&child_a.id).await.unwrap();
+        manager.stop(&child_b.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancel_stops_an_in_flight_task_and_resumes_the_batch_once() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let mut events = manager.subscribe_global();
+        let app = build_router(test_state(manager.clone()));
+        let delegate_body = serde_json::json!({
+            "task": "NOVA_MOCK_SLOW long running work",
+            "agent_id": child.id,
+            "cwd": "/tmp",
+            "source_agent_id": parent.id.clone(),
+            "request_id": "request-cancel",
+            "request_depth": 1,
+            "visited_agent_ids": [parent.id.clone()]
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/delegate")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(delegate_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
+        let batch_id = delegated.get("batch_id").and_then(|v| v.as_str()).unwrap();
+
+        let sealed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/tasks/batches/{}/seal", batch_id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(
+                        Body::from(serde_json::json!({ "source_agent_id": parent.id }).to_string()),
+                    )
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sealed.status(), StatusCode::NO_CONTENT);
+
+        let cancelled = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/tasks/{}/cancel", task_id))
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(serde_json::json!({}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled.status(), StatusCode::NO_CONTENT);
+
+        let status_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/tasks/{}", task_id))
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let task: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(task["status"].as_str(), Some("stopped"));
+        assert_eq!(task["error"].as_str(), Some("cancelled by user"));
+        assert!(task["completedAt"].as_str().is_some());
+
+        // The sealed batch with every task terminal resumes the parent exactly
+        // once via an appended hidden batch message.
+        let batch_resume = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let (event_agent_id, event) = events.recv().await.unwrap();
+                if event_agent_id == parent.id
+                    && event["type"] == "response"
+                    && event["command"] == "append_custom_message"
+                {
+                    break event;
+                }
+            }
+        })
+        .await
+        .expect("cancelled batch did not resume the parent");
+        assert_eq!(batch_resume["success"], serde_json::Value::Bool(true));
+        tokio::time::timeout(std::time::Duration::from_millis(300), async {
+            loop {
+                let (_, event) = events.recv().await.unwrap();
+                if event["type"] == "response" && event["command"] == "append_custom_message" {
+                    panic!("batch resumed the parent more than once");
+                }
+            }
+        })
+        .await
+        .unwrap_err();
+
+        manager.stop(&child.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn identical_ask_storm_is_rate_limited_while_fresh_asks_pass() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+        let ask_body = |question: &str| {
+            serde_json::json!({
+                "question": question,
+                "timeout_secs": 10,
+                "source_agent_id": parent.id.clone(),
+                "request_id": format!("request-storm-{question}"),
+                "request_depth": 1,
+                "visited_agent_ids": [parent.id.clone()]
+            })
+            .to_string()
+        };
+        let child_uri = format!("/agents/{}/ask", child.id);
+        let token = manager.hub_token.clone();
+        let ask = |app: Router, question: &'static str| {
+            let app = app.clone();
+            let uri = child_uri.clone();
+            let token = token.clone();
+            async move {
+                app.oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .header("x-nova-token", token.as_str())
+                        .body(Body::from(ask_body(question)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        // DUPLICATE_REQUEST_LIMIT identical asks succeed, then the storm is
+        // throttled, while a distinct question from the same source still passes.
+        for _ in 0..DUPLICATE_REQUEST_LIMIT {
+            let res = ask(app.clone(), "same question").await;
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+        let throttled = ask(app.clone(), "same question").await;
+        assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
+        let bytes = axum::body::to_bytes(throttled.into_body(), usize::MAX).await.unwrap();
+        let api_error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(api_error["code"].as_str(), Some("duplicate_request"));
+
+        let fresh = ask(app, "a different question").await;
+        assert_eq!(fresh.status(), StatusCode::OK);
+
+        manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
     }
 }
