@@ -46,12 +46,29 @@ struct AppState {
 /// tools) and the Tauri commands the Studio task panel reads from. The
 /// registry persists to a JSON snapshot beside agents.json so batches and
 /// their sealed/resumed markers survive Studio restarts.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct TaskRegistry {
     pub tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
     pub task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
     state_path: Arc<RwLock<Option<std::path::PathBuf>>>,
     persistence_lock: Arc<Mutex<()>>,
+    mutation_lock: Arc<Mutex<()>>,
+    task_slots: Arc<Semaphore>,
+    queue_slots: Arc<Semaphore>,
+}
+
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self {
+            tasks: Arc::new(RwLock::new(HashMap::new())),
+            task_batches: Arc::new(RwLock::new(HashMap::new())),
+            state_path: Arc::new(RwLock::new(None)),
+            persistence_lock: Arc::new(Mutex::new(())),
+            mutation_lock: Arc::new(Mutex::new(())),
+            task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
+            queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -444,17 +461,18 @@ async fn list_tasks(
 ) -> Result<Json<TaskSnapshot>, (StatusCode, Json<ApiError>)> {
     let status_filter = match &query.status {
         None => None,
-        Some(raw) => Some(serde_json::from_value::<TaskStatus>(serde_json::Value::String(
-            raw.clone(),
-        ))
-        .map_err(|_| {
-            api_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_status_filter",
-                format!("Unknown task status filter: {raw}"),
-                None,
-            )
-        })?),
+        Some(raw) => Some(
+            serde_json::from_value::<TaskStatus>(serde_json::Value::String(raw.clone())).map_err(
+                |_| {
+                    api_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_status_filter",
+                        format!("Unknown task status filter: {raw}"),
+                        None,
+                    )
+                },
+            )?,
+        ),
     };
     let tasks = state
         .tasks
@@ -478,7 +496,10 @@ async fn list_tasks(
         })
         .cloned()
         .collect::<Vec<_>>();
-    Ok(Json(TaskSnapshot { tasks, batches: Vec::new() }))
+    Ok(Json(TaskSnapshot {
+        tasks,
+        batches: Vec::new(),
+    }))
 }
 
 #[derive(Serialize)]
@@ -596,60 +617,60 @@ async fn cancel_task(
     axum::extract::Path(task_id): axum::extract::Path<String>,
     Json(body): Json<TaskControlBody>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    let (agent_id, batch_id) = {
-        let mut tasks = state.tasks.write().await;
-        let task = tasks.get_mut(&task_id).ok_or_else(|| {
-            api_error(
-                StatusCode::NOT_FOUND,
-                "task_not_found",
-                "Agent task not found",
-                None,
-            )
+    cancel_task_impl(state.manager, state.registry, &task_id, body.reason)
+        .await
+        .map_err(|error| {
+            let status = if error.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else if error.contains("already finished") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            api_error(status, "cancel_failed", error, None)
         })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn cancel_task_impl(
+    manager: Arc<AgentManager>,
+    registry: TaskRegistry,
+    task_id: &str,
+    reason: Option<String>,
+) -> Result<AgentTask, String> {
+    let (cancelled, batch_id) = {
+        let mut tasks = registry.tasks.write().await;
+        let task = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| "Agent task not found".to_string())?;
         if task.status.is_terminal() {
-            return Err(api_error(
-                StatusCode::CONFLICT,
-                "task_already_finished",
-                "Agent task has already finished",
-                None,
-            ));
+            return Err("Agent task has already finished".to_string());
         }
         let now = chrono::Utc::now().to_rfc3339();
         task.status = TaskStatus::Stopped;
         task.error = Some(
-            body.reason
+            reason
                 .clone()
                 .unwrap_or_else(|| "cancelled by user".to_string()),
         );
         task.completed_at = Some(now.clone());
         task.last_activity_at = now;
-        (task.agent_id.clone(), task.batch_id.clone())
+        (task.clone(), task.batch_id.clone())
     };
-    state
-        .manager
-        .cancel(&agent_id, body.reason)
-        .await
-        .map_err(|error| {
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "cancel_failed",
-                error,
-                None,
-            )
-        })?;
-    state.registry.persist().await;
+    manager.cancel(&cancelled.agent_id, reason).await?;
+    registry.persist().await;
     try_resume_task_batch(
-        state.manager,
-        state.tasks,
-        state.task_batches,
+        manager,
+        registry.tasks.clone(),
+        registry.task_batches.clone(),
         &batch_id,
-        &state.registry,
+        &registry,
     )
     .await;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(cancelled)
 }
 
-/// Reset a finished (failed/stopped/orphaned) task to running and re-run it
+/// Reset a finished (failed/stopped/orphaned) task to queued and re-run it
 /// against the same child agent with the original task text and timeout.
 /// Shared by the hub HTTP endpoint and the Studio task-panel command.
 pub async fn retry_task_impl(
@@ -670,10 +691,15 @@ pub async fn retry_task_impl(
     if !task.status.is_terminal() {
         return Err("Only a finished task can be retried".to_string());
     }
+    let queue_permit = registry
+        .queue_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| format!("Agent task queue limit ({MAX_QUEUED_TASKS}) reached"))?;
     let now = chrono::Utc::now().to_rfc3339();
     let mut retried = task.clone();
-    retried.status = TaskStatus::Running;
-    retried.started_at = Some(now.clone());
+    retried.status = TaskStatus::Queued;
+    retried.started_at = None;
     retried.completed_at = None;
     retried.last_activity_at = now;
     retried.error = None;
@@ -688,8 +714,62 @@ pub async fn retry_task_impl(
     let tasks = registry.tasks.clone();
     let task_batches = registry.task_batches.clone();
     let registry = registry.clone();
+    let task_slots = registry.task_slots.clone();
     let run_task_id = task_id.to_string();
     tokio::spawn(async move {
+        let _queue_permit = queue_permit;
+        let _task_permit = match task_slots.acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => return,
+        };
+        loop {
+            let (can_start, cancelled_while_queued) = {
+                let mut all_tasks = tasks.write().await;
+                let already_finished = all_tasks
+                    .get(&run_task_id)
+                    .is_some_and(|candidate| candidate.status.is_terminal());
+                if already_finished {
+                    (true, true)
+                } else {
+                    let parent_running = all_tasks
+                        .values()
+                        .filter(|candidate| {
+                            candidate.parent_agent_id == task.parent_agent_id
+                                && candidate.status == TaskStatus::Running
+                        })
+                        .count();
+                    let batch_running = all_tasks
+                        .values()
+                        .filter(|candidate| {
+                            candidate.batch_id == task.batch_id
+                                && candidate.status == TaskStatus::Running
+                        })
+                        .count();
+                    if parent_running < MAX_PARENT_RUNNING_TASKS
+                        && batch_running < MAX_BATCH_RUNNING_TASKS
+                    {
+                        if let Some(candidate) = all_tasks.get_mut(&run_task_id) {
+                            let started_at = chrono::Utc::now().to_rfc3339();
+                            candidate.status = TaskStatus::Running;
+                            candidate.started_at = Some(started_at.clone());
+                            candidate.last_activity_at = started_at;
+                        }
+                        (true, false)
+                    } else {
+                        (false, false)
+                    }
+                }
+            };
+            if can_start {
+                if cancelled_while_queued {
+                    return;
+                }
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        drop(_queue_permit);
+        registry.persist().await;
         execute_delegated_task(
             manager,
             tasks,
@@ -876,10 +956,9 @@ async fn execute_delegated_task(
                     }
                 }
                 if !generated.changed_files.is_empty() && collected.changed_files.is_empty() {
-                    generated
-                        .remaining_risks
-                        .push("Summarizer-reported files were not observed in tool traces"
-                            .to_string());
+                    generated.remaining_risks.push(
+                        "Summarizer-reported files were not observed in tool traces".to_string(),
+                    );
                 }
                 if !collected.verified_commands.is_empty() {
                     generated.verification.push(format!(
@@ -1398,6 +1477,47 @@ async fn delegate_task(
         ));
     }
 
+    let source_agent_id = if body.source_agent_id.is_empty() {
+        "unknown".to_string()
+    } else {
+        body.source_agent_id.clone()
+    };
+    let batch_id = if body.batch_id.is_empty() {
+        format!("batch-{}", uuid::Uuid::new_v4())
+    } else {
+        body.batch_id.clone()
+    };
+    if let Some(batch) = state.task_batches.read().await.get(&batch_id) {
+        if batch.parent_agent_id != source_agent_id {
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "batch_owner_mismatch",
+                "Task batch belongs to another Agent",
+                Some(request_id),
+            ));
+        }
+        if batch.token_budget.saturating_add(body.token_budget) > MAX_BATCH_TOKEN_BUDGET {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "batch_token_budget_exceeded",
+                format!("Batch token budget limit ({MAX_BATCH_TOKEN_BUDGET}) exceeded"),
+                Some(request_id),
+            ));
+        }
+        if batch
+            .cost_budget_micro_usd
+            .saturating_add(body.cost_budget_micro_usd)
+            > MAX_BATCH_COST_BUDGET_MICRO_USD
+        {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "batch_cost_budget_exceeded",
+                format!("Batch cost budget limit ({MAX_BATCH_COST_BUDGET_MICRO_USD} micro-USD) exceeded"),
+                Some(request_id),
+            ));
+        }
+    }
+
     let (agent_id, created_agent) = if let Some(agent_id) = body.agent_id {
         if body
             .visited_agent_ids
@@ -1444,11 +1564,6 @@ async fn delegate_task(
         (info.id, true)
     };
 
-    let source_agent_id = if body.source_agent_id.is_empty() {
-        "unknown".to_string()
-    } else {
-        body.source_agent_id.clone()
-    };
     if let Err(code) =
         state
             .request_tracker
@@ -1456,6 +1571,9 @@ async fn delegate_task(
             .await
             .check(&source_agent_id, &agent_id, &body.task)
     {
+        if created_agent {
+            let _ = state.manager.stop(&agent_id).await;
+        }
         return Err(api_error(
             StatusCode::TOO_MANY_REQUESTS,
             code,
@@ -1469,11 +1587,6 @@ async fn delegate_task(
     }
 
     let task_id = format!("task-{}", uuid::Uuid::new_v4());
-    let batch_id = if body.batch_id.is_empty() {
-        format!("batch-{}", uuid::Uuid::new_v4())
-    } else {
-        body.batch_id.clone()
-    };
     let now = chrono::Utc::now().to_rfc3339();
     let task = AgentTask {
         task_id: task_id.clone(),
@@ -1496,9 +1609,9 @@ async fn delegate_task(
         final_text: String::new(),
         error: None,
     };
-    state.tasks.write().await.insert(task_id.clone(), task);
-    state.registry.persist().await;
-    {
+    let commit_result: Result<(), (StatusCode, &'static str, String)> = {
+        let _mutation = state.registry.mutation_lock.lock().await;
+        let mut tasks = state.tasks.write().await;
         let mut batches = state.task_batches.write().await;
         let batch = batches
             .entry(batch_id.clone())
@@ -1510,39 +1623,42 @@ async fn delegate_task(
                 ..AgentTaskBatch::default()
             });
         if batch.parent_agent_id != source_agent_id {
-            return Err(api_error(
+            Err((
                 StatusCode::CONFLICT,
                 "batch_owner_mismatch",
-                "Task batch belongs to another Agent",
-                Some(request_id),
-            ));
-        }
-        if batch.token_budget.saturating_add(body.token_budget) > MAX_BATCH_TOKEN_BUDGET {
-            state.tasks.write().await.remove(&task_id);
-            return Err(api_error(
+                "Task batch belongs to another Agent".to_string(),
+            ))
+        } else if batch.token_budget.saturating_add(body.token_budget) > MAX_BATCH_TOKEN_BUDGET {
+            Err((
                 StatusCode::BAD_REQUEST,
                 "batch_token_budget_exceeded",
                 format!("Batch token budget limit ({MAX_BATCH_TOKEN_BUDGET}) exceeded"),
-                Some(request_id),
-            ));
-        }
-        if batch
+            ))
+        } else if batch
             .cost_budget_micro_usd
             .saturating_add(body.cost_budget_micro_usd)
             > MAX_BATCH_COST_BUDGET_MICRO_USD
         {
-            state.tasks.write().await.remove(&task_id);
-            return Err(api_error(
+            Err((
                 StatusCode::BAD_REQUEST,
                 "batch_cost_budget_exceeded",
                 format!("Batch cost budget limit ({MAX_BATCH_COST_BUDGET_MICRO_USD} micro-USD) exceeded"),
-                Some(request_id),
-            ));
+            ))
+        } else {
+            batch.token_budget += body.token_budget;
+            batch.cost_budget_micro_usd += body.cost_budget_micro_usd;
+            batch.task_ids.push(task_id.clone());
+            tasks.insert(task_id.clone(), task);
+            Ok(())
         }
-        batch.token_budget += body.token_budget;
-        batch.cost_budget_micro_usd += body.cost_budget_micro_usd;
-        batch.task_ids.push(task_id.clone());
+    };
+    if let Err((status, code, message)) = commit_result {
+        if created_agent {
+            let _ = state.manager.stop(&agent_id).await;
+        }
+        return Err(api_error(status, code, message, Some(request_id)));
     }
+    state.registry.persist().await;
     state
         .manager
         .notify_delegated_task(&agent_id, &source_agent_id, &body.task);
@@ -1804,14 +1920,16 @@ pub async fn start_api_server(
     port: u16,
     registry: TaskRegistry,
 ) -> Result<u16, String> {
+    let task_slots = registry.task_slots.clone();
+    let queue_slots = registry.queue_slots.clone();
     let state = AppState {
         manager: manager.clone(),
         request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
         tasks: registry.tasks.clone(),
         task_batches: registry.task_batches.clone(),
         registry,
-        task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
-        queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
+        task_slots,
+        queue_slots,
     };
 
     let app = build_router(state);
@@ -1842,14 +1960,16 @@ mod tests {
 
     fn test_state(manager: Arc<AgentManager>) -> AppState {
         let registry = TaskRegistry::default();
+        let task_slots = registry.task_slots.clone();
+        let queue_slots = registry.queue_slots.clone();
         AppState {
             manager,
             request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
             tasks: registry.tasks.clone(),
             task_batches: registry.task_batches.clone(),
             registry,
-            task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
-            queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
+            task_slots,
+            queue_slots,
         }
     }
 
@@ -1887,11 +2007,9 @@ mod tests {
             .write()
             .await
             .insert("task-running".to_string(), running_task);
-        registry
-            .task_batches
-            .write()
-            .await
-            .insert("batch-x".to_string(), AgentTaskBatch {
+        registry.task_batches.write().await.insert(
+            "batch-x".to_string(),
+            AgentTaskBatch {
                 batch_id: "batch-x".to_string(),
                 parent_agent_id: "agent-parent".to_string(),
                 task_ids: vec!["task-running".to_string()],
@@ -1900,7 +2018,8 @@ mod tests {
                 status: BatchStatus::Running,
                 token_budget: 100,
                 cost_budget_micro_usd: 100,
-            });
+            },
+        );
         registry.persist().await;
 
         // A fresh registry (simulated Studio restart) restores the snapshot:
@@ -2016,6 +2135,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn retry_respects_the_shared_queue_limit() {
+        let manager = Arc::new(AgentManager::new(
+            "true".to_string(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let registry = TaskRegistry::default();
+        let now = chrono::Utc::now().to_rfc3339();
+        registry.tasks.write().await.insert(
+            "task-retry-queued".to_string(),
+            AgentTask {
+                task_id: "task-retry-queued".to_string(),
+                batch_id: "batch-retry-queued".to_string(),
+                agent_id: "agent-child".to_string(),
+                status: TaskStatus::Error,
+                parent_agent_id: "agent-parent".to_string(),
+                delegated_task: "retry me".to_string(),
+                created_at: now.clone(),
+                started_at: Some(now.clone()),
+                completed_at: Some(now.clone()),
+                last_activity_at: now,
+                token_budget: 100,
+                cost_budget_micro_usd: 100,
+                timeout_secs: 30,
+                summary: String::new(),
+                changed_files: Vec::new(),
+                verification: Vec::new(),
+                remaining_risks: Vec::new(),
+                final_text: String::new(),
+                error: Some("failed".to_string()),
+            },
+        );
+        let _all_queue_slots = registry
+            .queue_slots
+            .clone()
+            .acquire_many_owned(MAX_QUEUED_TASKS as u32)
+            .await
+            .unwrap();
+
+        let error = match retry_task_impl(manager, registry.clone(), "task-retry-queued").await {
+            Ok(_) => panic!("retry unexpectedly bypassed the queue limit"),
+            Err(error) => error,
+        };
+        assert!(error.contains("queue limit"));
+        assert_eq!(
+            registry.tasks.read().await["task-retry-queued"].status,
+            TaskStatus::Error
+        );
     }
 
     #[test]
@@ -2377,7 +2546,9 @@ mod tests {
             (res_a1, &child_a.id),
             (res_a2, &child_a.id),
         ] {
-            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
             let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert!(
                 reply["reply"]
@@ -2446,7 +2617,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
         let batch_id = delegated.get("batch_id").and_then(|v| v.as_str()).unwrap();
@@ -2459,9 +2632,9 @@ mod tests {
                     .uri(format!("/tasks/batches/{}/seal", batch_id))
                     .header("content-type", "application/json")
                     .header("x-nova-token", manager.hub_token.as_str())
-                    .body(
-                        Body::from(serde_json::json!({ "source_agent_id": parent.id }).to_string()),
-                    )
+                    .body(Body::from(
+                        serde_json::json!({ "source_agent_id": parent.id }).to_string(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -2585,7 +2758,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
 
@@ -2607,7 +2782,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let waited: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             waited
@@ -2692,7 +2869,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
 
@@ -2714,7 +2893,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let waited: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         // Even though the agent replied normally, the failed `npm test` in
         // its tool trace downgrades the task to an error.
@@ -2731,9 +2912,9 @@ mod tests {
         assert!(waited
             .pointer("/tasks/0/remainingRisks")
             .and_then(|value| value.as_array())
-            .is_some_and(|risks| risks.iter().any(|risk| risk
-                .as_str()
-                .is_some_and(|text| text.contains("npm test")))));
+            .is_some_and(|risks| risks
+                .iter()
+                .any(|risk| risk.as_str().is_some_and(|text| text.contains("npm test")))));
 
         manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
@@ -2791,7 +2972,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let batch_id = delegated.get("batch_id").and_then(|v| v.as_str()).unwrap();
 
@@ -2814,7 +2997,9 @@ mod tests {
         // Filter by batch id.
         let response = query(app.clone(), format!("/tasks?batchId={batch_id}")).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let listed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(listed["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(listed["tasks"][0]["batchId"].as_str(), Some(batch_id));
@@ -2826,27 +3011,40 @@ mod tests {
         // Batch detail includes the sealed/resume markers and its tasks.
         let response = query(app.clone(), format!("/tasks/batches/{batch_id}")).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let detail: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(detail["batch"]["batchId"].as_str(), Some(batch_id));
-        assert_eq!(detail["batch"]["parentAgentId"].as_str(), Some(parent.id.as_str()));
+        assert_eq!(
+            detail["batch"]["parentAgentId"].as_str(),
+            Some(parent.id.as_str())
+        );
         assert_eq!(detail["tasks"].as_array().unwrap().len(), 1);
 
         // Unknown batch is a 404.
-        let response = query(app.clone(), "/tasks/batches/batch-does-not-exist".to_string()).await;
+        let response = query(
+            app.clone(),
+            "/tasks/batches/batch-does-not-exist".to_string(),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         // Parent lookup resolves the child's parent to the root agent, and a
         // root agent has a null parent.
         let response = query(app.clone(), format!("/agents/{}/parent", child.id)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let found_parent: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(found_parent["id"].as_str(), Some(parent.id.as_str()));
 
         let response = query(app, format!("/agents/{}/parent", parent.id)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let found_parent: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(found_parent.is_null());
 
@@ -2855,7 +3053,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_task_can_be_retried_and_reset_to_running() {
+    async fn cancelled_task_can_be_retried_through_the_queue() {
         let manager = Arc::new(AgentManager::new(
             format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
             std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
@@ -2906,7 +3104,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
 
@@ -2940,9 +3140,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retried.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(retried.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(retried.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let retried_task: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(retried_task["status"].as_str(), Some("running"));
+        assert_eq!(retried_task["status"].as_str(), Some("queued"));
         assert!(retried_task["error"].is_null());
         assert!(retried_task["completedAt"].is_null());
         assert_eq!(
@@ -3067,7 +3269,9 @@ mod tests {
         }
         let throttled = ask(app.clone(), "same question").await;
         assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
-        let bytes = axum::body::to_bytes(throttled.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(throttled.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let api_error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(api_error["code"].as_str(), Some("duplicate_request"));
 

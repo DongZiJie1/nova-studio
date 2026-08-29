@@ -9,6 +9,7 @@ import {
   cancelAgent,
   retryAgent,
   retryTask,
+  cancelTask,
   steerAgent,
   activateAgent,
   listAgents,
@@ -88,6 +89,7 @@ import {
   PanelLeftOpen,
   LoaderCircle,
   RotateCcw,
+  Bot,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -873,9 +875,8 @@ interface BatchTaskPanelProps {
 }
 
 /**
- * Sidebar panel grouping delegated tasks by batch: live status, overall
- * progress, and per-task controls (cancel / retry) with a jump into the
- * child agent session.
+ * Conversation-side summary grouping the current agent's directly delegated
+ * tasks by batch, with live status and controls for each child agent.
  */
 const BatchTaskPanel = memo(function BatchTaskPanel({
   tasks,
@@ -910,32 +911,26 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   if (groups.length === 0) return null;
 
   return (
-    <section className="task-panel">
+    <section className="task-panel" aria-label="当前 Agent 的子任务摘要">
       <button
         type="button"
         className="task-panel-header"
         onClick={() => setExpanded((value) => !value)}
       >
-        <span>任务批次</span>
-        <span className="task-panel-count">{groups.length}</span>
+        <span className="task-panel-heading"><Bot size={15} />子 Agent 摘要</span>
+        <span className="task-panel-count">{tasks.length}</span>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </button>
       {expanded && (
         <div className="task-panel-body">
           {groups.map(({ batchId, batch, tasks: batchTasks }) => {
             const completed = batchTasks.filter((task) => task.status === "completed").length;
-            const parentAgent = batch
-              ? agentsById.get(batch.parentAgentId)
-              : agentsById.get(batchTasks[0]?.parentAgentId ?? "");
-            const parentName = parentAgent
-              ? agentDisplayName(parentAgent, agentNames)
-              : (batch?.parentAgentId ?? batchTasks[0]?.parentAgentId ?? "未知 Agent");
             const batchStatus = batch?.status ?? (completed === batchTasks.length ? "completed" : "running");
             return (
               <div key={batchId} className="task-batch">
                 <div className="task-batch-title">
                   <span className="task-batch-parent" title={`批次 ${batchId}`}>
-                    {parentName}
+                    任务批次
                   </span>
                   <span className={`task-batch-status task-batch-status-${batchStatus}`}>
                     {batchTasks.length > 1
@@ -945,6 +940,9 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                 </div>
                 {batchTasks.map((task) => {
                   const targetAgent = agentsById.get(task.agentId);
+                  const targetName = targetAgent
+                    ? agentDisplayName(targetAgent, agentNames)
+                    : "子 Agent";
                   return (
                     <div
                       key={task.taskId}
@@ -961,6 +959,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                       title={task.error ?? task.summary ?? task.delegatedTask}
                     >
                       <span className="task-row-text">
+                        <span className="task-row-agent">{targetName}</span>
                         <span className="task-row-summary">
                           {task.summary || task.delegatedTask}
                         </span>
@@ -969,7 +968,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                           {task.status === "error" && task.error ? ` · ${task.error}` : ""}
                         </span>
                       </span>
-                      {task.status === "running" && (
+                      {(task.status === "queued" || task.status === "running") && (
                         <span
                           role="button"
                           tabIndex={0}
@@ -977,7 +976,9 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                           title="取消任务"
                           onClick={(event) => {
                             event.stopPropagation();
-                            void cancelAgent(task.agentId, "cancelled from task panel");
+                            void cancelTask(task.taskId, "cancelled from task panel")
+                              .then(() => useAgentStore.getState().refreshAgentTasks())
+                              .catch(() => useAgentStore.getState().refreshAgentTasks());
                           }}
                         >
                           <Square size={12} />
@@ -1184,6 +1185,22 @@ export function AppShell() {
       (agent) => descendants.has(agent.id) && (agent.status === "starting" || agent.status === "streaming"),
     );
   }, [activeAgent, agents]);
+  const activeDelegatedTasks = useMemo(
+    () => activeAgent
+      ? delegatedTasks.filter((task) => task.parentAgentId === activeAgent.id)
+      : [],
+    [activeAgent, delegatedTasks],
+  );
+  const activeDelegatedBatchIds = useMemo(
+    () => new Set(activeDelegatedTasks.map((task) => task.batchId)),
+    [activeDelegatedTasks],
+  );
+  const activeDelegatedBatches = useMemo(
+    () => delegatedBatches.filter(
+      (batch) => batch.parentAgentId === activeAgent?.id && activeDelegatedBatchIds.has(batch.batchId),
+    ),
+    [activeAgent?.id, activeDelegatedBatchIds, delegatedBatches],
+  );
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
   // possibly-stale `model` field that list_agents reports from spawn time.
@@ -2190,13 +2207,6 @@ export function AppShell() {
                   </section>
                 ))}
               </div>
-              <BatchTaskPanel
-                tasks={delegatedTasks}
-                batches={delegatedBatches}
-                agentsById={agentsById}
-                agentNames={agentNames}
-                onSelect={handleSelectAgent}
-              />
               <footer className="sidebar-footer">
                 <button
                   type="button"
@@ -2316,7 +2326,7 @@ export function AppShell() {
             onScroll={handleConversationScroll}
             className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
-            }`}
+            } ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
@@ -2641,7 +2651,19 @@ export function AppShell() {
             )}
           </div>
 
-          {conversationView === "chat" && showConversationMinimap && (
+          {conversationView === "chat" && activeDelegatedTasks.length > 0 && (
+            <aside className="conversation-task-summary">
+              <BatchTaskPanel
+                tasks={activeDelegatedTasks}
+                batches={activeDelegatedBatches}
+                agentsById={agentsById}
+                agentNames={agentNames}
+                onSelect={handleSelectAgent}
+              />
+            </aside>
+          )}
+
+          {conversationView === "chat" && activeDelegatedTasks.length === 0 && showConversationMinimap && (
             <nav
               className="conversation-minimap"
               aria-label="Conversation navigation"

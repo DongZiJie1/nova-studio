@@ -132,6 +132,10 @@ export async function retryTask(taskId: string): Promise<AgentTaskInfo> {
   return invoke<AgentTaskInfo>("retry_task", { taskId });
 }
 
+export async function cancelTask(taskId: string, reason?: string): Promise<AgentTaskInfo> {
+  return invoke<AgentTaskInfo>("cancel_task", { taskId, reason });
+}
+
 export async function startNewSession(agentId: string): Promise<void> {
   return invoke("new_session", { agentId });
 }

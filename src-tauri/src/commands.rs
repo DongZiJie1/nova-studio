@@ -292,9 +292,18 @@ pub async fn retry_task(
 }
 
 #[tauri::command]
-pub async fn list_agent_tasks(
-    state: State<'_, TaskRegistryState>,
-) -> Result<TaskSnapshot, String> {
+pub async fn cancel_task(
+    manager: State<'_, AgentManagerState>,
+    registry: State<'_, TaskRegistryState>,
+    task_id: String,
+    reason: Option<String>,
+) -> Result<crate::agent_api::AgentTask, String> {
+    crate::agent_api::cancel_task_impl(manager.0.clone(), registry.0.clone(), &task_id, reason)
+        .await
+}
+
+#[tauri::command]
+pub async fn list_agent_tasks(state: State<'_, TaskRegistryState>) -> Result<TaskSnapshot, String> {
     Ok(state.0.snapshot().await)
 }
 
