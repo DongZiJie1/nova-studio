@@ -1,8 +1,9 @@
 use crate::nova_host_process::NovaHostProcess;
-use crate::rpc_types::{AgentMessage, AgentStatus, RpcCommand};
+use crate::rpc_types::{AgentLifecycleSnapshot, AgentMessage, AgentStatus, RpcCommand};
 use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex};
@@ -414,6 +415,47 @@ impl AgentProcess {
     /// Get current status
     pub async fn get_status(&self) -> AgentStatus {
         self.status.lock().await.clone()
+    }
+
+    pub async fn request_lifecycle(&self) -> Option<AgentLifecycleSnapshot> {
+        self.request_lifecycles().await.remove(&self.id)
+    }
+
+    pub async fn request_lifecycles(&self) -> HashMap<String, AgentLifecycleSnapshot> {
+        let request_id = format!("lifecycle-{}", uuid::Uuid::new_v4());
+        let mut events = self.subscribe();
+        if self.send_command(&RpcCommand::AgentList {
+            id: Some(request_id.clone()),
+            include_archived: true,
+        })
+        .is_err() {
+            return HashMap::new();
+        }
+        tokio::time::timeout(std::time::Duration::from_millis(800), async {
+            while let Ok(event) = events.recv().await {
+                if event.get("type").and_then(serde_json::Value::as_str) != Some("response")
+                    || event.get("id").and_then(serde_json::Value::as_str) != Some(&request_id)
+                {
+                    continue;
+                }
+                return event
+                    .get("data")
+                    .and_then(|data| data.get("agents"))
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| {
+                        let agent_id = entry.get("agentId")?.as_str()?.to_string();
+                        let lifecycle: AgentLifecycleSnapshot =
+                            serde_json::from_value(entry.get("lifecycle")?.clone()).ok()?;
+                        Some((agent_id, lifecycle))
+                    })
+                    .collect();
+            }
+            HashMap::new()
+        })
+        .await
+        .unwrap_or_default()
     }
 
     /// Stop the agent process

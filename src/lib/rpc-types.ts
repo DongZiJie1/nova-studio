@@ -257,6 +257,24 @@ export interface ContextSnapshot {
 // ─── Agent status ───
 
 export type AgentStatus = "starting" | "idle" | "streaming" | "error" | "stopped";
+export type AgentLifecycleStatus = "queued" | "starting" | "running" | "waiting" | "completed" | "error" | "stopped" | "orphaned";
+
+export interface AgentLifecycleSnapshot {
+  agentId: string;
+  sessionStatus: AgentStatus;
+  taskStatus: AgentLifecycleStatus;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  lastActivityAt: string;
+  durationMs?: number;
+  tokenUsage: Record<string, number>;
+  errorReason?: string;
+  cancelReason?: string;
+  timeoutReason?: string;
+  retryCount: number;
+  archived: boolean;
+}
 
 // ─── Agent info (from Rust backend) ───
 
@@ -265,6 +283,7 @@ export interface AgentInfo {
   parent_agent_id: string | null;
   name: string | null;
   status: AgentStatus;
+  lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
   model: string | null;
   session_id: string | null;

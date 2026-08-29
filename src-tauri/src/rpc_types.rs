@@ -99,6 +99,12 @@ pub enum RpcCommand {
         agent_id: String,
         message: Option<String>,
     },
+    #[serde(rename = "agent_list")]
+    AgentList {
+        id: Option<String>,
+        #[serde(rename = "includeArchived")]
+        include_archived: bool,
+    },
     #[serde(rename = "set_model")]
     SetModel {
         id: Option<String>,
@@ -258,6 +264,28 @@ pub enum AgentStatus {
     Stopped,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLifecycleSnapshot {
+    pub agent_id: String,
+    pub session_status: AgentStatus,
+    pub task_status: String,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub last_activity_at: String,
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub token_usage: serde_json::Value,
+    pub error_reason: Option<String>,
+    pub cancel_reason: Option<String>,
+    pub timeout_reason: Option<String>,
+    #[serde(default)]
+    pub retry_count: u64,
+    #[serde(default)]
+    pub archived: bool,
+}
+
 /// Info about a running agent, returned to frontend/tools
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
@@ -268,6 +296,8 @@ pub struct AgentInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub status: AgentStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<AgentLifecycleSnapshot>,
     pub cwd: String,
     pub model: Option<String>,
     pub session_id: Option<String>,

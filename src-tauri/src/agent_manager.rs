@@ -1058,10 +1058,19 @@ impl AgentManager {
     pub async fn list(&self) -> Vec<AgentInfo> {
         let records = self.records.read().await;
         let agents = self.agents.read().await;
+        let mut lifecycles = HashMap::new();
+        let mut queried_projects = std::collections::HashSet::new();
+        for agent in agents.values() {
+            if queried_projects.insert(agent.cwd.clone()) {
+                lifecycles.extend(agent.request_lifecycles().await);
+            }
+        }
         let mut infos = Vec::new();
         for (id, record) in records.iter() {
             if let Some(agent) = agents.get(id) {
-                infos.push(self.build_info(id, &record.cwd, agent).await);
+                let mut info = self.build_info(id, &record.cwd, agent).await;
+                info.lifecycle = lifecycles.remove(id);
+                infos.push(info);
             } else {
                 infos.push(agent_info_from_record(record));
             }
@@ -1080,7 +1089,9 @@ impl AgentManager {
     /// Get info about a specific agent
     pub async fn get_info(&self, agent_id: &str) -> Result<AgentInfo, String> {
         if let Some(agent) = self.agents.read().await.get(agent_id).cloned() {
-            return Ok(self.build_info(agent_id, &agent.cwd, &agent).await);
+            let mut info = self.build_info(agent_id, &agent.cwd, &agent).await;
+            info.lifecycle = agent.request_lifecycle().await;
+            return Ok(info);
         }
         self.records
             .read()
@@ -1127,6 +1138,7 @@ impl AgentManager {
             parent_agent_id: process.parent_agent_id.clone(),
             name: process.name.lock().await.clone(),
             status: process.get_status().await,
+            lifecycle: None,
             cwd: cwd.to_string(),
             model: process.model.clone(),
             session_id: Some(process.session_id.clone()),
@@ -1163,6 +1175,7 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
         parent_agent_id: record.parent_agent_id.clone(),
         name: record.name.clone(),
         status: crate::rpc_types::AgentStatus::Stopped,
+        lifecycle: None,
         cwd: record.cwd.clone(),
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),

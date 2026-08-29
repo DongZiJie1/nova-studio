@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AgentStatus,
+  AgentLifecycleSnapshot,
   AgentEventPayload,
   AgentInfo,
   ContextUsage,
@@ -64,6 +65,7 @@ export interface AgentState {
   name: string | null;
   avatarId: AgentAvatarId;
   status: AgentStatus;
+  lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
   model: string | null;
   messages: ChatMessage[];
@@ -171,6 +173,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     name: info.name ?? "Nova",
     avatarId: getOrAssignAgentAvatar(info.id),
     status: info.status,
+    lifecycle: info.lifecycle,
     cwd: info.cwd,
     model: info.model,
     messages: [],
@@ -197,6 +200,7 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
     parentAgentId: info.parent_agent_id,
     name: info.name ?? agent.name,
     status: info.status,
+    lifecycle: info.lifecycle,
     cwd: info.cwd,
     model: info.model,
     createdAt: info.created_at,
@@ -288,6 +292,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         content: formatted.content,
         timestamp,
         authorLabel: formatted.agentId,
+        sourceAgentId: formatted.agentId,
       });
       continue;
     }
@@ -613,6 +618,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               content: formatted.content,
               timestamp: Date.now(),
               authorLabel: formatted.agentId,
+              sourceAgentId: formatted.agentId,
             }],
             messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
           };

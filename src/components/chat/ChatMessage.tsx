@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork } from "lucide-react";
+import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route } from "lucide-react";
 import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
@@ -104,6 +104,7 @@ export const ChatMessage = memo(function ChatMessage({
   showActions = false,
   onFeedback,
   onFork,
+  onOpenAgent,
   fileChanges = [],
 }: {
   message: ChatMessageData;
@@ -112,6 +113,7 @@ export const ChatMessage = memo(function ChatMessage({
   showActions?: boolean;
   onFeedback?: (message: ChatMessageData, rating: "up" | "down" | null) => void;
   onFork?: (message: ChatMessageData) => void;
+  onOpenAgent?: (agentId: string, view: "chat" | "trajectory") => void;
   fileChanges?: TurnFileChange[];
 }) {
   const [copied, setCopied] = useState(false);
@@ -197,6 +199,12 @@ export const ChatMessage = memo(function ChatMessage({
         >
           {isUser ? message.content : <Markdown content={message.content} />}
         </div>
+        {message.role === "agent_result" && message.sourceAgentId && (
+          <div className="agent-result-links" aria-label="子 Agent 结果操作">
+            <button type="button" onClick={() => onOpenAgent?.(message.sourceAgentId!, "chat")}><MessageCircle size={13} />查看会话 / Diff</button>
+            <button type="button" onClick={() => onOpenAgent?.(message.sourceAgentId!, "trajectory")}><Route size={13} />查看工具轨迹</button>
+          </div>
+        )}
         {!isUser && showActions && fileChanges.length > 0 && (
           <div className="turn-file-changes" aria-label="本轮文件改动">
             <FileChangesCard changes={fileChanges} />
