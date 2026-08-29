@@ -20,7 +20,12 @@ import {
   getOrAssignAgentAvatar,
   type AgentAvatarId,
 } from "../lib/agent-avatars";
-import { requestSessionStats } from "../lib/tauri-bridge";
+import {
+  listAgentTasks,
+  requestSessionStats,
+  type AgentBatchInfo,
+  type AgentTaskInfo,
+} from "../lib/tauri-bridge";
 import { recordTokenUsage, recordUserInteraction } from "../lib/activity-tracker";
 
 // ─── Frontend-side types ───
@@ -105,6 +110,10 @@ interface AgentStoreState {
   agents: AgentState[];
   activeAgentId: string | null;
   availableModels: AvailableModel[];
+  /** Delegated tasks from the hub registry (task panel data source). */
+  delegatedTasks: AgentTaskInfo[];
+  /** Delegated task batches, keyed snapshot list from the hub registry. */
+  delegatedBatches: AgentBatchInfo[];
 
   // Agent CRUD
   addAgent: (agent: AgentState) => void;
@@ -114,6 +123,8 @@ interface AgentStoreState {
   updateAgent: (id: string, update: Partial<AgentState>) => void;
   getAgent: (id: string) => AgentState | undefined;
   setAvailableModels: (models: AvailableModel[]) => void;
+  /** Pull the latest task/batch snapshot from the Rust registry. */
+  refreshAgentTasks: () => Promise<void>;
 
   // Message management
   addUserMessage: (agentId: string, content: string, attachments?: MessageAttachment[]) => void;
@@ -380,6 +391,21 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   agents: [],
   activeAgentId: null,
   availableModels: [],
+  delegatedTasks: [],
+  delegatedBatches: [],
+
+  refreshAgentTasks: async () => {
+    try {
+      const snapshot = await listAgentTasks();
+      set({
+        delegatedTasks: snapshot.tasks,
+        delegatedBatches: snapshot.batches,
+      });
+    } catch {
+      // The hub registry lives in the Rust host; a transient failure just
+      // leaves the previous snapshot in place.
+    }
+  },
 
   addAgent: (agent) =>
     set((s) => {
@@ -528,6 +554,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     }
 
     if (event.type === "agent_delegated_task") {
+      void get().refreshAgentTasks();
       set((s) => ({
         agents: s.agents.map((agent) => agent.id === agentId
           ? {
@@ -547,6 +574,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     }
 
     if (event.type === "agent_task_result") {
+      void get().refreshAgentTasks();
       const details = event.result;
       const formatted = formatAgentTaskResult(details);
       set((s) => ({

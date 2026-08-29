@@ -122,9 +122,13 @@ pub fn run() {
 
             // Start the HTTP API server for agent tools
             let manager_clone = manager.clone();
+            let registry = agent_api::TaskRegistry::default();
+            let api_registry = registry.clone();
             let api_port = 9528; // fixed port for now
             tauri::async_runtime::spawn(async move {
-                match agent_api::start_api_server(manager_clone.clone(), api_port).await {
+                match agent_api::start_api_server(manager_clone.clone(), api_port, api_registry)
+                    .await
+                {
                     Ok(port) => {
                         manager_clone
                             .set_hub_url(format!("http://127.0.0.1:{}", port))
@@ -137,6 +141,7 @@ pub fn run() {
 
             // Store AgentManager as Tauri managed state
             app.manage(AgentManagerState(manager));
+            app.manage(commands::TaskRegistryState(registry));
 
             // Set up event forwarding: agent events → Tauri frontend events
             let app_handle = app.handle().clone();
@@ -171,6 +176,7 @@ pub fn run() {
             commands::cancel_agent,
             commands::force_stop_agent,
             commands::retry_agent,
+            commands::list_agent_tasks,
             commands::new_session,
             commands::request_messages,
             commands::fork_session,

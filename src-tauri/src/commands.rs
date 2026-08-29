@@ -1,3 +1,4 @@
+use crate::agent_api::{TaskRegistry, TaskSnapshot};
 use crate::agent_manager::AgentManager;
 use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
 use std::collections::VecDeque;
@@ -22,6 +23,9 @@ const SKIPPED_PROJECT_DIRS: &[&str] = &[
 
 /// Managed state wrapper for AgentManager
 pub struct AgentManagerState(pub Arc<AgentManager>);
+
+/// Managed state wrapper for the shared delegated task registry
+pub struct TaskRegistryState(pub TaskRegistry);
 
 fn expand_home(path: &str) -> PathBuf {
     if path == "~" {
@@ -276,6 +280,13 @@ pub async fn retry_agent(
     message: Option<String>,
 ) -> Result<(), String> {
     state.0.retry(&agent_id, message).await
+}
+
+#[tauri::command]
+pub async fn list_agent_tasks(
+    state: State<'_, TaskRegistryState>,
+) -> Result<TaskSnapshot, String> {
+    Ok(state.0.snapshot().await)
 }
 
 #[tauri::command]

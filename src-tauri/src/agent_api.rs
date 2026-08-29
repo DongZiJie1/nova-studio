@@ -41,9 +41,34 @@ struct AppState {
     queue_slots: Arc<Semaphore>,
 }
 
+/// Delegated task and batch state shared between the hub HTTP API (agent
+/// tools) and the Tauri commands the Studio task panel reads from.
+#[derive(Clone, Default)]
+pub struct TaskRegistry {
+    pub tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
+    pub task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSnapshot {
+    pub tasks: Vec<AgentTask>,
+    pub batches: Vec<AgentTaskBatch>,
+}
+
+impl TaskRegistry {
+    pub async fn snapshot(&self) -> TaskSnapshot {
+        TaskSnapshot {
+            tasks: self.tasks.read().await.values().cloned().collect(),
+            batches: self.task_batches.read().await.values().cloned().collect(),
+        }
+    }
+}
+
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentTaskBatch {
+    batch_id: String,
     parent_agent_id: String,
     task_ids: Vec<String>,
     sealed: bool,
@@ -886,6 +911,7 @@ async fn delegate_task(
         let batch = batches
             .entry(batch_id.clone())
             .or_insert_with(|| AgentTaskBatch {
+                batch_id: batch_id.clone(),
                 parent_agent_id: source_agent_id.clone(),
                 token_budget: 0,
                 cost_budget_micro_usd: 0,
@@ -1241,12 +1267,16 @@ fn build_router(state: AppState) -> Router {
 }
 
 /// Start the HTTP API server on localhost. Returns the bound port.
-pub async fn start_api_server(manager: Arc<AgentManager>, port: u16) -> Result<u16, String> {
+pub async fn start_api_server(
+    manager: Arc<AgentManager>,
+    port: u16,
+    registry: TaskRegistry,
+) -> Result<u16, String> {
     let state = AppState {
         manager: manager.clone(),
         request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
-        tasks: Arc::new(RwLock::new(HashMap::new())),
-        task_batches: Arc::new(RwLock::new(HashMap::new())),
+        tasks: registry.tasks.clone(),
+        task_batches: registry.task_batches.clone(),
         task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
         queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
     };

@@ -27,6 +27,8 @@ import {
   setMessageFeedback,
   forkSession,
   requestMessages,
+  type AgentBatchInfo,
+  type AgentTaskInfo,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -843,6 +845,168 @@ const AgentTreeNode = memo(function AgentTreeNode({
   );
 });
 
+const TASK_STATUS_LABELS: Record<string, string> = {
+  queued: "排队中",
+  running: "运行中",
+  completed: "已完成",
+  error: "失败",
+  stopped: "已停止",
+  orphaned: "已中断",
+};
+
+const BATCH_STATUS_LABELS: Record<string, string> = {
+  open: "进行中",
+  running: "执行中",
+  completed: "已完成",
+  error: "部分失败",
+  stopped: "已停止",
+};
+
+interface BatchTaskPanelProps {
+  tasks: AgentTaskInfo[];
+  batches: AgentBatchInfo[];
+  agentsById: Map<string, AgentState>;
+  agentNames: Record<string, string>;
+  onSelect: (agentId: string) => void;
+}
+
+/**
+ * Sidebar panel grouping delegated tasks by batch: live status, overall
+ * progress, and per-task controls (cancel / retry) with a jump into the
+ * child agent session.
+ */
+const BatchTaskPanel = memo(function BatchTaskPanel({
+  tasks,
+  batches,
+  agentsById,
+  agentNames,
+  onSelect,
+}: BatchTaskPanelProps) {
+  const [expanded, setExpanded] = useState(true);
+
+  const groups = useMemo(() => {
+    const byBatch = new Map<string, AgentTaskInfo[]>();
+    for (const task of tasks) {
+      const list = byBatch.get(task.batchId) ?? [];
+      list.push(task);
+      byBatch.set(task.batchId, list);
+    }
+    const batchById = new Map(batches.map((batch) => [batch.batchId, batch]));
+    return Array.from(byBatch.entries())
+      .map(([batchId, batchTasks]) => ({
+        batchId,
+        batch: batchById.get(batchId) ?? null,
+        tasks: batchTasks,
+        newestAt: batchTasks.reduce(
+          (latest, task) => Math.max(latest, Date.parse(task.createdAt) || 0),
+          0,
+        ),
+      }))
+      .sort((a, b) => b.newestAt - a.newestAt);
+  }, [tasks, batches]);
+
+  if (groups.length === 0) return null;
+
+  return (
+    <section className="task-panel">
+      <button
+        type="button"
+        className="task-panel-header"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span>任务批次</span>
+        <span className="task-panel-count">{groups.length}</span>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      {expanded && (
+        <div className="task-panel-body">
+          {groups.map(({ batchId, batch, tasks: batchTasks }) => {
+            const completed = batchTasks.filter((task) => task.status === "completed").length;
+            const parentAgent = batch
+              ? agentsById.get(batch.parentAgentId)
+              : agentsById.get(batchTasks[0]?.parentAgentId ?? "");
+            const parentName = parentAgent
+              ? agentDisplayName(parentAgent, agentNames)
+              : (batch?.parentAgentId ?? batchTasks[0]?.parentAgentId ?? "未知 Agent");
+            const batchStatus = batch?.status ?? (completed === batchTasks.length ? "completed" : "running");
+            return (
+              <div key={batchId} className="task-batch">
+                <div className="task-batch-title">
+                  <span className="task-batch-parent" title={`批次 ${batchId}`}>
+                    {parentName}
+                  </span>
+                  <span className={`task-batch-status task-batch-status-${batchStatus}`}>
+                    {batchTasks.length > 1
+                      ? `${completed}/${batchTasks.length} 已完成`
+                      : BATCH_STATUS_LABELS[batchStatus] ?? batchStatus}
+                  </span>
+                </div>
+                {batchTasks.map((task) => {
+                  const targetAgent = agentsById.get(task.agentId);
+                  return (
+                    <div
+                      key={task.taskId}
+                      className={`task-row task-row-${task.status} ${targetAgent ? "task-row-clickable" : ""}`}
+                      onClick={() => targetAgent && onSelect(task.agentId)}
+                      onKeyDown={(event) => {
+                        if (targetAgent && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault();
+                          onSelect(task.agentId);
+                        }
+                      }}
+                      role={targetAgent ? "button" : undefined}
+                      tabIndex={targetAgent ? 0 : undefined}
+                      title={task.error ?? task.summary ?? task.delegatedTask}
+                    >
+                      <span className="task-row-text">
+                        <span className="task-row-summary">
+                          {task.summary || task.delegatedTask}
+                        </span>
+                        <span className="task-row-sub">
+                          {TASK_STATUS_LABELS[task.status] ?? task.status}
+                          {task.status === "error" && task.error ? ` · ${task.error}` : ""}
+                        </span>
+                      </span>
+                      {task.status === "running" && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="agent-action"
+                          title="取消任务"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void cancelAgent(task.agentId, "cancelled from task panel");
+                          }}
+                        >
+                          <Square size={12} />
+                        </span>
+                      )}
+                      {(task.status === "error" || task.status === "stopped") && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="agent-action"
+                          title="重试任务"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void retryAgent(task.agentId);
+                          }}
+                        >
+                          <RotateCcw size={12} />
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+});
+
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
@@ -852,6 +1016,9 @@ export function AppShell() {
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
   const availableModels = useAgentStore((s) => s.availableModels);
+  const delegatedTasks = useAgentStore((s) => s.delegatedTasks);
+  const delegatedBatches = useAgentStore((s) => s.delegatedBatches);
+  const refreshAgentTasks = useAgentStore((s) => s.refreshAgentTasks);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
@@ -877,6 +1044,8 @@ export function AppShell() {
   const [isSending, setIsSending] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  // Pull the delegated task/batch snapshot once when the shell mounts.
+  useEffect(() => { void refreshAgentTasks(); }, [refreshAgentTasks]);
   // Keep ref in sync for cleanup on unmount
   useEffect(() => { attachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
@@ -2017,6 +2186,13 @@ export function AppShell() {
                   </section>
                 ))}
               </div>
+              <BatchTaskPanel
+                tasks={delegatedTasks}
+                batches={delegatedBatches}
+                agentsById={agentsById}
+                agentNames={agentNames}
+                onSelect={handleSelectAgent}
+              />
               <footer className="sidebar-footer">
                 <button
                   type="button"

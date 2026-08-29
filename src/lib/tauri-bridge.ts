@@ -73,6 +73,57 @@ export async function retryAgent(agentId: string, message?: string): Promise<voi
   return invoke("retry_agent", { agentId, message });
 }
 
+// ─── Delegated Task Registry (hub task panel) ───
+
+export type AgentTaskStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "error"
+  | "stopped"
+  | "orphaned";
+
+export type AgentBatchStatus = "open" | "running" | "completed" | "error" | "stopped";
+
+export interface AgentTaskInfo {
+  taskId: string;
+  batchId: string;
+  agentId: string;
+  status: AgentTaskStatus;
+  parentAgentId: string;
+  delegatedTask: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  lastActivityAt: string;
+  summary?: string;
+  changedFiles?: string[];
+  verification?: string[];
+  remainingRisks?: string[];
+  finalText?: string;
+  error?: string;
+}
+
+export interface AgentBatchInfo {
+  batchId: string;
+  parentAgentId: string;
+  taskIds: string[];
+  sealed: boolean;
+  resumeTriggered: boolean;
+  status: AgentBatchStatus;
+  tokenBudget: number;
+  costBudgetMicroUsd: number;
+}
+
+export interface AgentTaskSnapshot {
+  tasks: AgentTaskInfo[];
+  batches: AgentBatchInfo[];
+}
+
+export async function listAgentTasks(): Promise<AgentTaskSnapshot> {
+  return invoke("list_agent_tasks");
+}
+
 export async function startNewSession(agentId: string): Promise<void> {
   return invoke("new_session", { agentId });
 }

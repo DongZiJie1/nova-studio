@@ -2494,6 +2494,139 @@ body {
   padding: 0 10px 12px;
 }
 
+/* ─── Batch task panel ─── */
+
+.task-panel {
+  flex: 0 0 auto;
+  max-height: 260px;
+  margin: 0 10px;
+  padding: 4px 0;
+  border-top: 1px solid var(--color-border-glass);
+  display: flex;
+  flex-direction: column;
+}
+
+.task-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-panel-count {
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-glass);
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.task-panel-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.task-batch {
+  padding: 4px 0;
+}
+
+.task-batch + .task-batch {
+  border-top: 1px dashed var(--color-border-glass);
+}
+
+.task-batch-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 4px;
+}
+
+.task-batch-parent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-heading);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.task-batch-status {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.task-batch-status-completed {
+  color: var(--color-success);
+}
+
+.task-batch-status-error,
+.task-batch-status-stopped {
+  color: var(--color-error);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 8px;
+}
+
+.task-row-clickable {
+  cursor: pointer;
+}
+
+.task-row-clickable:hover {
+  background: var(--surface-control-hover);
+}
+
+.task-row-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.task-row-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: 11.5px;
+}
+
+.task-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.task-row-completed .task-row-sub {
+  color: var(--color-success);
+}
+
+.task-row-error .task-row-sub,
+.task-row-stopped .task-row-sub,
+.task-row-orphaned .task-row-sub {
+  color: var(--color-error);
+}
+
 .sidebar-footer {
   flex: 0 0 auto;
   padding: 10px;
