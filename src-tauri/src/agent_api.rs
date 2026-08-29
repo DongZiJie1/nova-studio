@@ -37,16 +37,28 @@ struct AppState {
     request_tracker: Arc<Mutex<RequestTracker>>,
     tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
     task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+    registry: TaskRegistry,
     task_slots: Arc<Semaphore>,
     queue_slots: Arc<Semaphore>,
 }
 
 /// Delegated task and batch state shared between the hub HTTP API (agent
-/// tools) and the Tauri commands the Studio task panel reads from.
+/// tools) and the Tauri commands the Studio task panel reads from. The
+/// registry persists to a JSON snapshot beside agents.json so batches and
+/// their sealed/resumed markers survive Studio restarts.
 #[derive(Clone, Default)]
 pub struct TaskRegistry {
     pub tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
     pub task_batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
+    state_path: Arc<RwLock<Option<std::path::PathBuf>>>,
+    persistence_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PersistedTaskState {
+    tasks: HashMap<String, AgentTask>,
+    task_batches: HashMap<String, AgentTaskBatch>,
 }
 
 #[derive(Serialize)]
@@ -57,15 +69,81 @@ pub struct TaskSnapshot {
 }
 
 impl TaskRegistry {
+    /// Point the registry at its persistence file (called once at startup,
+    /// before restore).
+    pub async fn set_state_path(&self, path: std::path::PathBuf) {
+        *self.state_path.write().await = Some(path);
+    }
+
     pub async fn snapshot(&self) -> TaskSnapshot {
         TaskSnapshot {
             tasks: self.tasks.read().await.values().cloned().collect(),
             batches: self.task_batches.read().await.values().cloned().collect(),
         }
     }
+
+    /// Load the persisted snapshot. Tasks that were not finished when the
+    /// previous Studio session ended are marked `orphaned` so they are never
+    /// mistaken for work still running, and non-terminal batches are closed
+    /// out as stopped. Sealed/resumed markers load as-is, which prevents a
+    /// restarted Studio from re-summarizing a batch that already resumed.
+    pub async fn restore(&self) -> Result<(), String> {
+        let Some(path) = self.state_path.read().await.clone() else {
+            return Ok(());
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Ok(());
+        };
+        let persisted: PersistedTaskState = serde_json::from_str(&text)
+            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
+        let mut tasks = self.tasks.write().await;
+        let mut batches = self.task_batches.write().await;
+        for (task_id, mut task) in persisted.tasks {
+            if !task.status.is_terminal() {
+                task.status = TaskStatus::Orphaned;
+                task.error = Some("Studio restarted before this task finished".to_string());
+                task.completed_at = Some(chrono::Utc::now().to_rfc3339());
+            }
+            tasks.insert(task_id, task);
+        }
+        for (batch_id, mut batch) in persisted.task_batches {
+            if !matches!(
+                batch.status,
+                BatchStatus::Completed | BatchStatus::Error | BatchStatus::Stopped
+            ) {
+                batch.status = BatchStatus::Stopped;
+            }
+            batches.insert(batch_id, batch);
+        }
+        Ok(())
+    }
+
+    /// Write the current snapshot to disk. Callers hold the persistence lock
+    /// only to serialize writers; a failure is logged, never fatal.
+    pub async fn persist(&self) {
+        let Some(path) = self.state_path.read().await.clone() else {
+            return;
+        };
+        let _guard = self.persistence_lock.lock().await;
+        let persisted = PersistedTaskState {
+            tasks: self.tasks.read().await.clone(),
+            task_batches: self.task_batches.read().await.clone(),
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(&persisted) {
+            Ok(text) => {
+                if let Err(error) = std::fs::write(&path, text) {
+                    log::warn!("Failed to persist task registry: {error}");
+                }
+            }
+            Err(error) => log::warn!("Failed to serialize task registry: {error}"),
+        }
+    }
 }
 
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentTaskBatch {
     batch_id: String,
@@ -78,7 +156,7 @@ struct AgentTaskBatch {
     cost_budget_micro_usd: u64,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum BatchStatus {
     #[default]
@@ -89,7 +167,7 @@ enum BatchStatus {
     Stopped,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum TaskStatus {
     Queued,
@@ -109,7 +187,7 @@ impl TaskStatus {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentTask {
     task_id: String,
@@ -446,7 +524,15 @@ async fn cancel_task(
                 None,
             )
         })?;
-    try_resume_task_batch(state.manager, state.tasks, state.task_batches, &batch_id).await;
+    state.registry.persist().await;
+    try_resume_task_batch(
+        state.manager,
+        state.tasks,
+        state.task_batches,
+        &batch_id,
+        &state.registry,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -455,7 +541,9 @@ async fn try_resume_task_batch(
     tasks: Arc<RwLock<HashMap<String, AgentTask>>>,
     batches: Arc<RwLock<HashMap<String, AgentTaskBatch>>>,
     batch_id: &str,
+    registry: &TaskRegistry,
 ) {
+    let mut resumed = false;
     let (parent_agent_id, task_ids) = {
         let tasks_guard = tasks.read().await;
         let mut batches_guard = batches.write().await;
@@ -481,8 +569,12 @@ async fn try_resume_task_batch(
         } else {
             BatchStatus::Completed
         };
+        resumed = true;
         (batch.parent_agent_id.clone(), batch.task_ids.clone())
     };
+    if resumed {
+        registry.persist().await;
+    }
 
     let results = {
         let tasks_guard = tasks.read().await;
@@ -531,11 +623,13 @@ async fn seal_task_batch(
         }
         batch.sealed = true;
     }
+    state.registry.persist().await;
     try_resume_task_batch(
         state.manager.clone(),
         state.tasks.clone(),
         state.task_batches.clone(),
         &batch_id,
+        &state.registry,
     )
     .await;
     Ok(StatusCode::NO_CONTENT)
@@ -906,6 +1000,7 @@ async fn delegate_task(
         error: None,
     };
     state.tasks.write().await.insert(task_id.clone(), task);
+    state.registry.persist().await;
     {
         let mut batches = state.task_batches.write().await;
         let batch = batches
@@ -958,6 +1053,7 @@ async fn delegate_task(
     let manager = state.manager.clone();
     let tasks = state.tasks.clone();
     let task_batches = state.task_batches.clone();
+    let registry = state.registry.clone();
     let task_slots = state.task_slots.clone();
     let background_batch_id = batch_id.clone();
     let background_task_id = task_id.clone();
@@ -1084,6 +1180,7 @@ async fn delegate_task(
             .write()
             .await
             .insert(background_task_id.clone(), completed_task.clone());
+        registry.persist().await;
         if parent_agent_id != "unknown" {
             match serde_json::to_value(&completed_task) {
                 Ok(result) => {
@@ -1102,6 +1199,7 @@ async fn delegate_task(
                 tasks.clone(),
                 task_batches,
                 &background_batch_id,
+                &registry,
             )
             .await;
         }
@@ -1277,6 +1375,7 @@ pub async fn start_api_server(
         request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
         tasks: registry.tasks.clone(),
         task_batches: registry.task_batches.clone(),
+        registry,
         task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
         queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
     };
@@ -1308,14 +1407,89 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state(manager: Arc<AgentManager>) -> AppState {
+        let registry = TaskRegistry::default();
         AppState {
             manager,
             request_tracker: Arc::new(Mutex::new(RequestTracker::default())),
-            tasks: Arc::new(RwLock::new(HashMap::new())),
-            task_batches: Arc::new(RwLock::new(HashMap::new())),
+            tasks: registry.tasks.clone(),
+            task_batches: registry.task_batches.clone(),
+            registry,
             task_slots: Arc::new(Semaphore::new(MAX_GLOBAL_RUNNING_TASKS)),
             queue_slots: Arc::new(Semaphore::new(MAX_QUEUED_TASKS)),
         }
+    }
+
+    #[tokio::test]
+    async fn task_registry_restore_marks_unfinished_work_orphaned() {
+        let dir = std::env::temp_dir().join(format!("nova-tasks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tasks.json");
+
+        let registry = TaskRegistry::default();
+        registry.set_state_path(path.clone()).await;
+        let running_task = AgentTask {
+            task_id: "task-running".to_string(),
+            batch_id: "batch-x".to_string(),
+            agent_id: "agent-a".to_string(),
+            status: TaskStatus::Running,
+            parent_agent_id: "agent-parent".to_string(),
+            delegated_task: "half done".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            started_at: None,
+            completed_at: None,
+            last_activity_at: "2026-01-01T00:00:00Z".to_string(),
+            token_budget: 100,
+            cost_budget_micro_usd: 100,
+            summary: String::new(),
+            changed_files: Vec::new(),
+            verification: Vec::new(),
+            remaining_risks: Vec::new(),
+            final_text: String::new(),
+            error: None,
+        };
+        registry
+            .tasks
+            .write()
+            .await
+            .insert("task-running".to_string(), running_task);
+        registry
+            .task_batches
+            .write()
+            .await
+            .insert("batch-x".to_string(), AgentTaskBatch {
+                batch_id: "batch-x".to_string(),
+                parent_agent_id: "agent-parent".to_string(),
+                task_ids: vec!["task-running".to_string()],
+                sealed: true,
+                resume_triggered: true,
+                status: BatchStatus::Running,
+                token_budget: 100,
+                cost_budget_micro_usd: 100,
+            });
+        registry.persist().await;
+
+        // A fresh registry (simulated Studio restart) restores the snapshot:
+        // unfinished work becomes orphaned/stopped and the already-triggered
+        // resume marker survives so the batch is never summarized twice.
+        let restored = TaskRegistry::default();
+        restored.set_state_path(path.clone()).await;
+        restored.restore().await.unwrap();
+        let tasks = restored.tasks.read().await;
+        let task = tasks.get("task-running").unwrap();
+        assert_eq!(task.status, TaskStatus::Orphaned);
+        assert_eq!(
+            task.error.as_deref(),
+            Some("Studio restarted before this task finished")
+        );
+        assert!(task.completed_at.is_some());
+        drop(tasks);
+        let batches = restored.task_batches.read().await;
+        let batch = batches.get("batch-x").unwrap();
+        assert_eq!(batch.status, BatchStatus::Stopped);
+        assert!(batch.sealed);
+        assert!(batch.resume_triggered);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

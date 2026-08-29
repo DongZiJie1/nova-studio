@@ -981,7 +981,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                           <Square size={12} />
                         </span>
                       )}
-                      {(task.status === "error" || task.status === "stopped") && (
+                      {(task.status === "error" || task.status === "stopped" || task.status === "orphaned") && (
                         <span
                           role="button"
                           tabIndex={0}

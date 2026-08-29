@@ -120,9 +120,20 @@ pub fn run() {
                 }
             });
 
+            // Restore the delegated task registry before the hub API starts so
+            // recovered (orphaned) task states are visible immediately.
+            let registry = agent_api::TaskRegistry::default();
+            let tasks_path = app.handle().path().app_data_dir()?.join("tasks.json");
+            let restore_registry = registry.clone();
+            tauri::async_runtime::block_on(async move {
+                restore_registry.set_state_path(tasks_path).await;
+                if let Err(error) = restore_registry.restore().await {
+                    log::error!("Failed to restore task registry: {}", error);
+                }
+            });
+
             // Start the HTTP API server for agent tools
             let manager_clone = manager.clone();
-            let registry = agent_api::TaskRegistry::default();
             let api_registry = registry.clone();
             let api_port = 9528; // fixed port for now
             tauri::async_runtime::spawn(async move {
