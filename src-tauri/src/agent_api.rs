@@ -701,6 +701,98 @@ fn fallback_summary(final_text: &str, error: &str) -> GeneratedTaskSummary {
     }
 }
 
+/// Tool activity observed on the child agent while a delegated task runs,
+/// used to cross-check the summarizer's structured result against what the
+/// agent actually did.
+#[derive(Clone, Default)]
+struct CollectedToolActivity {
+    changed_files: Vec<String>,
+    verified_commands: Vec<String>,
+    pending_bash: HashMap<String, String>,
+}
+
+const MAX_COLLECTED_CHANGED_FILES: usize = 50;
+const MAX_COLLECTED_VERIFIED_COMMANDS: usize = 20;
+
+/// Watch a child agent's real tool execution events for the duration of a
+/// delegated task: edit/write calls record changed file paths and successful
+/// bash calls record verification evidence. Runs until the caller aborts it.
+fn spawn_tool_trace_collector(
+    manager: &AgentManager,
+    agent_id: &str,
+    activity: Arc<Mutex<CollectedToolActivity>>,
+) -> tokio::task::JoinHandle<()> {
+    let mut events = manager.subscribe_global();
+    let agent_id = agent_id.to_string();
+    tokio::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok((event_agent_id, event)) if event_agent_id == agent_id => {
+                    match event["type"].as_str() {
+                        Some("tool_execution_start") => {
+                            let args = &event["args"];
+                            match event["toolName"].as_str() {
+                                Some("edit") | Some("write") => {
+                                    if let Some(path) = args["path"].as_str() {
+                                        let mut collected = activity.lock().await;
+                                        if !collected
+                                            .changed_files
+                                            .iter()
+                                            .any(|seen| seen == path)
+                                            && collected.changed_files.len()
+                                                < MAX_COLLECTED_CHANGED_FILES
+                                        {
+                                            collected.changed_files.push(path.to_string());
+                                        }
+                                    }
+                                }
+                                Some("bash") => {
+                                    if let (Some(call_id), Some(command)) = (
+                                        event["toolCallId"].as_str(),
+                                        args["command"].as_str(),
+                                    ) {
+                                        activity
+                                            .lock()
+                                            .await
+                                            .pending_bash
+                                            .insert(call_id.to_string(), command.to_string());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Some("tool_execution_end") => {
+                            if event["toolName"].as_str() == Some("bash")
+                                && event["isError"].as_bool() != Some(true)
+                            {
+                                if let Some(call_id) = event["toolCallId"].as_str() {
+                                    let mut collected = activity.lock().await;
+                                    if let Some(command) = collected.pending_bash.remove(call_id)
+                                    {
+                                        if collected.verified_commands.len()
+                                            < MAX_COLLECTED_VERIFIED_COMMANDS
+                                            && !collected
+                                                .verified_commands
+                                                .iter()
+                                                .any(|seen| seen == &command)
+                                        {
+                                            collected.verified_commands.push(command);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
 async fn spawn_agent(
     AxumState(state): AxumState<AppState>,
     Json(body): Json<SpawnBody>,
@@ -1122,19 +1214,28 @@ async fn delegate_task(
         if let Some(batch) = task_batches.write().await.get_mut(&background_batch_id) {
             batch.status = BatchStatus::Running;
         }
-        let outcome = manager
-            .ask(
-                &background_agent_id,
-                delegated_task.clone(),
-                body.timeout_secs,
-                CollaborationContext {
-                    request_id,
-                    request_depth: body.request_depth,
-                    source_agent_id: source_agent_id.clone(),
-                    visited_agent_ids,
-                },
-            )
-            .await;
+        let outcome = {
+            let activity = Arc::new(Mutex::new(CollectedToolActivity::default()));
+            let trace_collector =
+                spawn_tool_trace_collector(&manager, &background_agent_id, activity.clone());
+            let outcome = manager
+                .ask(
+                    &background_agent_id,
+                    delegated_task.clone(),
+                    body.timeout_secs,
+                    CollaborationContext {
+                        request_id,
+                        request_depth: body.request_depth,
+                        source_agent_id: source_agent_id.clone(),
+                        visited_agent_ids,
+                    },
+                )
+                .await;
+            trace_collector.abort();
+            let collected = activity.lock().await.clone();
+            (outcome, collected)
+        };
+        let (outcome, collected) = outcome;
         let mut completed_task = tasks
             .read()
             .await
@@ -1150,7 +1251,7 @@ async fn delegate_task(
         } else {
             match outcome {
                 Ok(final_text) => {
-                    let generated = match manager
+                    let mut generated = match manager
                         .summarize_task_result(
                             &background_agent_id,
                             delegated_task,
@@ -1163,6 +1264,31 @@ async fn delegate_task(
                             .unwrap_or_else(|error| fallback_summary(&final_text, &error)),
                         Err(error) => fallback_summary(&final_text, &error),
                     };
+                    // Cross-check the summarizer's claims against the tool
+                    // traces the child agent actually produced: real file
+                    // edits are merged in, uncorroborated claims are flagged,
+                    // and successful commands become verification evidence.
+                    for file in &collected.changed_files {
+                        if !generated
+                            .changed_files
+                            .iter()
+                            .any(|seen| seen == file)
+                        {
+                            generated.changed_files.push(file.clone());
+                        }
+                    }
+                    if !generated.changed_files.is_empty() && collected.changed_files.is_empty() {
+                        generated
+                            .remaining_risks
+                            .push("Summarizer-reported files were not observed in tool traces"
+                                .to_string());
+                    }
+                    if !collected.verified_commands.is_empty() {
+                        generated.verification.push(format!(
+                            "Tool trace: `{}` succeeded",
+                            collected.verified_commands.join("`, `")
+                        ));
+                    }
                     completed_task.status = TaskStatus::Completed;
                     completed_task.summary = generated.summary;
                     completed_task.changed_files = generated.changed_files;
@@ -2093,6 +2219,113 @@ mod tests {
         })
         .await
         .unwrap_err();
+
+        manager.stop(&child.id).await.unwrap();
+        manager.stop(&parent.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delegate_result_cross_checks_files_against_tool_traces() {
+        let manager = Arc::new(AgentManager::new(
+            format!("{}/test-fixtures/mock-cli.sh", env!("CARGO_MANIFEST_DIR")),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", uuid::Uuid::new_v4())),
+        ));
+        let parent = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        let child = manager
+            .spawn(SpawnRequest {
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+        let app = build_router(test_state(manager.clone()));
+        let delegate_body = serde_json::json!({
+            "task": "NOVA_MOCK_TOOLS background work",
+            "agent_id": child.id,
+            "cwd": "/tmp",
+            "source_agent_id": parent.id.clone(),
+            "request_id": "request-trace",
+            "request_depth": 1,
+            "visited_agent_ids": [parent.id.clone()]
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/delegate")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(delegate_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let delegated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let task_id = delegated.get("task_id").and_then(|v| v.as_str()).unwrap();
+
+        let wait_body = serde_json::json!({
+            "task_ids": [task_id],
+            "wait_for": "all",
+            "timeout_secs": 15
+        });
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks/wait")
+                    .header("content-type", "application/json")
+                    .header("x-nova-token", manager.hub_token.as_str())
+                    .body(Body::from(wait_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let waited: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            waited
+                .pointer("/tasks/0/status")
+                .and_then(|value| value.as_str()),
+            Some("completed")
+        );
+        // The file the child agent really edited lands in changedFiles even
+        // though the summarizer reported none, and the successful bash run
+        // becomes verification evidence alongside the summarizer's own.
+        let changed_files = waited
+            .pointer("/tasks/0/changedFiles")
+            .and_then(|value| value.as_array())
+            .unwrap();
+        assert!(changed_files
+            .iter()
+            .any(|file| file.as_str() == Some("/tmp/mock-changed.ts")));
+        let verification = waited
+            .pointer("/tasks/0/verification")
+            .and_then(|value| value.as_array())
+            .unwrap();
+        assert!(verification
+            .iter()
+            .any(|entry| entry.as_str() == Some("mock check")));
+        assert!(verification
+            .iter()
+            .any(|entry| entry.as_str().is_some_and(|text| text.contains("npm test"))));
 
         manager.stop(&child.id).await.unwrap();
         manager.stop(&parent.id).await.unwrap();
