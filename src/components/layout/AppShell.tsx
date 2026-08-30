@@ -33,6 +33,7 @@ import {
   type AgentTaskInfo,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
@@ -1945,11 +1946,20 @@ export function AppShell() {
 
   return (
     <div
-      className="relative h-screen w-screen overflow-hidden bg-bg-primary"
+      className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}
       data-custom-background={customBgUrl ? "true" : "false"}
     >
       <Background />
-      <div className="app-titlebar-drag" data-tauri-drag-region>
+      <div
+        className="app-titlebar-drag"
+        data-tauri-drag-region
+        onMouseDown={(event) => {
+          if (event.button !== 0) return;
+          void getCurrentWindow().startDragging().catch((dragError) => {
+            console.error("Failed to start window drag:", dragError);
+          });
+        }}
+      >
         <span data-tauri-drag-region>Nova Studio</span>
       </div>
 
@@ -2241,7 +2251,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className="studio-main relative w-full flex flex-col overflow-hidden">
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "studio-main-has-task-summary" : ""} relative w-full flex flex-col overflow-hidden`}>
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -2538,36 +2548,17 @@ export function AppShell() {
             ) : !hasMessages ? (
               /* Empty state — tagline */
               <div
-                className="text-center max-w-4xl w-full animate-fade-in-up"
+                className="empty-state-hero text-center max-w-6xl w-full animate-fade-in-up"
                 style={{ marginTop: "4vh" }}
               >
-                {/* Floating sparkle */}
-                <div className="flex justify-center" style={{ marginBottom: 32 }}>
-                  <svg
-                    className="hero-icon-glow"
-                    width="64"
-                    height="64"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={1.1}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z"
-                    />
-                  </svg>
-                </div>
-
                 {/* Tagline */}
                 <h2
                   className="hero-title"
                   style={{
-                    fontSize: "clamp(28px, 3.2vw, 44px)",
-                    fontWeight: 700,
-                    letterSpacing: "-0.02em",
-                    lineHeight: 1.15,
+                    fontSize: "clamp(32px, 3.8vw, 62px)",
+                    fontWeight: 720,
+                    letterSpacing: "-0.035em",
+                    lineHeight: 1.06,
                   }}
                 >
                   <span className="hero-title-prefix">
@@ -2611,8 +2602,8 @@ export function AppShell() {
                 </h2>
                 <p
                   style={{
-                    marginTop: 16,
-                    fontSize: 15,
+                    marginTop: 22,
+                    fontSize: "clamp(15px, 1.15vw, 18px)",
                     color: "var(--color-text-secondary)",
                     letterSpacing: "0.01em",
                   }}
@@ -2727,7 +2718,7 @@ export function AppShell() {
               justifyContent: "center",
             }}
           >
-            <div style={{ position: "relative", width: "100%", maxWidth: 660 }}>
+            <div className="composer-shell" style={{ position: "relative", width: "100%", maxWidth: 660 }}>
               {showScrollToBottom && activeAgent && (
                 <button
                   type="button"
