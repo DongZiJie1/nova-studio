@@ -3058,7 +3058,7 @@ export function AppShell() {
                       <div style={{ position: "relative" }}>
                         <button
                           type="button"
-                          className="input-toolbar-control"
+                          className={`input-toolbar-control model-picker-trigger ${modelPickerOpen ? "model-picker-trigger-open" : ""}`}
                           onClick={() => setModelPickerOpen((open) => !open)}
                           style={{
                             display: "flex",
@@ -3067,25 +3067,10 @@ export function AppShell() {
                             padding: "5px 10px",
                             borderRadius: 8,
                             fontSize: 11.5,
-                            color: modelPickerOpen ? "#d5d9ff" : "#8a90a4",
-                            background: modelPickerOpen ? "rgba(129, 140, 248, 0.12)" : "rgba(255, 255, 255, 0.05)",
-                            border: "1px solid rgba(255, 255, 255, 0.08)",
                             cursor: "pointer",
                             transition: "all 0.15s ease",
                             maxWidth: 180,
                             overflow: "hidden",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!modelPickerOpen) {
-                              e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)";
-                              e.currentTarget.style.color = "#b9c1ff";
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!modelPickerOpen) {
-                              e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                              e.currentTarget.style.color = "#8a90a4";
-                            }
                           }}
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
@@ -3105,17 +3090,9 @@ export function AppShell() {
                               position: "absolute",
                               right: 0,
                               bottom: 36,
-                              zIndex: 50,
                               width: 280,
                               maxHeight: 360,
                               overflowY: "auto",
-                              padding: 4,
-                              borderRadius: 12,
-                              background: "rgba(20, 22, 34, 0.84)",
-                              border: "1px solid rgba(255, 255, 255, 0.12)",
-                              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-                              backdropFilter: "blur(24px) saturate(150%)",
-                              WebkitBackdropFilter: "blur(24px) saturate(150%)",
                             }}
                           >
                             {(() => {
@@ -3127,7 +3104,7 @@ export function AppShell() {
                               }
                               return Array.from(grouped.entries()).map(([provider, models]) => (
                                 <div key={provider}>
-                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, color: "#5a6078", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
                                     {provider}
                                   </div>
                                   {models.map((m) => {
@@ -3156,18 +3133,13 @@ export function AppShell() {
                                           padding: "6px 10px",
                                           borderRadius: 7,
                                           fontSize: 12,
-                                          color: isActive ? "#e5e8ff" : "#a2a8bb",
-                                          background: isActive ? "rgba(124, 133, 224, 0.14)" : "transparent",
-                                          border: "none",
                                           cursor: "pointer",
                                           textAlign: "left",
                                           transition: "all 0.12s ease",
                                         }}
-                                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)"; }}
-                                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
                                       >
                                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                                        <span className="model-picker-context" style={{ fontSize: 10, color: "#5a6078", flexShrink: 0, marginLeft: 8 }}>
+                                        <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
                                           {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
                                         </span>
                                       </button>
@@ -3182,7 +3154,7 @@ export function AppShell() {
                     )}
                     <button
                       type="button"
-                      className="input-toolbar-control"
+                      className={`input-toolbar-control project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
                       onClick={() => setProjectPickerOpen((open) => !open)}
                       title="切换项目"
                       style={{
@@ -3192,25 +3164,10 @@ export function AppShell() {
                         padding: "5px 10px",
                         borderRadius: 8,
                         fontSize: 11.5,
-                        color: projectPickerOpen ? "#d5d9ff" : "#8a90a4",
-                        background: projectPickerOpen ? "rgba(129, 140, 248, 0.12)" : "rgba(255, 255, 255, 0.05)",
-                        border: "1px solid rgba(255, 255, 255, 0.08)",
                         cursor: "pointer",
                         transition: "all 0.15s ease",
                         maxWidth: 180,
                         overflow: "hidden",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!projectPickerOpen) {
-                          e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)";
-                          e.currentTarget.style.color = "#b9c1ff";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!projectPickerOpen) {
-                          e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                          e.currentTarget.style.color = "#8a90a4";
-                        }
                       }}
                     >
                       <FolderOpen size={12} style={{ flexShrink: 0 }} />
@@ -3226,13 +3183,6 @@ export function AppShell() {
                           position: "absolute",
                           left: 0,
                           bottom: 44,
-                          zIndex: 40,
-                          padding: 4,
-                          borderRadius: 10,
-                          background: "rgba(18, 20, 31, 0.45)",
-                          border: "1px solid rgba(151, 159, 204, 0.2)",
-                          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.3)",
-                          backdropFilter: "blur(24px) saturate(1.4)",
                           minWidth: 240,
                           width: "max-content",
                           maxWidth: 500,
@@ -3242,7 +3192,6 @@ export function AppShell() {
                           className="project-picker-title"
                           style={{
                             padding: "4px 8px 5px",
-                            color: "#6f758a",
                             fontSize: 10,
                             fontWeight: 600,
                             letterSpacing: "0.06em",
@@ -3266,7 +3215,7 @@ export function AppShell() {
                             >
                               <FolderOpen
                                 size={12}
-                                style={{ color: selected ? "#aeb6ff" : "#777e95", flexShrink: 0 }}
+                                style={{ flexShrink: 0 }}
                               />
                               <span
                                 style={{
@@ -3302,8 +3251,8 @@ export function AppShell() {
                             paddingTop: 8,
                           }}
                         >
-                          <Plus size={12} style={{ color: "#a5b0fc", flexShrink: 0 }} />
-                          <span style={{ fontSize: 12, color: "#a5b0fc" }}>创建新项目</span>
+                          <Plus size={12} style={{ flexShrink: 0 }} />
+                          <span style={{ fontSize: 12 }}>创建新项目</span>
                         </button>
                       </div>
                     )}

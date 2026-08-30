@@ -19,7 +19,7 @@ function extractText(children: ReactNode): string {
 /** Renders a markdown code block into a CodeBlock, everything else as normal. */
 function PreBlock({ children }: { children?: ReactNode }) {
   const first = Children.toArray(children)[0];
-  if (!isValidElement(first) || typeof first.type !== "string" || first.type !== "code") {
+  if (!isValidElement(first)) {
     return <pre>{children}</pre>;
   }
 
@@ -35,6 +35,20 @@ function PreBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+function MarkdownCode({ className, children }: { className?: string; children?: ReactNode }) {
+  const text = extractText(children).trim();
+  const isFilePath = !className && (
+    /(?:^|[\\/])[^\\/]+\.[a-z0-9]{1,8}$/i.test(text) ||
+    /^(?:Desktop|Users|src|public|app|packages)[\\/]/i.test(text)
+  );
+
+  return (
+    <code className={[className, isFilePath ? "md-file-path" : ""].filter(Boolean).join(" ")}>
+      {children}
+    </code>
+  );
+}
+
 interface MarkdownProps {
   content: string;
   highlightCode?: boolean;
@@ -46,7 +60,7 @@ export const Markdown = memo(function Markdown({ content, highlightCode = true }
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={highlightCode ? [rehypeHighlight] : []}
-        components={{ pre: PreBlock }}
+        components={{ pre: PreBlock, code: MarkdownCode }}
       >
         {content}
       </ReactMarkdown>

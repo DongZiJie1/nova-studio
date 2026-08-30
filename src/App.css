@@ -7635,6 +7635,8 @@ body {
   --scene-panel-highlight: rgba(255, 255, 255, 0.045);
   --scene-local-film: rgba(255, 255, 255, 0.035);
   --scene-local-border: rgba(255, 255, 255, 0.09);
+  --model-picker-film: rgba(18, 24, 35, 0.54);
+  --model-picker-item-film: rgba(255, 255, 255, 0.075);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] {
@@ -7642,6 +7644,8 @@ body {
   --scene-panel-highlight: rgba(255, 255, 255, 0.28);
   --scene-local-film: rgba(235, 242, 252, 0.22);
   --scene-local-border: rgba(75, 105, 149, 0.13);
+  --model-picker-film: rgba(224, 233, 246, 0.68);
+  --model-picker-item-film: rgba(255, 255, 255, 0.34);
 }
 
 @media (min-width: 1200px) {
@@ -7728,6 +7732,68 @@ body {
   content: none;
 }
 
+/* User messages keep the accent hue as a tint, while the actual material is
+   translucent scene-sampling glass rather than an opaque blue bubble. */
+[data-custom-background] .msg-bubble-user {
+  isolation: isolate;
+  overflow: hidden;
+  padding: 11px 16px;
+  border: 1px solid rgba(218, 226, 255, 0.22);
+  border-bottom-right-radius: 6px;
+  color: rgba(248, 250, 255, 0.96);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.2), transparent 35%),
+    linear-gradient(135deg, rgba(111, 137, 246, 0.46), rgba(105, 91, 211, 0.3)),
+    rgba(25, 32, 47, 0.2);
+  box-shadow:
+    0 12px 30px rgba(29, 39, 75, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 1px 0 0 rgba(255, 255, 255, 0.07),
+    inset 0 -1px 0 rgba(31, 35, 72, 0.2);
+  backdrop-filter: blur(24px) saturate(158%);
+  -webkit-backdrop-filter: blur(24px) saturate(158%);
+  text-shadow: 0 1px 2px rgba(20, 25, 45, 0.16);
+}
+
+[data-custom-background] .msg-avatar-user {
+  color: rgba(238, 242, 255, 0.92);
+  border-color: rgba(218, 226, 255, 0.22);
+  background:
+    radial-gradient(circle at 28% 10%, rgba(255, 255, 255, 0.2), transparent 36%),
+    linear-gradient(145deg, rgba(111, 137, 246, 0.34), rgba(105, 91, 211, 0.22)),
+    rgba(25, 32, 47, 0.22);
+  box-shadow:
+    0 10px 24px rgba(29, 39, 75, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(31, 35, 72, 0.16);
+  backdrop-filter: blur(22px) saturate(154%);
+  -webkit-backdrop-filter: blur(22px) saturate(154%);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .msg-bubble-user {
+  color: #233858;
+  border-color: rgba(75, 108, 181, 0.2);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.48), transparent 36%),
+    linear-gradient(135deg, rgba(109, 144, 229, 0.24), rgba(126, 116, 219, 0.15)),
+    rgba(225, 235, 249, 0.26);
+  box-shadow:
+    0 12px 28px rgba(55, 79, 125, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -1px 0 rgba(70, 96, 144, 0.09);
+  text-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .msg-avatar-user {
+  color: #496ba9;
+  border-color: rgba(75, 108, 181, 0.18);
+  background:
+    radial-gradient(circle at 28% 10%, rgba(255, 255, 255, 0.5), transparent 38%),
+    linear-gradient(145deg, rgba(109, 144, 229, 0.2), rgba(126, 116, 219, 0.12)),
+    rgba(225, 235, 249, 0.28);
+  box-shadow: 0 9px 22px rgba(55, 79, 125, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
 /* Assistant Markdown headings should belong to the current scene, not use a
    fixed bright blue. Keep only a restrained accent mixed into body text. */
 [data-custom-background] .msg-row-assistant .md-body h1,
@@ -7781,4 +7847,236 @@ body {
     0 7px 20px rgba(53, 76, 111, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.58),
     inset 0 -1px 0 rgba(69, 96, 136, 0.06);
+}
+
+/* File paths are semantic metadata, not links. Present them as compact,
+   scene-aware glass labels so they stay legible on both bright and dark art. */
+:root[data-theme] [data-custom-background] .md-body code.md-file-path {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--scene-local-border) !important;
+  border-radius: 8px;
+  color: var(--color-text-primary) !important;
+  background:
+    linear-gradient(135deg, var(--scene-panel-highlight), transparent 48%),
+    color-mix(in srgb, var(--scene-local-film) 58%, var(--scene-panel-film) 42%) !important;
+  box-shadow: inset 0 1px 0 var(--scene-panel-highlight);
+  backdrop-filter: blur(14px) saturate(128%);
+  -webkit-backdrop-filter: blur(14px) saturate(128%);
+  font-family: var(--font-sans);
+  font-size: 0.88em;
+  font-weight: 520;
+  line-height: 1.35;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme] [data-custom-background] .md-body code.md-file-path::before {
+  content: "FILE";
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  opacity: 0.72;
+}
+
+/* Model selection is a floating material layer. Keep it above the jump
+   control and let the active scene tint the glass instead of using white. */
+.composer-shell:has(.model-picker-popover) {
+  z-index: 40 !important;
+}
+
+.nova-input:has(.model-picker-popover) {
+  z-index: 50;
+  overflow: visible;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-popover {
+  z-index: 80 !important;
+  padding: 8px !important;
+  border: 1px solid var(--liquid-glass-border) !important;
+  border-radius: 20px !important;
+  color: var(--color-text-primary) !important;
+  background:
+    linear-gradient(145deg, rgba(40, 49, 65, 0.46), rgba(18, 23, 34, 0.34)) !important;
+  box-shadow: var(--liquid-glass-shadow) !important;
+  backdrop-filter: blur(30px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(145%) !important;
+  isolation: isolate;
+}
+
+/* Match the final photographic Sidebar material exactly: transmitted scene,
+   restrained top-left sheen and a darker lower edge for apparent thickness. */
+:root[data-theme] [data-custom-background="true"] .model-picker-popover {
+  border-color: rgba(226, 234, 255, 0.17) !important;
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.075) 0%, transparent 32%),
+    linear-gradient(145deg, rgba(35, 43, 58, 0.31), rgba(17, 23, 34, 0.24)) !important;
+  box-shadow:
+    0 14px 44px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.17),
+    inset 1px 0 0 rgba(255, 255, 255, 0.055),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2) !important;
+  backdrop-filter: blur(34px) saturate(152%) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(152%) !important;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .model-picker-popover {
+  border-color: rgba(91, 119, 162, 0.18) !important;
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.52), transparent 34%),
+    rgba(226, 236, 250, 0.44) !important;
+  box-shadow:
+    0 16px 44px rgba(55, 78, 113, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -1px 0 rgba(73, 101, 142, 0.08) !important;
+  backdrop-filter: blur(36px) saturate(138%) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(138%) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-provider {
+  margin: 8px 8px 4px !important;
+  padding: 4px 3px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--color-text-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  opacity: 0.78;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-option {
+  min-height: 38px;
+  margin: 2px 0;
+  padding: 8px 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  color: var(--color-text-secondary) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: background 200ms ease-out, border-color 200ms ease-out, transform 200ms ease-out;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-option:hover {
+  border-color: var(--scene-local-border) !important;
+  color: var(--color-text-primary) !important;
+  background: var(--model-picker-item-film, rgba(255, 255, 255, 0.075)) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-option:active {
+  transform: scale(0.985);
+}
+
+:root[data-theme] [data-custom-background] .model-picker-option-active {
+  border-color: var(--scene-local-border) !important;
+  color: var(--color-text-primary) !important;
+  background:
+    linear-gradient(135deg, var(--scene-panel-highlight), transparent 58%),
+    var(--model-picker-item-film, rgba(255, 255, 255, 0.075)) !important;
+  box-shadow: inset 0 1px 0 var(--scene-panel-highlight) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-context {
+  color: var(--color-text-muted) !important;
+  opacity: 0.76;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-trigger,
+:root[data-theme] [data-custom-background] .model-picker-trigger-open {
+  border: 1px solid var(--scene-local-border) !important;
+  color: var(--color-text-secondary) !important;
+  background: var(--scene-local-film) !important;
+  box-shadow: inset 0 1px 0 var(--scene-panel-highlight) !important;
+  backdrop-filter: blur(16px) saturate(138%);
+  -webkit-backdrop-filter: blur(16px) saturate(138%);
+}
+
+:root[data-theme] [data-custom-background] .model-picker-trigger:hover,
+:root[data-theme] [data-custom-background] .model-picker-trigger-open {
+  color: var(--color-text-primary) !important;
+  background: color-mix(in srgb, var(--scene-local-film) 78%, var(--scene-panel-highlight) 22%) !important;
+}
+
+/* Picker surfaces emulate the *visible* Sidebar in the reference: a stable
+   deep-navy material with only restrained scene transmission. This remains
+   dark in Arctic Dawn as these menus belong to the Studio chrome. */
+.composer-shell:has(.project-picker-popover),
+.nova-input:has(.project-picker-popover) {
+  z-index: 50 !important;
+  overflow: visible;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-popover,
+:root[data-theme] [data-custom-background] .project-picker-popover {
+  z-index: 80 !important;
+  padding: 8px !important;
+  border: 1px solid rgba(218, 226, 242, 0.16) !important;
+  border-radius: 20px !important;
+  color: rgba(239, 242, 248, 0.96) !important;
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.075) 0%, transparent 31%),
+    linear-gradient(145deg, rgba(37, 45, 60, 0.94), rgba(12, 18, 28, 0.92)) !important;
+  box-shadow:
+    0 20px 52px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 1px 0 0 rgba(255, 255, 255, 0.055),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28) !important;
+  backdrop-filter: blur(32px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(145%) !important;
+}
+
+:root[data-theme] [data-custom-background] .project-picker-title,
+:root[data-theme] [data-custom-background] .model-picker-provider {
+  color: rgba(166, 176, 194, 0.78) !important;
+}
+
+:root[data-theme] [data-custom-background] .project-picker-option,
+:root[data-theme] [data-custom-background] .model-picker-option {
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  color: rgba(218, 224, 235, 0.82) !important;
+  background: transparent !important;
+}
+
+:root[data-theme] [data-custom-background] .project-picker-option:hover,
+:root[data-theme] [data-custom-background] .model-picker-option:hover {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: rgba(247, 249, 253, 0.98) !important;
+  background: rgba(255, 255, 255, 0.075) !important;
+}
+
+:root[data-theme] [data-custom-background] .project-picker-option-selected,
+:root[data-theme] [data-custom-background] .model-picker-option-active {
+  border-color: rgba(191, 204, 244, 0.15) !important;
+  color: rgba(247, 249, 253, 0.98) !important;
+  background:
+    linear-gradient(135deg, rgba(130, 160, 255, 0.16), rgba(103, 113, 218, 0.08)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11) !important;
+}
+
+:root[data-theme] [data-custom-background] .project-picker-option svg,
+:root[data-theme] [data-custom-background] .model-picker-context {
+  color: rgba(157, 169, 191, 0.72) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-trigger,
+:root[data-theme] [data-custom-background] .project-picker-trigger {
+  border-color: rgba(255, 255, 255, 0.11) !important;
+  color: rgba(194, 202, 216, 0.82) !important;
+  background: rgba(24, 31, 44, 0.56) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-trigger:hover,
+:root[data-theme] [data-custom-background] .project-picker-trigger:hover,
+:root[data-theme] [data-custom-background] .model-picker-trigger-open,
+:root[data-theme] [data-custom-background] .project-picker-trigger-open {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  color: rgba(246, 248, 252, 0.96) !important;
+  background: rgba(38, 46, 61, 0.72) !important;
 }
