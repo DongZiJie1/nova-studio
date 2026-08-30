@@ -501,15 +501,18 @@ impl AgentManager {
             let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
         }
 
-        // Notify the frontend even when the agent was created through the
-        // HTTP hub API rather than a Tauri invoke from the UI.
-        let _ = self.global_event_tx.send((
-            agent_id,
-            serde_json::json!({
-                "type": "agent_created",
-                "info": info.clone(),
-            }),
-        ));
+        // Disposable side-question sessions are deliberately invisible to
+        // navigation and the Agent workbench. Normal agents still notify the
+        // frontend even when created through the HTTP hub API.
+        if !agent_id.starts_with("temporary-") {
+            let _ = self.global_event_tx.send((
+                agent_id,
+                serde_json::json!({
+                    "type": "agent_created",
+                    "info": info.clone(),
+                }),
+            ));
+        }
 
         Ok(info)
     }
@@ -562,6 +565,68 @@ impl AgentManager {
             background_agent_ids,
         };
         agent.send_command(&cmd)
+    }
+
+    /// Ask through a transient sibling context without mutating the parent
+    /// conversation. The disposable Nova session is never registered in the
+    /// Studio record catalog and is stopped immediately after the reply.
+    pub async fn temporary_ask(
+        &self,
+        parent_agent_id: &str,
+        question: String,
+        context: String,
+    ) -> Result<String, String> {
+        if self.get_process(parent_agent_id).await.is_none() {
+            self.activate(parent_agent_id).await?;
+        }
+        let parent = self
+            .records
+            .read()
+            .await
+            .get(parent_agent_id)
+            .cloned()
+            .ok_or("Parent agent session not found")?;
+        let short_id = Uuid::new_v4().to_string()[..8].to_string();
+        let transient_id = format!("temporary-{short_id}");
+        let transient = PersistedAgent {
+            id: transient_id.clone(),
+            created_by: Some("temporary-question".to_string()),
+            parent_agent_id: Some(parent_agent_id.to_string()),
+            name: Some("Temporary Chat".to_string()),
+            cwd: parent.cwd,
+            model: parent.model,
+            provider: parent.provider,
+            args: Vec::new(),
+            session_id: format!("temporary-{}", Uuid::new_v4()),
+            session_file: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            message_count: 0,
+            depth: parent.depth.saturating_add(1),
+        };
+
+        self.spawn_record(transient, false).await?;
+        let prompt = format!(
+            "You are answering a temporary side question. Use the supplied parent-session context, but do not perform tool calls, modify files, delegate work, or claim that this exchange changed the parent conversation. Answer only the user's temporary question.\n\n<PARENT_CONTEXT>\n{}\n</PARENT_CONTEXT>\n\n<TEMPORARY_QUESTION>\n{}\n</TEMPORARY_QUESTION>",
+            context,
+            question,
+        );
+        let result = self
+            .ask(
+                &transient_id,
+                prompt,
+                180,
+                CollaborationContext {
+                    request_id: format!("temporary-{short_id}"),
+                    request_depth: 0,
+                    visited_agent_ids: vec![parent_agent_id.to_string()],
+                    source_agent_id: parent_agent_id.to_string(),
+                },
+            )
+            .await;
+        if let Some(process) = self.agents.write().await.remove(&transient_id) {
+            let _ = process.stop().await;
+        }
+        result
     }
 
     /// Send an abort command to an agent
@@ -1077,7 +1142,9 @@ impl AgentManager {
                 info.lifecycle = lifecycles.remove(id);
                 infos.push(info);
             } else {
-                infos.push(agent_info_from_record(record));
+                let mut info = agent_info_from_record(record);
+                info.lifecycle = lifecycles.remove(id);
+                infos.push(info);
             }
         }
         infos.sort_by(|left, right| right.created_at.cmp(&left.created_at));

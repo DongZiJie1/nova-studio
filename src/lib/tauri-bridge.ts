@@ -53,6 +53,16 @@ export async function sendPrompt(
   return invoke("send_prompt", { agentId, message, images, fileReferences, backgroundAgentIds });
 }
 
+/** Run a one-off question against a transient session. The parent session is
+ * used only as context provenance; no message is appended to that session. */
+export async function askTemporary(
+  agentId: string,
+  question: string,
+  context: string,
+): Promise<string> {
+  return invoke<string>("ask_temporary", { agentId, question, context });
+}
+
 export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
 }

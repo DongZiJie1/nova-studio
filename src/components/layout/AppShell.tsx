@@ -8,8 +8,6 @@ import {
   abortAgent,
   cancelAgent,
   retryAgent,
-  retryTask,
-  cancelTask,
   steerAgent,
   activateAgent,
   listAgents,
@@ -21,6 +19,7 @@ import {
   requestSessionStats,
   requestExecutionTraces,
   requestContextSnapshot,
+  askTemporary,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
@@ -50,9 +49,10 @@ import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
+import { Markdown } from "../chat/Markdown";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
-import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
+import { agentAvatarSrc, getOrAssignAgentAvatar } from "../../lib/agent-avatars";
 import {
   BUILTIN_SLASH_COMMANDS,
   matchingSlashCommands,
@@ -854,29 +854,43 @@ const AgentTreeNode = memo(function AgentTreeNode({
   );
 });
 
-const TASK_STATUS_LABELS: Record<string, string> = {
-  queued: "排队中",
-  running: "运行中",
-  completed: "已完成",
-  error: "失败",
-  stopped: "已停止",
-  orphaned: "已中断",
-};
-
-const BATCH_STATUS_LABELS: Record<string, string> = {
-  open: "进行中",
-  running: "执行中",
-  completed: "已完成",
-  error: "部分失败",
-  stopped: "已停止",
-};
-
 interface BatchTaskPanelProps {
   tasks: AgentTaskInfo[];
   batches: AgentBatchInfo[];
-  agentsById: Map<string, AgentState>;
+  childAgents: AgentState[];
+  files: WorkbenchFile[];
   agentNames: Record<string, string>;
   onSelect: (agentId: string) => void;
+  sessionId: string;
+  onTemporaryAsk: (question: string) => Promise<string>;
+}
+
+interface WorkbenchFile {
+  key: string;
+  name: string;
+  path: string;
+  directions: Array<"input" | "output">;
+}
+
+interface TemporaryChatEntry {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+}
+
+function WorkbenchFileIcon({ name }: { name: string }) {
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  const Icon = ["ts", "tsx", "js", "jsx", "java", "py", "rs", "go", "c", "cpp", "css", "html"].includes(extension)
+    ? FileCode
+    : extension === "json"
+      ? FileJson
+      : ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(extension)
+        ? Image
+        : ["md", "txt", "doc", "docx", "pdf"].includes(extension)
+          ? FileText
+          : File;
+  return <Icon size={15} strokeWidth={1.8} />;
 }
 
 /**
@@ -886,11 +900,54 @@ interface BatchTaskPanelProps {
 const BatchTaskPanel = memo(function BatchTaskPanel({
   tasks,
   batches,
-  agentsById,
+  childAgents,
+  files,
   agentNames,
   onSelect,
+  sessionId,
+  onTemporaryAsk,
 }: BatchTaskPanelProps) {
   const [expanded, setExpanded] = useState(true);
+  const [activeTab, setActiveTab] = useState<"workbench" | "tasks">("workbench");
+  const [temporaryInput, setTemporaryInput] = useState("");
+  const [temporaryPending, setTemporaryPending] = useState(false);
+  const [temporaryError, setTemporaryError] = useState<string | null>(null);
+  const [temporaryEntries, setTemporaryEntries] = useState<TemporaryChatEntry[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`nova-temporary-chat:${sessionId}`);
+      setTemporaryEntries(stored ? JSON.parse(stored) as TemporaryChatEntry[] : []);
+    } catch {
+      setTemporaryEntries([]);
+    }
+    setTemporaryInput("");
+    setTemporaryError(null);
+  }, [sessionId]);
+
+  const persistTemporaryEntries = (entries: TemporaryChatEntry[]) => {
+    setTemporaryEntries(entries);
+    localStorage.setItem(`nova-temporary-chat:${sessionId}`, JSON.stringify(entries));
+  };
+
+  const submitTemporaryQuestion = async () => {
+    const question = temporaryInput.trim();
+    if (!question || temporaryPending) return;
+    const userEntry: TemporaryChatEntry = { id: crypto.randomUUID(), role: "user", content: question, createdAt: Date.now() };
+    const optimistic = [...temporaryEntries, userEntry];
+    persistTemporaryEntries(optimistic);
+    setTemporaryInput("");
+    setTemporaryPending(true);
+    setTemporaryError(null);
+    try {
+      const answer = await onTemporaryAsk(question);
+      persistTemporaryEntries([...optimistic, { id: crypto.randomUUID(), role: "assistant", content: answer, createdAt: Date.now() }]);
+    } catch (askError) {
+      setTemporaryError(askError instanceof Error ? askError.message : String(askError));
+    } finally {
+      setTemporaryPending(false);
+    }
+  };
 
   const groups = useMemo(() => {
     const byBatch = new Map<string, AgentTaskInfo[]>();
@@ -913,104 +970,98 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
       .sort((a, b) => b.newestAt - a.newestAt);
   }, [tasks, batches]);
 
-  if (groups.length === 0) return null;
-
   return (
-    <section className="task-panel" aria-label="当前 Agent 的子任务摘要">
+    <section className="task-panel agent-workbench" aria-label="Agent 工作台">
       <button
         type="button"
         className="task-panel-header"
         onClick={() => setExpanded((value) => !value)}
       >
-        <span className="task-panel-heading"><Bot size={15} />子 Agent 摘要</span>
-        <span className="task-panel-count">{tasks.length}</span>
+        <span className="task-panel-heading"><Bot size={15} />Agent 工作台</span>
+        <span className="task-panel-count">{childAgents.length}</span>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </button>
       {expanded && (
         <div className="task-panel-body">
-          {groups.map(({ batchId, batch, tasks: batchTasks }) => {
-            const completed = batchTasks.filter((task) => task.status === "completed").length;
-            const batchStatus = batch?.status ?? (completed === batchTasks.length ? "completed" : "running");
-            return (
-              <div key={batchId} className="task-batch">
-                <div className="task-batch-title">
-                  <span className="task-batch-parent" title={`批次 ${batchId}`}>
-                    任务批次
-                  </span>
-                  <span className={`task-batch-status task-batch-status-${batchStatus}`}>
-                    {batchTasks.length > 1
-                      ? `${completed}/${batchTasks.length} 已完成`
-                      : BATCH_STATUS_LABELS[batchStatus] ?? batchStatus}
-                  </span>
-                </div>
-                {batchTasks.map((task) => {
-                  const targetAgent = agentsById.get(task.agentId);
-                  const targetName = targetAgent
-                    ? agentDisplayName(targetAgent, agentNames)
-                    : "子 Agent";
-                  return (
-                    <div
-                      key={task.taskId}
-                      className={`task-row task-row-${task.status} ${targetAgent ? "task-row-clickable" : ""}`}
-                      onClick={() => targetAgent && onSelect(task.agentId)}
-                      onKeyDown={(event) => {
-                        if (targetAgent && (event.key === "Enter" || event.key === " ")) {
-                          event.preventDefault();
-                          onSelect(task.agentId);
-                        }
-                      }}
-                      role={targetAgent ? "button" : undefined}
-                      tabIndex={targetAgent ? 0 : undefined}
-                      title={task.error ?? task.summary ?? task.delegatedTask}
-                    >
-                      <span className="task-row-text">
-                        <span className="task-row-agent">{targetName}</span>
-                        <span className="task-row-summary">
-                          {task.summary || task.delegatedTask}
-                        </span>
-                        <span className="task-row-sub">
-                          {TASK_STATUS_LABELS[task.status] ?? task.status}
-                          {task.status === "error" && task.error ? ` · ${task.error}` : ""}
-                        </span>
-                      </span>
-                      {(task.status === "queued" || task.status === "running") && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          className="agent-action"
-                          title="取消任务"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void cancelTask(task.taskId, "cancelled from task panel")
-                              .then(() => useAgentStore.getState().refreshAgentTasks())
-                              .catch(() => useAgentStore.getState().refreshAgentTasks());
-                          }}
-                        >
-                          <Square size={12} />
-                        </span>
-                      )}
-                      {(task.status === "error" || task.status === "stopped" || task.status === "orphaned") && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          className="agent-action"
-                          title="重试任务"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void retryTask(task.taskId)
-                              .then(() => useAgentStore.getState().refreshAgentTasks())
-                              .catch(() => useAgentStore.getState().refreshAgentTasks());
-                          }}
-                        >
-                          <RotateCcw size={12} />
-                        </span>
-                      )}
+          <div className="agent-workbench-tabs" role="tablist" aria-label="Agent 工作台视图">
+            <button type="button" role="tab" aria-selected={activeTab === "workbench"} className={activeTab === "workbench" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("workbench")}>工作台</button>
+            <button type="button" role="tab" aria-selected={activeTab === "tasks"} className={activeTab === "tasks" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("tasks")}>临时提问</button>
+          </div>
+          {activeTab === "workbench" ? (
+            <div className="agent-workbench-content">
+              <section className="agent-workbench-section">
+                <h4>涉及文件</h4>
+                <div className="agent-workbench-files">
+                  {files.length > 0 ? files.map((file) => (
+                    <div key={file.key} className="agent-workbench-file" title={file.path}>
+                      <span className="agent-workbench-file-icon"><WorkbenchFileIcon name={file.name} /></span>
+                      <span className="agent-workbench-file-name">{file.name}</span>
+                      <span className="agent-workbench-file-kind">{file.directions.map((direction) => direction === "input" ? "输入" : "输出").join(" · ")}</span>
                     </div>
-                  );
-                })}
+                  )) : <p className="agent-workbench-empty">当前会话暂无输入或输出文件</p>}
+                </div>
+              </section>
+              <section className="agent-workbench-section agent-workbench-agents-section">
+                <h4>当前子 Agent</h4>
+                <div className="agent-workbench-agents">
+                  {childAgents.length > 0 ? childAgents.map((agent) => {
+                    const taskStatus = agent.lifecycle?.taskStatus;
+                    const running = taskStatus
+                      ? taskStatus === "queued" || taskStatus === "starting" || taskStatus === "running" || taskStatus === "waiting"
+                      : agent.status === "starting" || agent.status === "streaming";
+                    const failed = taskStatus
+                      ? taskStatus === "error" || taskStatus === "stopped" || taskStatus === "orphaned"
+                      : agent.status === "error";
+                    const statusLabel = running ? "进行中" : failed ? "异常" : taskStatus === "completed" ? "已完成" : "已结束";
+                    return (
+                      <button key={agent.id} type="button" className="agent-workbench-agent" onClick={() => onSelect(agent.id)} title={agent.id}>
+                        <img src={agentAvatarSrc(agent.avatarId)} alt="" />
+                        <span className="agent-workbench-agent-name">{agentDisplayName(agent, agentNames)}</span>
+                        <span className={`agent-workbench-agent-status ${running ? "is-running" : failed ? "is-error" : "is-completed"}`}>
+                          <i />{statusLabel}
+                        </span>
+                      </button>
+                    );
+                  }) : <p className="agent-workbench-empty">当前会话暂无子 Agent</p>}
+                </div>
+              </section>
+              {groups.length > 0 && (
+                <section className="agent-workbench-section">
+                  <h4>任务批次</h4>
+                  <div className="agent-workbench-batch-list">
+                    {groups.map(({ batchId, batch, tasks: batchTasks }, index) => {
+                      const completed = batchTasks.filter((task) => task.status === "completed").length;
+                      const batchStatus = batch?.status ?? (completed === batchTasks.length ? "completed" : "running");
+                      return (
+                        <div key={batchId} className="agent-workbench-batch-summary" title={batchId}>
+                          <span>批次 {groups.length - index}</span>
+                          <span className={`task-batch-status task-batch-status-${batchStatus}`}>{completed}/{batchTasks.length} 已完成</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
+          ) : (
+            <div className="temporary-chat">
+              <div className="temporary-chat-note">复用当前主 Agent 上下文 · 不写入主会话</div>
+              <div className="temporary-chat-messages">
+                {temporaryEntries.length > 0 ? temporaryEntries.map((entry) => (
+                  <div key={entry.id} className={`temporary-chat-message temporary-chat-message-${entry.role}`}>
+                    <span>{entry.role === "user" ? "你" : "Nova"}</span>
+                    <div>{entry.role === "assistant" ? <Markdown content={entry.content} highlightCode={false} /> : entry.content}</div>
+                  </div>
+                )) : <p className="agent-workbench-empty">在这里提问，不会影响主 Agent 的上下文</p>}
+                {temporaryPending && <div className="temporary-chat-thinking"><LoaderCircle size={13} className="tool-spin" />正在旁路思考…</div>}
+                {temporaryError && <div className="temporary-chat-error">{temporaryError}</div>}
               </div>
-            );
-          })}
+              <div className="temporary-chat-composer">
+                <textarea value={temporaryInput} onChange={(event) => setTemporaryInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitTemporaryQuestion(); } }} placeholder="临时问一下…" rows={2} disabled={temporaryPending} />
+                <button type="button" onClick={() => void submitTemporaryQuestion()} disabled={!temporaryInput.trim() || temporaryPending} aria-label="发送临时提问"><ArrowUp size={14} /></button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -1191,6 +1242,24 @@ export function AppShell() {
       (agent) => descendants.has(agent.id) && (agent.status === "starting" || agent.status === "streaming"),
     );
   }, [activeAgent, agents]);
+  const activeChildAgents = useMemo(() => {
+    if (!activeAgent) return [];
+    const descendants = new Set<string>();
+    const pending = [activeAgent.id];
+    while (pending.length > 0) {
+      const parentId = pending.pop();
+      if (!parentId) continue;
+      for (const agent of agents) {
+        if (agent.parentAgentId === parentId && !descendants.has(agent.id)) {
+          descendants.add(agent.id);
+          pending.push(agent.id);
+        }
+      }
+    }
+    return agents
+      .filter((agent) => descendants.has(agent.id))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [activeAgent, agents]);
   const activeDelegatedTasks = useMemo(
     () => activeAgent
       ? delegatedTasks.filter((task) => task.parentAgentId === activeAgent.id)
@@ -1207,6 +1276,67 @@ export function AppShell() {
     ),
     [activeAgent?.id, activeDelegatedBatchIds, delegatedBatches],
   );
+  const agentWorkbenchFiles = useMemo<WorkbenchFile[]>(() => {
+    if (!activeAgent) return [];
+    const files = new Map<string, { name: string; path: string; directions: Set<"input" | "output"> }>();
+    const addFile = (rawPath: string, direction: "input" | "output") => {
+      const path = rawPath.trim().replace(/^['"`]|['"`,.;，。；]+$/g, "");
+      if (!path) return;
+      const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+      if (!name.includes(".")) return;
+      const key = path.toLowerCase();
+      const existing = files.get(key) ?? { name, path, directions: new Set<"input" | "output">() };
+      existing.directions.add(direction);
+      files.set(key, existing);
+    };
+
+    for (const message of activeAgent.messages) {
+      if (message.role !== "user") continue;
+      for (const attachment of message.attachments ?? []) addFile(attachment.name, "input");
+      for (const match of message.content.matchAll(/@([^\s，。！？、；;]+)/g)) addFile(match[1], "input");
+    }
+
+    for (const task of activeDelegatedTasks) {
+      for (const path of task.changedFiles ?? []) addFile(path, "output");
+    }
+
+    for (const agent of [activeAgent, ...activeChildAgents]) {
+      for (const message of agent.messages) {
+        for (const tool of message.toolCalls ?? []) {
+          if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
+          const args = tool.args && typeof tool.args === "object" ? tool.args as Record<string, unknown> : {};
+          const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
+          if (path) addFile(path, "output");
+        }
+      }
+    }
+
+    return Array.from(files.entries()).map(([key, file]) => ({
+      key,
+      name: file.name,
+      path: file.path,
+      directions: Array.from(file.directions),
+    }));
+  }, [activeAgent, activeChildAgents, activeDelegatedTasks]);
+  const showAgentWorkbench = Boolean(activeAgent);
+  const handleTemporaryAsk = useCallback(async (question: string) => {
+    if (!activeAgent) throw new Error("当前没有可复用上下文的主 Agent");
+    const snapshot = activeAgent.contextSnapshot;
+    const contextParts: string[] = [];
+    if (snapshot?.systemPrompt) contextParts.push(`SYSTEM PROMPT\n${snapshot.systemPrompt}`);
+    if (snapshot?.contextFiles.length) {
+      contextParts.push(snapshot.contextFiles.map((file) => `CONTEXT FILE: ${file.path}\n${file.content}`).join("\n\n"));
+    }
+    const conversation = activeAgent.messages.slice(-100).map((message) => {
+      const toolDetails = (message.toolCalls ?? []).map((tool) => {
+        const result = tool.result === undefined ? "" : ` -> ${JSON.stringify(tool.result).slice(0, 5000)}`;
+        return `[${tool.name}] ${JSON.stringify(tool.args)}${result}`;
+      }).join("\n");
+      return `${message.role.toUpperCase()}: ${message.content}${toolDetails ? `\n${toolDetails}` : ""}`;
+    }).join("\n\n");
+    contextParts.push(`CURRENT CONVERSATION\n${conversation}`);
+    return askTemporary(activeAgent.id, question, contextParts.join("\n\n---\n\n"));
+  }, [activeAgent]);
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
   // possibly-stale `model` field that list_agents reports from spawn time.
@@ -2251,7 +2381,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "studio-main-has-task-summary" : ""} relative w-full flex flex-col overflow-hidden`}>
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${showAgentWorkbench && conversationView === "chat" ? "studio-main-has-task-summary" : ""} relative w-full flex flex-col overflow-hidden`}>
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -2356,7 +2486,7 @@ export function AppShell() {
             onWheelCapture={handleConversationWheel}
             className={`conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
-            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${activeDelegatedTasks.length > 0 && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
+            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${showAgentWorkbench && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
@@ -2666,19 +2796,22 @@ export function AppShell() {
             )}
           </div>
 
-          {!settingsOpen && conversationView === "chat" && activeDelegatedTasks.length > 0 && (
+          {!settingsOpen && conversationView === "chat" && showAgentWorkbench && (
             <aside className="conversation-task-summary">
               <BatchTaskPanel
                 tasks={activeDelegatedTasks}
                 batches={activeDelegatedBatches}
-                agentsById={agentsById}
+                childAgents={activeChildAgents}
+                files={agentWorkbenchFiles}
                 agentNames={agentNames}
                 onSelect={handleSelectAgent}
+                sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
+                onTemporaryAsk={handleTemporaryAsk}
               />
             </aside>
           )}
 
-          {!settingsOpen && conversationView === "chat" && activeDelegatedTasks.length === 0 && showConversationMinimap && (
+          {!settingsOpen && conversationView === "chat" && !showAgentWorkbench && showConversationMinimap && (
             <nav
               className="conversation-minimap"
               aria-label="Conversation navigation"
@@ -2710,7 +2843,7 @@ export function AppShell() {
 
           {/* Input area */}
           <div
-            className={activeDelegatedTasks.length > 0 ? "conversation-input-area conversation-input-with-task-summary" : "conversation-input-area"}
+            className={showAgentWorkbench ? "conversation-input-area conversation-input-with-task-summary" : "conversation-input-area"}
             style={{
               flexShrink: 0,
               padding: "60px 24px 56px",

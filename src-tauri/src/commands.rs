@@ -234,6 +234,21 @@ pub async fn send_prompt(
 }
 
 #[tauri::command]
+pub async fn ask_temporary(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    question: String,
+    context: String,
+) -> Result<String, String> {
+    log::info!(
+        "[cmd] ask_temporary parent={} len={}",
+        agent_id,
+        question.len()
+    );
+    state.0.temporary_ask(&agent_id, question, context).await
+}
+
+#[tauri::command]
 pub async fn abort_agent(
     state: State<'_, AgentManagerState>,
     agent_id: String,

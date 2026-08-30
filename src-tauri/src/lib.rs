@@ -182,6 +182,7 @@ pub fn run() {
             commands::get_agent_info,
             commands::activate_agent,
             commands::send_prompt,
+            commands::ask_temporary,
             commands::abort_agent,
             commands::steer_agent,
             commands::cancel_agent,
