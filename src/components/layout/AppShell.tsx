@@ -6,6 +6,9 @@ import { useSettingsStore } from "../../stores/settings-store";
 import { useUiStore } from "../../stores/ui-store";
 import {
   abortAgent,
+  cancelAgent,
+  retryAgent,
+  steerAgent,
   activateAgent,
   listAgents,
   listProjectFiles,
@@ -16,6 +19,7 @@ import {
   requestSessionStats,
   requestExecutionTraces,
   requestContextSnapshot,
+  askTemporary,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
@@ -24,26 +28,31 @@ import {
   setMessageFeedback,
   forkSession,
   requestMessages,
+  type AgentBatchInfo,
+  type AgentTaskInfo,
 } from "../../lib/tauri-bridge";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
 
-const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task", "hub_wait_tasks"]);
+const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 
 function isAgentTrajectoryTool(name: string): boolean {
   return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
 }
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
+import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
+import { Markdown } from "../chat/Markdown";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
-import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
+import { agentAvatarSrc, getOrAssignAgentAvatar } from "../../lib/agent-avatars";
 import {
   BUILTIN_SLASH_COMMANDS,
   matchingSlashCommands,
@@ -79,6 +88,9 @@ import {
   Route,
   PanelLeftClose,
   PanelLeftOpen,
+  LoaderCircle,
+  RotateCcw,
+  Bot,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -123,6 +135,7 @@ interface ChatHistoryProps {
   turnFileChangesByAssistantId: Map<string, TurnFileChange[]>;
   onFeedback: (message: AgentState["messages"][number], rating: "up" | "down" | null) => void;
   onFork: (message: AgentState["messages"][number]) => void;
+  onOpenAgent: (agentId: string, view: "chat" | "trajectory") => void;
 }
 
 const ChatHistory = memo(function ChatHistory({
@@ -133,6 +146,7 @@ const ChatHistory = memo(function ChatHistory({
   turnFileChangesByAssistantId,
   onFeedback,
   onFork,
+  onOpenAgent,
 }: ChatHistoryProps) {
   return messages.map((message) => (
     <div
@@ -147,6 +161,7 @@ const ChatHistory = memo(function ChatHistory({
         showActions={actionableAssistantMessageIds.has(message.id)}
         onFeedback={onFeedback}
         onFork={onFork}
+        onOpenAgent={onOpenAgent}
         fileChanges={turnFileChangesByAssistantId.get(message.id)}
       />
     </div>
@@ -210,6 +225,10 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
         ? "模型思考"
         : role === "user"
           ? "用户输入"
+          : role === "agent_result"
+            ? "子 Agent 回传"
+            : role === "agent_batch"
+              ? "子任务批次完成指令"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
@@ -447,6 +466,7 @@ function SessionStats({ agent }: { agent: AgentState }) {
 
   return (
     <div
+      className="session-stats"
       style={{
         display: "flex",
         alignItems: "center",
@@ -473,14 +493,14 @@ function SessionStats({ agent }: { agent: AgentState }) {
         </>
       )}
       <span
-        className="session-stat-item"
+        className="session-stat-item session-stat-cache"
         tabIndex={0}
         data-tooltip="Session 输入中通过模型缓存读取的比例。命中率越高，重复上下文的处理成本通常越低。"
         style={itemStyle}
       >缓存命中率<span style={{ ...valueStyle, color: cacheHitRate != null && cacheHitRate > 90 ? "#34d399" : cacheHitRate != null && cacheHitRate > 70 ? "#f59e0b" : "#818cf8" }}>{cacheHitRate != null ? `${cacheHitRate.toFixed(1)}%` : "—"}</span></span>
       <span aria-hidden="true" style={{ opacity: 0.35 }}>|</span>
       <span
-        className="session-stat-item"
+        className="session-stat-item session-stat-input"
         tabIndex={0}
         data-tooltip="整个 Session 内模型调用产生的累计未缓存输入，可能包含系统提示和未命中缓存的历史内容，不等于当前用户消息长度。"
         style={itemStyle}
@@ -724,7 +744,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
   const isChild = depth > 0;
 
   return (
-    <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""}`}>
+    <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""} ${isActive ? "agent-tree-node-active" : ""}`}>
       <button
         onClick={() => onSelect(agent.id)}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
@@ -749,6 +769,34 @@ const AgentTreeNode = memo(function AgentTreeNode({
         >
           <Pencil size={12} />
         </span>
+        {isChild && agent.status === "streaming" && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="agent-action"
+            title="Cancel delegated task"
+            onClick={(event) => {
+              event.stopPropagation();
+              void cancelAgent(agent.id, "cancelled from parent task");
+            }}
+          >
+            <Square size={12} />
+          </span>
+        )}
+        {isChild && (agent.status === "error" || agent.status === "stopped") && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="agent-action"
+            title="Retry delegated task"
+            onClick={(event) => {
+              event.stopPropagation();
+              void retryAgent(agent.id);
+            }}
+          >
+            <RotateCcw size={12} />
+          </span>
+        )}
         <span
           role="button"
           tabIndex={0}
@@ -806,6 +854,220 @@ const AgentTreeNode = memo(function AgentTreeNode({
   );
 });
 
+interface BatchTaskPanelProps {
+  tasks: AgentTaskInfo[];
+  batches: AgentBatchInfo[];
+  childAgents: AgentState[];
+  files: WorkbenchFile[];
+  agentNames: Record<string, string>;
+  onSelect: (agentId: string) => void;
+  sessionId: string;
+  onTemporaryAsk: (question: string) => Promise<string>;
+}
+
+interface WorkbenchFile {
+  key: string;
+  name: string;
+  path: string;
+  directions: Array<"input" | "output">;
+}
+
+interface TemporaryChatEntry {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+}
+
+function WorkbenchFileIcon({ name }: { name: string }) {
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  const Icon = ["ts", "tsx", "js", "jsx", "java", "py", "rs", "go", "c", "cpp", "css", "html"].includes(extension)
+    ? FileCode
+    : extension === "json"
+      ? FileJson
+      : ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(extension)
+        ? Image
+        : ["md", "txt", "doc", "docx", "pdf"].includes(extension)
+          ? FileText
+          : File;
+  return <Icon size={15} strokeWidth={1.8} />;
+}
+
+/**
+ * Conversation-side summary grouping the current agent's directly delegated
+ * tasks by batch, with live status and controls for each child agent.
+ */
+const BatchTaskPanel = memo(function BatchTaskPanel({
+  tasks,
+  batches,
+  childAgents,
+  files,
+  agentNames,
+  onSelect,
+  sessionId,
+  onTemporaryAsk,
+}: BatchTaskPanelProps) {
+  const [expanded, setExpanded] = useState(true);
+  const [activeTab, setActiveTab] = useState<"workbench" | "tasks">("workbench");
+  const [temporaryInput, setTemporaryInput] = useState("");
+  const [temporaryPending, setTemporaryPending] = useState(false);
+  const [temporaryError, setTemporaryError] = useState<string | null>(null);
+  const [temporaryEntries, setTemporaryEntries] = useState<TemporaryChatEntry[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`nova-temporary-chat:${sessionId}`);
+      setTemporaryEntries(stored ? JSON.parse(stored) as TemporaryChatEntry[] : []);
+    } catch {
+      setTemporaryEntries([]);
+    }
+    setTemporaryInput("");
+    setTemporaryError(null);
+  }, [sessionId]);
+
+  const persistTemporaryEntries = (entries: TemporaryChatEntry[]) => {
+    setTemporaryEntries(entries);
+    localStorage.setItem(`nova-temporary-chat:${sessionId}`, JSON.stringify(entries));
+  };
+
+  const submitTemporaryQuestion = async () => {
+    const question = temporaryInput.trim();
+    if (!question || temporaryPending) return;
+    const userEntry: TemporaryChatEntry = { id: crypto.randomUUID(), role: "user", content: question, createdAt: Date.now() };
+    const optimistic = [...temporaryEntries, userEntry];
+    persistTemporaryEntries(optimistic);
+    setTemporaryInput("");
+    setTemporaryPending(true);
+    setTemporaryError(null);
+    try {
+      const answer = await onTemporaryAsk(question);
+      persistTemporaryEntries([...optimistic, { id: crypto.randomUUID(), role: "assistant", content: answer, createdAt: Date.now() }]);
+    } catch (askError) {
+      setTemporaryError(askError instanceof Error ? askError.message : String(askError));
+    } finally {
+      setTemporaryPending(false);
+    }
+  };
+
+  const groups = useMemo(() => {
+    const byBatch = new Map<string, AgentTaskInfo[]>();
+    for (const task of tasks) {
+      const list = byBatch.get(task.batchId) ?? [];
+      list.push(task);
+      byBatch.set(task.batchId, list);
+    }
+    const batchById = new Map(batches.map((batch) => [batch.batchId, batch]));
+    return Array.from(byBatch.entries())
+      .map(([batchId, batchTasks]) => ({
+        batchId,
+        batch: batchById.get(batchId) ?? null,
+        tasks: batchTasks,
+        newestAt: batchTasks.reduce(
+          (latest, task) => Math.max(latest, Date.parse(task.createdAt) || 0),
+          0,
+        ),
+      }))
+      .sort((a, b) => b.newestAt - a.newestAt);
+  }, [tasks, batches]);
+
+  return (
+    <section className="task-panel agent-workbench" aria-label="Agent 工作台">
+      <button
+        type="button"
+        className="task-panel-header"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="task-panel-heading"><Bot size={15} />Agent 工作台</span>
+        <span className="task-panel-count">{childAgents.length}</span>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      {expanded && (
+        <div className="task-panel-body">
+          <div className="agent-workbench-tabs" role="tablist" aria-label="Agent 工作台视图">
+            <button type="button" role="tab" aria-selected={activeTab === "workbench"} className={activeTab === "workbench" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("workbench")}>工作台</button>
+            <button type="button" role="tab" aria-selected={activeTab === "tasks"} className={activeTab === "tasks" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("tasks")}>临时提问</button>
+          </div>
+          {activeTab === "workbench" ? (
+            <div className="agent-workbench-content">
+              <section className="agent-workbench-section">
+                <h4>涉及文件</h4>
+                <div className="agent-workbench-files">
+                  {files.length > 0 ? files.map((file) => (
+                    <div key={file.key} className="agent-workbench-file" title={file.path}>
+                      <span className="agent-workbench-file-icon"><WorkbenchFileIcon name={file.name} /></span>
+                      <span className="agent-workbench-file-name">{file.name}</span>
+                      <span className="agent-workbench-file-kind">{file.directions.map((direction) => direction === "input" ? "输入" : "输出").join(" · ")}</span>
+                    </div>
+                  )) : <p className="agent-workbench-empty">当前会话暂无输入或输出文件</p>}
+                </div>
+              </section>
+              <section className="agent-workbench-section agent-workbench-agents-section">
+                <h4>当前子 Agent</h4>
+                <div className="agent-workbench-agents">
+                  {childAgents.length > 0 ? childAgents.map((agent) => {
+                    const taskStatus = agent.lifecycle?.taskStatus;
+                    const running = taskStatus
+                      ? taskStatus === "queued" || taskStatus === "starting" || taskStatus === "running" || taskStatus === "waiting"
+                      : agent.status === "starting" || agent.status === "streaming";
+                    const failed = taskStatus
+                      ? taskStatus === "error" || taskStatus === "stopped" || taskStatus === "orphaned"
+                      : agent.status === "error";
+                    const statusLabel = running ? "进行中" : failed ? "异常" : taskStatus === "completed" ? "已完成" : "已结束";
+                    return (
+                      <button key={agent.id} type="button" className="agent-workbench-agent" onClick={() => onSelect(agent.id)} title={agent.id}>
+                        <img src={agentAvatarSrc(agent.avatarId)} alt="" />
+                        <span className="agent-workbench-agent-name">{agentDisplayName(agent, agentNames)}</span>
+                        <span className={`agent-workbench-agent-status ${running ? "is-running" : failed ? "is-error" : "is-completed"}`}>
+                          <i />{statusLabel}
+                        </span>
+                      </button>
+                    );
+                  }) : <p className="agent-workbench-empty">当前会话暂无子 Agent</p>}
+                </div>
+              </section>
+              {groups.length > 0 && (
+                <section className="agent-workbench-section">
+                  <h4>任务批次</h4>
+                  <div className="agent-workbench-batch-list">
+                    {groups.map(({ batchId, batch, tasks: batchTasks }, index) => {
+                      const completed = batchTasks.filter((task) => task.status === "completed").length;
+                      const batchStatus = batch?.status ?? (completed === batchTasks.length ? "completed" : "running");
+                      return (
+                        <div key={batchId} className="agent-workbench-batch-summary" title={batchId}>
+                          <span>批次 {groups.length - index}</span>
+                          <span className={`task-batch-status task-batch-status-${batchStatus}`}>{completed}/{batchTasks.length} 已完成</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
+          ) : (
+            <div className="temporary-chat">
+              <div className="temporary-chat-note">复用当前主 Agent 上下文 · 不写入主会话</div>
+              <div className="temporary-chat-messages">
+                {temporaryEntries.length > 0 ? temporaryEntries.map((entry) => (
+                  <div key={entry.id} className={`temporary-chat-message temporary-chat-message-${entry.role}`}>
+                    <span>{entry.role === "user" ? "你" : "Nova"}</span>
+                    <div>{entry.role === "assistant" ? <Markdown content={entry.content} highlightCode={false} /> : entry.content}</div>
+                  </div>
+                )) : <p className="agent-workbench-empty">在这里提问，不会影响主 Agent 的上下文</p>}
+                {temporaryPending && <div className="temporary-chat-thinking"><LoaderCircle size={13} className="tool-spin" />正在旁路思考…</div>}
+                {temporaryError && <div className="temporary-chat-error">{temporaryError}</div>}
+              </div>
+              <div className="temporary-chat-composer">
+                <textarea value={temporaryInput} onChange={(event) => setTemporaryInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitTemporaryQuestion(); } }} placeholder="临时问一下…" rows={2} disabled={temporaryPending} />
+                <button type="button" onClick={() => void submitTemporaryQuestion()} disabled={!temporaryInput.trim() || temporaryPending} aria-label="发送临时提问"><ArrowUp size={14} /></button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+});
+
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
@@ -815,6 +1077,9 @@ export function AppShell() {
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
   const availableModels = useAgentStore((s) => s.availableModels);
+  const delegatedTasks = useAgentStore((s) => s.delegatedTasks);
+  const delegatedBatches = useAgentStore((s) => s.delegatedBatches);
+  const refreshAgentTasks = useAgentStore((s) => s.refreshAgentTasks);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
@@ -840,6 +1105,8 @@ export function AppShell() {
   const [isSending, setIsSending] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  // Pull the delegated task/batch snapshot once when the shell mounts.
+  useEffect(() => { void refreshAgentTasks(); }, [refreshAgentTasks]);
   // Keep ref in sync for cleanup on unmount
   useEffect(() => { attachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
@@ -875,6 +1142,7 @@ export function AppShell() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
+  const lastConversationScrollTopRef = useRef(0);
   const isComposingRef = useRef(false);
 
   const userHistory = useMemo(() => {
@@ -956,6 +1224,119 @@ export function AppShell() {
   const activeAgent = activeId && visibleAgentIds.has(activeId)
     ? agents.find((agent) => agent.id === activeId)
     : undefined;
+  const activeDelegatedAgents = useMemo(() => {
+    if (!activeAgent) return [];
+    const descendants = new Set<string>();
+    const pending = [activeAgent.id];
+    while (pending.length > 0) {
+      const parentId = pending.pop();
+      if (!parentId) continue;
+      for (const agent of agents) {
+        if (agent.parentAgentId === parentId && !descendants.has(agent.id)) {
+          descendants.add(agent.id);
+          pending.push(agent.id);
+        }
+      }
+    }
+    return agents.filter(
+      (agent) => descendants.has(agent.id) && (agent.status === "starting" || agent.status === "streaming"),
+    );
+  }, [activeAgent, agents]);
+  const activeChildAgents = useMemo(() => {
+    if (!activeAgent) return [];
+    const descendants = new Set<string>();
+    const pending = [activeAgent.id];
+    while (pending.length > 0) {
+      const parentId = pending.pop();
+      if (!parentId) continue;
+      for (const agent of agents) {
+        if (agent.parentAgentId === parentId && !descendants.has(agent.id)) {
+          descendants.add(agent.id);
+          pending.push(agent.id);
+        }
+      }
+    }
+    return agents
+      .filter((agent) => descendants.has(agent.id))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [activeAgent, agents]);
+  const activeDelegatedTasks = useMemo(
+    () => activeAgent
+      ? delegatedTasks.filter((task) => task.parentAgentId === activeAgent.id)
+      : [],
+    [activeAgent, delegatedTasks],
+  );
+  const activeDelegatedBatchIds = useMemo(
+    () => new Set(activeDelegatedTasks.map((task) => task.batchId)),
+    [activeDelegatedTasks],
+  );
+  const activeDelegatedBatches = useMemo(
+    () => delegatedBatches.filter(
+      (batch) => batch.parentAgentId === activeAgent?.id && activeDelegatedBatchIds.has(batch.batchId),
+    ),
+    [activeAgent?.id, activeDelegatedBatchIds, delegatedBatches],
+  );
+  const agentWorkbenchFiles = useMemo<WorkbenchFile[]>(() => {
+    if (!activeAgent) return [];
+    const files = new Map<string, { name: string; path: string; directions: Set<"input" | "output"> }>();
+    const addFile = (rawPath: string, direction: "input" | "output") => {
+      const path = rawPath.trim().replace(/^['"`]|['"`,.;，。；]+$/g, "");
+      if (!path) return;
+      const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+      if (!name.includes(".")) return;
+      const key = path.toLowerCase();
+      const existing = files.get(key) ?? { name, path, directions: new Set<"input" | "output">() };
+      existing.directions.add(direction);
+      files.set(key, existing);
+    };
+
+    for (const message of activeAgent.messages) {
+      if (message.role !== "user") continue;
+      for (const attachment of message.attachments ?? []) addFile(attachment.name, "input");
+      for (const match of message.content.matchAll(/@([^\s，。！？、；;]+)/g)) addFile(match[1], "input");
+    }
+
+    for (const task of activeDelegatedTasks) {
+      for (const path of task.changedFiles ?? []) addFile(path, "output");
+    }
+
+    for (const agent of [activeAgent, ...activeChildAgents]) {
+      for (const message of agent.messages) {
+        for (const tool of message.toolCalls ?? []) {
+          if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
+          const args = tool.args && typeof tool.args === "object" ? tool.args as Record<string, unknown> : {};
+          const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
+          if (path) addFile(path, "output");
+        }
+      }
+    }
+
+    return Array.from(files.entries()).map(([key, file]) => ({
+      key,
+      name: file.name,
+      path: file.path,
+      directions: Array.from(file.directions),
+    }));
+  }, [activeAgent, activeChildAgents, activeDelegatedTasks]);
+  const showAgentWorkbench = Boolean(activeAgent);
+  const handleTemporaryAsk = useCallback(async (question: string) => {
+    if (!activeAgent) throw new Error("当前没有可复用上下文的主 Agent");
+    const snapshot = activeAgent.contextSnapshot;
+    const contextParts: string[] = [];
+    if (snapshot?.systemPrompt) contextParts.push(`SYSTEM PROMPT\n${snapshot.systemPrompt}`);
+    if (snapshot?.contextFiles.length) {
+      contextParts.push(snapshot.contextFiles.map((file) => `CONTEXT FILE: ${file.path}\n${file.content}`).join("\n\n"));
+    }
+    const conversation = activeAgent.messages.slice(-100).map((message) => {
+      const toolDetails = (message.toolCalls ?? []).map((tool) => {
+        const result = tool.result === undefined ? "" : ` -> ${JSON.stringify(tool.result).slice(0, 5000)}`;
+        return `[${tool.name}] ${JSON.stringify(tool.args)}${result}`;
+      }).join("\n");
+      return `${message.role.toUpperCase()}: ${message.content}${toolDetails ? `\n${toolDetails}` : ""}`;
+    }).join("\n\n");
+    contextParts.push(`CURRENT CONVERSATION\n${conversation}`);
+    return askTemporary(activeAgent.id, question, contextParts.join("\n\n---\n\n"));
+  }, [activeAgent]);
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
   // possibly-stale `model` field that list_agents reports from spawn time.
@@ -1055,6 +1436,7 @@ export function AppShell() {
   const chatMessages = useMemo(() => {
     const grouped: AgentState["messages"] = [];
     for (const message of activeAgent?.messages ?? []) {
+      if (message.role === "agent_batch") continue;
       const previous = grouped[grouped.length - 1];
       if (message.role === "tool" && previous?.role === "tool") {
         grouped[grouped.length - 1] = {
@@ -1149,10 +1531,19 @@ export function AppShell() {
   const handleConversationScroll = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
+    const currentScrollTop = container.scrollTop;
+    const isScrollingUp = currentScrollTop < lastConversationScrollTopRef.current - 0.5;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     const isNearBottom = distanceFromBottom <= 48;
-    isNearBottomRef.current = isNearBottom;
+    // Any upward movement is explicit user intent. Stop following the stream
+    // immediately instead of waiting until the viewport is 48px from bottom.
+    isNearBottomRef.current = isScrollingUp ? false : isNearBottom;
+    lastConversationScrollTopRef.current = currentScrollTop;
     setShowScrollToBottom(!isNearBottom && container.scrollHeight > container.clientHeight);
+  }, []);
+
+  const handleConversationWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) isNearBottomRef.current = false;
   }, []);
 
   const scrollConversationToBottom = useCallback(() => {
@@ -1161,6 +1552,7 @@ export function AppShell() {
     isNearBottomRef.current = true;
     setShowScrollToBottom(false);
     container.scrollTop = container.scrollHeight;
+    lastConversationScrollTopRef.current = container.scrollTop;
   }, []);
 
   useEffect(() => {
@@ -1479,6 +1871,7 @@ export function AppShell() {
         const newAgent: AgentState = {
           id: info.id,
           parentAgentId: info.parent_agent_id,
+          createdBy: info.created_by,
           name: null,
           avatarId: getOrAssignAgentAvatar(info.id),
           status: info.status,
@@ -1565,12 +1958,17 @@ export function AppShell() {
       }));
 
       // Send to agent via Tauri backend
-      await sendPrompt(
-        agentId,
-        finalMessage,
-        images.length > 0 ? images : undefined,
-        fileReferences.length > 0 ? fileReferences : undefined,
-      );
+      if (activeAgent?.parentAgentId && activeAgent.status === "streaming") {
+        await steerAgent(agentId, finalMessage);
+      } else {
+        await sendPrompt(
+          agentId,
+          finalMessage,
+          images.length > 0 ? images : undefined,
+          fileReferences.length > 0 ? fileReferences : undefined,
+          activeDelegatedAgents.length > 0 ? activeDelegatedAgents.map((agent) => agent.id) : undefined,
+        );
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to send prompt:", msg);
@@ -1678,10 +2076,22 @@ export function AppShell() {
 
   return (
     <div
-      className="relative h-screen w-screen overflow-hidden bg-bg-primary"
+      className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}
       data-custom-background={customBgUrl ? "true" : "false"}
     >
       <Background />
+      <div
+        className="app-titlebar-drag"
+        data-tauri-drag-region
+        onMouseDown={(event) => {
+          if (event.button !== 0) return;
+          void getCurrentWindow().startDragging().catch((dragError) => {
+            console.error("Failed to start window drag:", dragError);
+          });
+        }}
+      >
+        <span data-tauri-drag-region>Nova Studio</span>
+      </div>
 
       {/* Full-window drag overlay */}
       {isDragOver && (
@@ -1758,7 +2168,7 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="relative z-10 flex h-full flex-col pt-3">
+      <div className="app-workspace relative z-10 flex h-full flex-col">
         {/* Body row: sidebar + main */}
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
@@ -1971,7 +2381,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className="relative w-full flex flex-col overflow-hidden">
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${showAgentWorkbench && conversationView === "chat" ? "studio-main-has-task-summary" : ""} relative w-full flex flex-col overflow-hidden`}>
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -2073,9 +2483,10 @@ export function AppShell() {
           <div
             ref={scrollRef}
             onScroll={handleConversationScroll}
-            className={`flex-1 overflow-y-auto flex flex-col items-center px-6 ${
+            onWheelCapture={handleConversationWheel}
+            className={`conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
-            }`}
+            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${showAgentWorkbench && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
@@ -2119,8 +2530,15 @@ export function AppShell() {
                           {request.messages.map((message) => {
                             const isAgentTool = message.role === "tool"
                               && Boolean(message.toolCalls?.some((tool) => isAgentTrajectoryTool(tool.name)));
-                            const trajectoryRole = isAgentTool
-                              ? "AGENT"
+                            const isSubAgentResult = message.role === "agent_result";
+                            const isAgentBatch = message.role === "agent_batch";
+                            const isAgentEntry = isAgentTool || isSubAgentResult || isAgentBatch;
+                            const trajectoryRole = isAgentBatch
+                              ? "AGENT_BATCH"
+                              : isSubAgentResult
+                              ? "SUB_AGENT"
+                              : isAgentTool
+                                ? "AGENT"
                               : message.role === "user"
                                 ? "USER"
                                 : message.role === "assistant"
@@ -2131,7 +2549,7 @@ export function AppShell() {
                             return (
                             <div
                               key={message.id}
-                              className={`trajectory-row trajectory-row-${isAgentTool ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
+                              className={`trajectory-row trajectory-row-${isAgentBatch ? "agent-batch" : isSubAgentResult ? "sub-agent" : isAgentEntry ? "agent" : message.role} ${selectedTrajectoryEntry?.id === message.id ? "trajectory-row-selected" : ""}`}
                               role="button"
                               tabIndex={0}
                               aria-pressed={selectedTrajectoryEntry?.id === message.id}
@@ -2260,36 +2678,17 @@ export function AppShell() {
             ) : !hasMessages ? (
               /* Empty state — tagline */
               <div
-                className="text-center max-w-4xl w-full animate-fade-in-up"
+                className="empty-state-hero text-center max-w-6xl w-full animate-fade-in-up"
                 style={{ marginTop: "4vh" }}
               >
-                {/* Floating sparkle */}
-                <div className="flex justify-center" style={{ marginBottom: 32 }}>
-                  <svg
-                    className="hero-icon-glow"
-                    width="64"
-                    height="64"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={1.1}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z"
-                    />
-                  </svg>
-                </div>
-
                 {/* Tagline */}
                 <h2
                   className="hero-title"
                   style={{
-                    fontSize: "clamp(28px, 3.2vw, 44px)",
-                    fontWeight: 700,
-                    letterSpacing: "-0.02em",
-                    lineHeight: 1.15,
+                    fontSize: "clamp(32px, 3.8vw, 62px)",
+                    fontWeight: 720,
+                    letterSpacing: "-0.035em",
+                    lineHeight: 1.06,
                   }}
                 >
                   <span className="hero-title-prefix">
@@ -2333,8 +2732,8 @@ export function AppShell() {
                 </h2>
                 <p
                   style={{
-                    marginTop: 16,
-                    fontSize: 15,
+                    marginTop: 22,
+                    fontSize: "clamp(15px, 1.15vw, 18px)",
                     color: "var(--color-text-secondary)",
                     letterSpacing: "0.01em",
                   }}
@@ -2345,7 +2744,7 @@ export function AppShell() {
             ) : (
               /* Messages view */
               <div
-                className="w-full max-w-3xl pt-6"
+                className="conversation-thread w-full pt-6"
                 style={{ paddingBottom: 48 }}
               >
                 {activeAgent && activeAgent.messages.length === 0 && (
@@ -2369,6 +2768,10 @@ export function AppShell() {
                     turnFileChangesByAssistantId={turnFileChangesByAssistantId}
                     onFeedback={handleMessageFeedback}
                     onFork={handleForkMessage}
+                    onOpenAgent={(agentId, view) => {
+                      handleSelectAgent(agentId);
+                      setConversationView(view);
+                    }}
                   />
                 )}
 
@@ -2393,7 +2796,22 @@ export function AppShell() {
             )}
           </div>
 
-          {conversationView === "chat" && showConversationMinimap && (
+          {!settingsOpen && conversationView === "chat" && showAgentWorkbench && (
+            <aside className="conversation-task-summary">
+              <BatchTaskPanel
+                tasks={activeDelegatedTasks}
+                batches={activeDelegatedBatches}
+                childAgents={activeChildAgents}
+                files={agentWorkbenchFiles}
+                agentNames={agentNames}
+                onSelect={handleSelectAgent}
+                sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
+                onTemporaryAsk={handleTemporaryAsk}
+              />
+            </aside>
+          )}
+
+          {!settingsOpen && conversationView === "chat" && !showAgentWorkbench && showConversationMinimap && (
             <nav
               className="conversation-minimap"
               aria-label="Conversation navigation"
@@ -2425,26 +2843,39 @@ export function AppShell() {
 
           {/* Input area */}
           <div
+            className={showAgentWorkbench ? "conversation-input-area conversation-input-with-task-summary" : "conversation-input-area"}
             style={{
               flexShrink: 0,
               padding: "60px 24px 56px",
-              display: conversationView === "chat" ? "flex" : "none",
+              display: !settingsOpen && conversationView === "chat" ? "flex" : "none",
               justifyContent: "center",
             }}
           >
-            <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
+            <div className="composer-shell" style={{ position: "relative", width: "100%", maxWidth: 660 }}>
               {showScrollToBottom && activeAgent && (
                 <button
                   type="button"
                   className="scroll-to-bottom-button"
                   onClick={scrollConversationToBottom}
                   aria-label="滚动到对话底部"
-                  title="滚动到最新消息"
                 >
                   <ArrowDown size={18} />
                 </button>
               )}
               {activeAgent && <SessionStats agent={activeAgent} />}
+              {activeDelegatedAgents.length > 0 && (
+                <div className="delegated-task-status" role="status" aria-live="polite">
+                  <LoaderCircle className="delegated-task-status-icon" size={15} />
+                  <div>
+                    <strong>
+                      {activeDelegatedAgents.length === 1
+                        ? `${agentDisplayName(activeDelegatedAgents[0], agentNames)} 正在执行子任务`
+                        : `${activeDelegatedAgents.length} 个子 Agent 正在执行任务`}
+                    </strong>
+                    <span>你可以继续问我任何问题；子任务完成后，我会带着结果自动继续处理。</span>
+                  </div>
+                </div>
+              )}
               {/* Input card */}
               <div
                 ref={inputCardRef}
@@ -2716,6 +3147,7 @@ export function AppShell() {
                   }}
                 >
                   <button
+                    className="input-attach-button"
                     onClick={() => fileInputRef.current?.click()}
                     style={{
                       display: "flex",
@@ -2759,7 +3191,7 @@ export function AppShell() {
                       <div style={{ position: "relative" }}>
                         <button
                           type="button"
-                          className="input-toolbar-control"
+                          className={`input-toolbar-control model-picker-trigger ${modelPickerOpen ? "model-picker-trigger-open" : ""}`}
                           onClick={() => setModelPickerOpen((open) => !open)}
                           style={{
                             display: "flex",
@@ -2768,25 +3200,10 @@ export function AppShell() {
                             padding: "5px 10px",
                             borderRadius: 8,
                             fontSize: 11.5,
-                            color: modelPickerOpen ? "#d5d9ff" : "#8a90a4",
-                            background: modelPickerOpen ? "rgba(129, 140, 248, 0.12)" : "rgba(255, 255, 255, 0.05)",
-                            border: "1px solid rgba(255, 255, 255, 0.08)",
                             cursor: "pointer",
                             transition: "all 0.15s ease",
                             maxWidth: 180,
                             overflow: "hidden",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!modelPickerOpen) {
-                              e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)";
-                              e.currentTarget.style.color = "#b9c1ff";
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!modelPickerOpen) {
-                              e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                              e.currentTarget.style.color = "#8a90a4";
-                            }
                           }}
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
@@ -2806,17 +3223,9 @@ export function AppShell() {
                               position: "absolute",
                               right: 0,
                               bottom: 36,
-                              zIndex: 50,
                               width: 280,
                               maxHeight: 360,
                               overflowY: "auto",
-                              padding: 4,
-                              borderRadius: 12,
-                              background: "rgba(20, 22, 34, 0.84)",
-                              border: "1px solid rgba(255, 255, 255, 0.12)",
-                              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-                              backdropFilter: "blur(24px) saturate(150%)",
-                              WebkitBackdropFilter: "blur(24px) saturate(150%)",
                             }}
                           >
                             {(() => {
@@ -2828,7 +3237,7 @@ export function AppShell() {
                               }
                               return Array.from(grouped.entries()).map(([provider, models]) => (
                                 <div key={provider}>
-                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, color: "#5a6078", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
                                     {provider}
                                   </div>
                                   {models.map((m) => {
@@ -2857,18 +3266,13 @@ export function AppShell() {
                                           padding: "6px 10px",
                                           borderRadius: 7,
                                           fontSize: 12,
-                                          color: isActive ? "#e5e8ff" : "#a2a8bb",
-                                          background: isActive ? "rgba(124, 133, 224, 0.14)" : "transparent",
-                                          border: "none",
                                           cursor: "pointer",
                                           textAlign: "left",
                                           transition: "all 0.12s ease",
                                         }}
-                                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)"; }}
-                                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
                                       >
                                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                                        <span className="model-picker-context" style={{ fontSize: 10, color: "#5a6078", flexShrink: 0, marginLeft: 8 }}>
+                                        <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
                                           {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
                                         </span>
                                       </button>
@@ -2883,7 +3287,7 @@ export function AppShell() {
                     )}
                     <button
                       type="button"
-                      className="input-toolbar-control"
+                      className={`input-toolbar-control project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
                       onClick={() => setProjectPickerOpen((open) => !open)}
                       title="切换项目"
                       style={{
@@ -2893,25 +3297,10 @@ export function AppShell() {
                         padding: "5px 10px",
                         borderRadius: 8,
                         fontSize: 11.5,
-                        color: projectPickerOpen ? "#d5d9ff" : "#8a90a4",
-                        background: projectPickerOpen ? "rgba(129, 140, 248, 0.12)" : "rgba(255, 255, 255, 0.05)",
-                        border: "1px solid rgba(255, 255, 255, 0.08)",
                         cursor: "pointer",
                         transition: "all 0.15s ease",
                         maxWidth: 180,
                         overflow: "hidden",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!projectPickerOpen) {
-                          e.currentTarget.style.background = "rgba(129, 140, 248, 0.1)";
-                          e.currentTarget.style.color = "#b9c1ff";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!projectPickerOpen) {
-                          e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                          e.currentTarget.style.color = "#8a90a4";
-                        }
                       }}
                     >
                       <FolderOpen size={12} style={{ flexShrink: 0 }} />
@@ -2927,13 +3316,6 @@ export function AppShell() {
                           position: "absolute",
                           left: 0,
                           bottom: 44,
-                          zIndex: 40,
-                          padding: 4,
-                          borderRadius: 10,
-                          background: "rgba(18, 20, 31, 0.45)",
-                          border: "1px solid rgba(151, 159, 204, 0.2)",
-                          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.3)",
-                          backdropFilter: "blur(24px) saturate(1.4)",
                           minWidth: 240,
                           width: "max-content",
                           maxWidth: 500,
@@ -2943,7 +3325,6 @@ export function AppShell() {
                           className="project-picker-title"
                           style={{
                             padding: "4px 8px 5px",
-                            color: "#6f758a",
                             fontSize: 10,
                             fontWeight: 600,
                             letterSpacing: "0.06em",
@@ -2967,7 +3348,7 @@ export function AppShell() {
                             >
                               <FolderOpen
                                 size={12}
-                                style={{ color: selected ? "#aeb6ff" : "#777e95", flexShrink: 0 }}
+                                style={{ flexShrink: 0 }}
                               />
                               <span
                                 style={{
@@ -3003,14 +3384,15 @@ export function AppShell() {
                             paddingTop: 8,
                           }}
                         >
-                          <Plus size={12} style={{ color: "#a5b0fc", flexShrink: 0 }} />
-                          <span style={{ fontSize: 12, color: "#a5b0fc" }}>创建新项目</span>
+                          <Plus size={12} style={{ flexShrink: 0 }} />
+                          <span style={{ fontSize: 12 }}>创建新项目</span>
                         </button>
                       </div>
                     )}
                     {/* Abort button (visible during streaming) */}
                     {activeAgent?.status === "streaming" ? (
                       <button
+                        className="input-action-button input-abort-button"
                         onClick={handleAbort}
                         style={{
                           display: "flex",
@@ -3029,6 +3411,7 @@ export function AppShell() {
                       </button>
                     ) : (
                       <button
+                        className="input-action-button input-send-button"
                         onClick={handleSubmit}
                         disabled={!input.trim() || isSending}
                         style={{
@@ -3062,6 +3445,7 @@ export function AppShell() {
         </main>
         </div>
       </div>
+      <NotificationToasts />
       {editingProject && (
         <div className="project-modal-backdrop" onMouseDown={() => setEditingProject(null)}>
           <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>

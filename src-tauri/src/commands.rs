@@ -1,3 +1,4 @@
+use crate::agent_api::{TaskRegistry, TaskSnapshot};
 use crate::agent_manager::AgentManager;
 use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
 use std::collections::VecDeque;
@@ -22,6 +23,9 @@ const SKIPPED_PROJECT_DIRS: &[&str] = &[
 
 /// Managed state wrapper for AgentManager
 pub struct AgentManagerState(pub Arc<AgentManager>);
+
+/// Managed state wrapper for the shared delegated task registry
+pub struct TaskRegistryState(pub TaskRegistry);
 
 fn expand_home(path: &str) -> PathBuf {
     if path == "~" {
@@ -209,6 +213,7 @@ pub async fn send_prompt(
     message: String,
     images: Option<Vec<ImageContent>>,
     file_references: Option<Vec<FileReference>>,
+    background_agent_ids: Option<Vec<String>>,
 ) -> Result<(), String> {
     log::info!(
         "[cmd] send_prompt agent_id={} len={} images={:?}",
@@ -218,8 +223,29 @@ pub async fn send_prompt(
     );
     state
         .0
-        .send_prompt(&agent_id, message, images, file_references)
+        .send_prompt(
+            &agent_id,
+            message,
+            images,
+            file_references,
+            background_agent_ids,
+        )
         .await
+}
+
+#[tauri::command]
+pub async fn ask_temporary(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    question: String,
+    context: String,
+) -> Result<String, String> {
+    log::info!(
+        "[cmd] ask_temporary parent={} len={}",
+        agent_id,
+        question.len()
+    );
+    state.0.temporary_ask(&agent_id, question, context).await
 }
 
 #[tauri::command]
@@ -229,6 +255,71 @@ pub async fn abort_agent(
 ) -> Result<(), String> {
     log::info!("[cmd] abort_agent id={}", agent_id);
     state.0.abort(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn steer_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    message: String,
+) -> Result<(), String> {
+    state.0.steer(&agent_id, message).await
+}
+
+#[tauri::command]
+pub async fn cancel_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    reason: Option<String>,
+) -> Result<(), String> {
+    state.0.cancel(&agent_id, reason).await
+}
+
+#[tauri::command]
+pub async fn force_stop_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    reason: Option<String>,
+    timed_out: Option<bool>,
+) -> Result<(), String> {
+    state
+        .0
+        .force_stop(&agent_id, reason, timed_out.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub async fn retry_agent(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    message: Option<String>,
+) -> Result<(), String> {
+    state.0.retry(&agent_id, message).await
+}
+
+#[tauri::command]
+pub async fn retry_task(
+    manager: State<'_, AgentManagerState>,
+    registry: State<'_, TaskRegistryState>,
+    task_id: String,
+) -> Result<crate::agent_api::AgentTask, String> {
+    crate::agent_api::retry_task_impl(manager.0.clone(), registry.0.clone(), &task_id).await
+}
+
+#[tauri::command]
+pub async fn cancel_task(
+    manager: State<'_, AgentManagerState>,
+    registry: State<'_, TaskRegistryState>,
+    task_id: String,
+    reason: Option<String>,
+) -> Result<crate::agent_api::AgentTask, String> {
+    crate::agent_api::cancel_task_impl(manager.0.clone(), registry.0.clone(), &task_id, reason)
+        .await
+}
+
+#[tauri::command]
+pub async fn list_agent_tasks(state: State<'_, TaskRegistryState>) -> Result<TaskSnapshot, String> {
+    Ok(state.0.snapshot().await)
 }
 
 #[tauri::command]

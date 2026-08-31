@@ -56,6 +56,8 @@ impl Drop for AskCancellationGuard {
 struct PersistedAgent {
     id: String,
     parent_agent_id: Option<String>,
+    #[serde(default)]
+    created_by: Option<String>,
     name: Option<String>,
     cwd: String,
     model: Option<String>,
@@ -173,6 +175,7 @@ impl AgentManager {
                             // not an Agent collaboration hierarchy. Only Studio's persisted
                             // parent_agent_id is authoritative for nested Agent rendering.
                             parent_agent_id: legacy.and_then(|item| item.parent_agent_id.clone()),
+                            created_by: legacy.and_then(|item| item.created_by.clone()),
                             name,
                             cwd,
                             model: legacy.and_then(|item| item.model.clone()),
@@ -269,6 +272,7 @@ impl AgentManager {
                         // Newly discovered sessions may be forks, clones, or sessions
                         // created outside Studio. Session lineage must remain flat here.
                         parent_agent_id: None,
+                        created_by: Some("user".to_string()),
                         name: session.name.or(fallback_name),
                         cwd,
                         model: None,
@@ -352,6 +356,7 @@ impl AgentManager {
         }
         let record = PersistedAgent {
             id: format!("agent-{short_id}"),
+            created_by: Some(request.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())),
             parent_agent_id: request.parent_agent_id,
             name: Some("Nova".to_string()),
             cwd,
@@ -414,6 +419,7 @@ impl AgentManager {
                 .windows(2)
                 .find(|pair| pair[0] == "--parent-session")
                 .map(|pair| pair[1].clone()),
+            "parentAgentId": record.parent_agent_id.clone(),
             "depth": record.depth,
         }))?;
         let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -495,15 +501,18 @@ impl AgentManager {
             let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
         }
 
-        // Notify the frontend even when the agent was created through the
-        // HTTP hub API rather than a Tauri invoke from the UI.
-        let _ = self.global_event_tx.send((
-            agent_id,
-            serde_json::json!({
-                "type": "agent_created",
-                "info": info.clone(),
-            }),
-        ));
+        // Disposable side-question sessions are deliberately invisible to
+        // navigation and the Agent workbench. Normal agents still notify the
+        // frontend even when created through the HTTP hub API.
+        if !agent_id.starts_with("temporary-") {
+            let _ = self.global_event_tx.send((
+                agent_id,
+                serde_json::json!({
+                    "type": "agent_created",
+                    "info": info.clone(),
+                }),
+            ));
+        }
 
         Ok(info)
     }
@@ -535,6 +544,7 @@ impl AgentManager {
         message: String,
         images: Option<Vec<ImageContent>>,
         file_references: Option<Vec<FileReference>>,
+        background_agent_ids: Option<Vec<String>>,
     ) -> Result<(), String> {
         if self.get_process(agent_id).await.is_none() {
             self.activate(agent_id).await?;
@@ -552,8 +562,71 @@ impl AgentManager {
             images,
             file_references,
             collaboration_context: None,
+            background_agent_ids,
         };
         agent.send_command(&cmd)
+    }
+
+    /// Ask through a transient sibling context without mutating the parent
+    /// conversation. The disposable Nova session is never registered in the
+    /// Studio record catalog and is stopped immediately after the reply.
+    pub async fn temporary_ask(
+        &self,
+        parent_agent_id: &str,
+        question: String,
+        context: String,
+    ) -> Result<String, String> {
+        if self.get_process(parent_agent_id).await.is_none() {
+            self.activate(parent_agent_id).await?;
+        }
+        let parent = self
+            .records
+            .read()
+            .await
+            .get(parent_agent_id)
+            .cloned()
+            .ok_or("Parent agent session not found")?;
+        let short_id = Uuid::new_v4().to_string()[..8].to_string();
+        let transient_id = format!("temporary-{short_id}");
+        let transient = PersistedAgent {
+            id: transient_id.clone(),
+            created_by: Some("temporary-question".to_string()),
+            parent_agent_id: Some(parent_agent_id.to_string()),
+            name: Some("Temporary Chat".to_string()),
+            cwd: parent.cwd,
+            model: parent.model,
+            provider: parent.provider,
+            args: Vec::new(),
+            session_id: format!("temporary-{}", Uuid::new_v4()),
+            session_file: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            message_count: 0,
+            depth: parent.depth.saturating_add(1),
+        };
+
+        self.spawn_record(transient, false).await?;
+        let prompt = format!(
+            "You are answering a temporary side question. Use the supplied parent-session context, but do not perform tool calls, modify files, delegate work, or claim that this exchange changed the parent conversation. Answer only the user's temporary question.\n\n<PARENT_CONTEXT>\n{}\n</PARENT_CONTEXT>\n\n<TEMPORARY_QUESTION>\n{}\n</TEMPORARY_QUESTION>",
+            context,
+            question,
+        );
+        let result = self
+            .ask(
+                &transient_id,
+                prompt,
+                180,
+                CollaborationContext {
+                    request_id: format!("temporary-{short_id}"),
+                    request_depth: 0,
+                    visited_agent_ids: vec![parent_agent_id.to_string()],
+                    source_agent_id: parent_agent_id.to_string(),
+                },
+            )
+            .await;
+        if let Some(process) = self.agents.write().await.remove(&transient_id) {
+            let _ = process.stop().await;
+        }
+        result
     }
 
     /// Send an abort command to an agent
@@ -562,6 +635,52 @@ impl AgentManager {
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         let cmd = RpcCommand::Abort { id: None };
         agent.send_command(&cmd)
+    }
+
+    pub async fn steer(&self, agent_id: &str, message: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::Steer {
+            id: None,
+            message,
+            images: None,
+        })
+    }
+
+    pub async fn cancel(&self, agent_id: &str, reason: Option<String>) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::AgentCancel {
+            id: None,
+            agent_id: agent_id.to_string(),
+            reason,
+        })
+    }
+
+    pub async fn force_stop(
+        &self,
+        agent_id: &str,
+        reason: Option<String>,
+        timed_out: bool,
+    ) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::AgentForceStop {
+            id: None,
+            agent_id: agent_id.to_string(),
+            reason,
+            timed_out,
+        })
+    }
+
+    pub async fn retry(&self, agent_id: &str, message: Option<String>) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::AgentRetry {
+            id: None,
+            agent_id: agent_id.to_string(),
+            message,
+        })
     }
 
     /// Request session stats (context usage, token counts) from an agent
@@ -774,6 +893,7 @@ impl AgentManager {
             images: None,
             file_references: None,
             collaboration_context: Some(collaboration_context),
+            background_agent_ids: None,
         })?;
         // If the HTTP caller disconnects, the future is cancelled, or any
         // error/timeout path returns early, stop the target turn before
@@ -823,6 +943,134 @@ impl AgentManager {
         }
     }
 
+    async fn request_agent_command(
+        &self,
+        agent: Arc<AgentProcess>,
+        command: RpcCommand,
+        request_id: &str,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String> {
+        let mut rx = agent.subscribe();
+        agent.send_command(&command)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(format!("Agent RPC request timed out after {timeout_secs}s"));
+            }
+            let event = tokio::time::timeout(remaining, rx.recv())
+                .await
+                .map_err(|_| format!("Agent RPC request timed out after {timeout_secs}s"))?
+                .map_err(|_| "Agent event stream closed".to_string())?;
+            if event.get("type").and_then(serde_json::Value::as_str) != Some("response")
+                || event.get("id").and_then(serde_json::Value::as_str) != Some(request_id)
+            {
+                continue;
+            }
+            if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+                return Ok(event
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null));
+            }
+            return Err(event
+                .get("error")
+                .or_else(|| event.pointer("/data/error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Agent RPC request failed")
+                .to_string());
+        }
+    }
+
+    pub async fn summarize_task_result(
+        &self,
+        agent_id: &str,
+        task: String,
+        final_text: String,
+        timeout_secs: u64,
+    ) -> Result<String, String> {
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let data = self
+            .request_agent_command(
+                agent,
+                RpcCommand::SummarizeTaskResult {
+                    id: Some(request_id.clone()),
+                    task,
+                    final_text,
+                },
+                &request_id,
+                timeout_secs,
+            )
+            .await?;
+        data.get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "Task summarizer returned no text".to_string())
+    }
+
+    pub async fn append_agent_task_result(
+        &self,
+        parent_agent_id: &str,
+        result: &serde_json::Value,
+    ) -> Result<(), String> {
+        if self.get_process(parent_agent_id).await.is_none() {
+            self.activate(parent_agent_id).await?;
+        }
+        let agent = self
+            .get_process(parent_agent_id)
+            .await
+            .ok_or("Parent Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.request_agent_command(
+            agent.clone(),
+            RpcCommand::AppendCustomMessage {
+                id: Some(request_id.clone()),
+                custom_type: "agent_task_result".to_string(),
+                content: serde_json::to_string(result)
+                    .map_err(|error| format!("Failed to serialize Agent task result: {error}"))?,
+                display: Some(true),
+                trigger_turn: Some(false),
+                details: result.clone(),
+            },
+            &request_id,
+            30,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn append_agent_task_batch_completed(
+        &self,
+        parent_agent_id: &str,
+        details: &serde_json::Value,
+        content: String,
+    ) -> Result<(), String> {
+        if self.get_process(parent_agent_id).await.is_none() {
+            self.activate(parent_agent_id).await?;
+        }
+        let agent = self
+            .get_process(parent_agent_id)
+            .await
+            .ok_or("Parent Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.request_agent_command(
+            agent,
+            RpcCommand::AppendCustomMessage {
+                id: Some(request_id.clone()),
+                custom_type: "agent_task_batch_completed".to_string(),
+                content,
+                display: Some(false),
+                trigger_turn: Some(true),
+                details: details.clone(),
+            },
+            &request_id,
+            30,
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Send an extension UI response (from a frontend dialog) to an agent
     pub async fn send_extension_ui_response(
         &self,
@@ -847,10 +1095,32 @@ impl AgentManager {
     }
 
     /// Stop an agent process while retaining its persisted session record.
+    /// Child agents are stopped first so a parent cannot leave live delegated
+    /// work behind after its control context disappears.
     pub async fn stop(&self, agent_id: &str) -> Result<(), String> {
-        let mut agents = self.agents.write().await;
-        let agent = agents.remove(agent_id).ok_or("Agent not found")?;
-        agent.stop().await?;
+        let records = self.records.read().await;
+        if !records.contains_key(agent_id) {
+            return Err("Agent not found".to_string());
+        }
+        let mut pending = vec![agent_id.to_string()];
+        let mut subtree = Vec::new();
+        while let Some(parent_id) = pending.pop() {
+            subtree.push(parent_id.clone());
+            pending.extend(
+                records
+                    .values()
+                    .filter(|record| record.parent_agent_id.as_deref() == Some(&parent_id))
+                    .map(|record| record.id.clone()),
+            );
+        }
+        drop(records);
+
+        for id in subtree.into_iter().rev() {
+            let agent = self.agents.write().await.remove(&id);
+            if let Some(agent) = agent {
+                agent.stop().await?;
+            }
+        }
         Ok(())
     }
 
@@ -858,12 +1128,23 @@ impl AgentManager {
     pub async fn list(&self) -> Vec<AgentInfo> {
         let records = self.records.read().await;
         let agents = self.agents.read().await;
+        let mut lifecycles = HashMap::new();
+        let mut queried_projects = std::collections::HashSet::new();
+        for agent in agents.values() {
+            if queried_projects.insert(agent.cwd.clone()) {
+                lifecycles.extend(agent.request_lifecycles().await);
+            }
+        }
         let mut infos = Vec::new();
         for (id, record) in records.iter() {
             if let Some(agent) = agents.get(id) {
-                infos.push(self.build_info(id, &record.cwd, agent).await);
+                let mut info = self.build_info(id, &record.cwd, agent).await;
+                info.lifecycle = lifecycles.remove(id);
+                infos.push(info);
             } else {
-                infos.push(agent_info_from_record(record));
+                let mut info = agent_info_from_record(record);
+                info.lifecycle = lifecycles.remove(id);
+                infos.push(info);
             }
         }
         infos.sort_by(|left, right| right.created_at.cmp(&left.created_at));
@@ -880,7 +1161,9 @@ impl AgentManager {
     /// Get info about a specific agent
     pub async fn get_info(&self, agent_id: &str) -> Result<AgentInfo, String> {
         if let Some(agent) = self.agents.read().await.get(agent_id).cloned() {
-            return Ok(self.build_info(agent_id, &agent.cwd, &agent).await);
+            let mut info = self.build_info(agent_id, &agent.cwd, &agent).await;
+            info.lifecycle = agent.request_lifecycle().await;
+            return Ok(info);
         }
         self.records
             .read()
@@ -906,6 +1189,16 @@ impl AgentManager {
         ));
     }
 
+    pub fn notify_agent_task_result(&self, parent_agent_id: &str, result: &serde_json::Value) {
+        let _ = self.global_event_tx.send((
+            parent_agent_id.to_string(),
+            serde_json::json!({
+                "type": "agent_task_result",
+                "result": result,
+            }),
+        ));
+    }
+
     /// Get the number of running agents
     pub async fn count(&self) -> usize {
         self.agents.read().await.len()
@@ -915,8 +1208,10 @@ impl AgentManager {
         AgentInfo {
             id: id.to_string(),
             parent_agent_id: process.parent_agent_id.clone(),
+            created_by: Some(process.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())),
             name: process.name.lock().await.clone(),
             status: process.get_status().await,
+            lifecycle: None,
             cwd: cwd.to_string(),
             model: process.model.clone(),
             session_id: Some(process.session_id.clone()),
@@ -951,8 +1246,12 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
     AgentInfo {
         id: record.id.clone(),
         parent_agent_id: record.parent_agent_id.clone(),
+        created_by: Some(record.created_by.clone().unwrap_or_else(|| {
+            record.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())
+        })),
         name: record.name.clone(),
         status: crate::rpc_types::AgentStatus::Stopped,
+        lifecycle: None,
         cwd: record.cwd.clone(),
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),
@@ -1095,6 +1394,7 @@ mod tests {
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
+                created_by: Some("user".to_string()),
                 model: Some("test-model".to_string()),
                 provider: None,
                 args: None,
@@ -1258,6 +1558,7 @@ mod tests {
             PersistedAgent {
                 id: "agent-mock-child".to_string(),
                 parent_agent_id: Some("agent-mock-parent".to_string()),
+                created_by: Some("agent-mock-parent".to_string()),
                 name: Some("Child".to_string()),
                 cwd: "/tmp".to_string(),
                 model: None,

@@ -8,7 +8,7 @@ export const Background = memo(function Background() {
   const isDawn = theme === "arctic-dawn";
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div className="app-background-layer fixed inset-0 overflow-hidden">
       {/* Deep space base */}
       <div
         className="absolute inset-0 theme-background-base"
@@ -113,35 +113,25 @@ export const Background = memo(function Background() {
       {customBgUrl && (
         <>
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 app-background-image"
             style={{
               backgroundImage: `url(${customBgUrl})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
-              transform: `scale(${1.035 + backgroundBlur * 0.002})`,
-              filter: `blur(${11 + backgroundBlur}px) saturate(0.96)`,
+              transform: `scale(${1.004 + backgroundBlur * 0.001})`,
+              filter: `blur(${backgroundBlur * 0.45}px) saturate(1.04)`,
             }}
           />
           <div
             className="absolute inset-0"
             style={{
-              backgroundImage: `url(${customBgUrl})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              transform: `scale(${1.008 + backgroundBlur * 0.002})`,
-              filter: `blur(${2.4 + backgroundBlur}px) saturate(0.98)`,
-              WebkitMaskImage:
-                "radial-gradient(ellipse 58% 52% at 50% 48%, black 0%, rgba(0,0,0,0.98) 38%, rgba(0,0,0,0.72) 56%, rgba(0,0,0,0.24) 74%, transparent 92%)",
-              maskImage:
-                "radial-gradient(ellipse 58% 52% at 50% 48%, black 0%, rgba(0,0,0,0.98) 38%, rgba(0,0,0,0.72) 56%, rgba(0,0,0,0.24) 74%, transparent 92%)",
+              background: "radial-gradient(ellipse 66% 58% at 50% 48%, transparent 0%, rgba(5,8,14,0.035) 58%, rgba(5,8,14,0.16) 100%)",
             }}
           />
           <div
             className="absolute inset-0"
             style={{
-              background: isDawn
-                ? "linear-gradient(180deg, rgba(247,250,255,0.2), rgba(235,243,255,0.08))"
-                : "rgba(3, 5, 12, 0.24)",
+              background: "linear-gradient(180deg, rgba(8,12,20,0.46), rgba(8,12,20,0.52))",
             }}
           />
         </>

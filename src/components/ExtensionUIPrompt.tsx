@@ -71,19 +71,31 @@ export function ExtensionUIPrompt() {
           {queue.length > 1 && <span className="nova-question-queue">{queue.length} 个问题</span>}
           <button type="button" className="nova-question-close" onClick={() => respond({ cancelled: true })} aria-label="取消"><X size={17} /></button>
         </header>
-        {message ? <div className="nova-question-message">{message}</div> : null}
+        <div className="nova-question-body">
+          {message ? <div className="nova-question-message">{message}</div> : null}
 
-        {request.method === "select" && (
-          <div className="nova-question-options">
-            {(request.options ?? []).map((opt, i) =>
-              opt === TYPE_SOMETHING ? (
-                <label className="nova-question-custom" key={i}><PenLine size={15} /><input placeholder="输入其他答案…" value={customValue} onChange={(e) => setCustomValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customValue.trim()) respond({ value: customValue.trim() }); }} /><button type="button" disabled={!customValue.trim()} onClick={() => customValue.trim() && respond({ value: customValue.trim() })} aria-label="提交自定义答案"><ArrowRight size={15} /></button></label>
-              ) : (
-                <button key={i} type="button" className="nova-question-option" onClick={() => respond({ value: opt })}><span className="nova-question-option-index">{i + 1}</span><span>{opt}</span><ArrowRight size={15} /></button>
-              ),
-            )}
-          </div>
-        )}
+          {request.method === "select" && (
+            <div className="nova-question-options">
+              {(request.options ?? []).map((opt, i) =>
+                opt === TYPE_SOMETHING ? (
+                  <label className="nova-question-custom" key={i}><PenLine size={15} /><input placeholder="输入其他答案…" value={customValue} onChange={(e) => setCustomValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customValue.trim()) respond({ value: customValue.trim() }); }} /><button type="button" disabled={!customValue.trim()} onClick={() => customValue.trim() && respond({ value: customValue.trim() })} aria-label="提交自定义答案"><ArrowRight size={15} /></button></label>
+                ) : (
+                  <button key={i} type="button" className="nova-question-option" onClick={() => respond({ value: opt })}><span className="nova-question-option-index">{i + 1}</span><span>{opt}</span><ArrowRight size={15} /></button>
+                ),
+              )}
+            </div>
+          )}
+
+          {request.method === "input" && (
+            <div className="nova-question-input-section">
+              <textarea ref={inputRef} placeholder={request.placeholder || "输入你的回答…"} value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); respond({ value: inputValue }); } if (e.key === "Escape") respond({ cancelled: true }); }} />
+              <div className="nova-question-actions">
+                <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>取消</button>
+                <button type="button" className="nova-question-button-primary" onClick={() => respond({ value: inputValue })}><ArrowRight size={15} />提交</button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {request.method === "confirm" && (
           <div className="nova-question-actions">
@@ -92,15 +104,6 @@ export function ExtensionUIPrompt() {
           </div>
         )}
 
-        {request.method === "input" && (
-          <div className="nova-question-input-section">
-            <textarea ref={inputRef} placeholder={request.placeholder || "输入你的回答…"} value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); respond({ value: inputValue }); } if (e.key === "Escape") respond({ cancelled: true }); }} />
-            <div className="nova-question-actions">
-              <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>取消</button>
-              <button type="button" className="nova-question-button-primary" onClick={() => respond({ value: inputValue })}><ArrowRight size={15} />提交</button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

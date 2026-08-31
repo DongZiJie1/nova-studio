@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AgentStatus,
+  AgentLifecycleSnapshot,
   AgentEventPayload,
   AgentInfo,
   ContextUsage,
@@ -20,8 +21,14 @@ import {
   getOrAssignAgentAvatar,
   type AgentAvatarId,
 } from "../lib/agent-avatars";
-import { requestSessionStats } from "../lib/tauri-bridge";
+import {
+  listAgentTasks,
+  requestSessionStats,
+  type AgentBatchInfo,
+  type AgentTaskInfo,
+} from "../lib/tauri-bridge";
 import { recordTokenUsage, recordUserInteraction } from "../lib/activity-tracker";
+import { useNotificationStore, type AgentNotificationStatus } from "./notification-store";
 
 // ─── Frontend-side types ───
 
@@ -43,20 +50,23 @@ export interface ChatMessage {
   id: string;
   entryId?: string;
   feedback?: "up" | "down";
-  role: "user" | "assistant" | "thinking" | "tool";
+  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
   attachments?: MessageAttachment[];
   sourceAgentId?: string;
+  authorLabel?: string;
 }
 
 export interface AgentState {
   id: string;
   parentAgentId: string | null;
+  createdBy: string | null;
   name: string | null;
   avatarId: AgentAvatarId;
   status: AgentStatus;
+  lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
   model: string | null;
   messages: ChatMessage[];
@@ -104,6 +114,10 @@ interface AgentStoreState {
   agents: AgentState[];
   activeAgentId: string | null;
   availableModels: AvailableModel[];
+  /** Delegated tasks from the hub registry (task panel data source). */
+  delegatedTasks: AgentTaskInfo[];
+  /** Delegated task batches, keyed snapshot list from the hub registry. */
+  delegatedBatches: AgentBatchInfo[];
 
   // Agent CRUD
   addAgent: (agent: AgentState) => void;
@@ -113,6 +127,8 @@ interface AgentStoreState {
   updateAgent: (id: string, update: Partial<AgentState>) => void;
   getAgent: (id: string) => AgentState | undefined;
   setAvailableModels: (models: AvailableModel[]) => void;
+  /** Pull the latest task/batch snapshot from the Rust registry. */
+  refreshAgentTasks: () => Promise<void>;
 
   // Message management
   addUserMessage: (agentId: string, content: string, attachments?: MessageAttachment[]) => void;
@@ -130,13 +146,36 @@ function nextId(): string {
   return `msg-${Date.now()}-${++messageCounter}`;
 }
 
+function formatAgentTaskResult(details: Record<string, unknown>): { content: string; agentId: string } {
+  const taskId = typeof details.taskId === "string" ? details.taskId : "Agent task";
+  const agentId = typeof details.agentId === "string" ? details.agentId : "Child Agent";
+  const status = typeof details.status === "string" ? details.status : "completed";
+  const summary = typeof details.summary === "string" ? details.summary : `${taskId} completed`;
+  const stringList = (key: string): string[] => Array.isArray(details[key])
+    ? details[key].filter((item): item is string => typeof item === "string")
+    : [];
+  const changedFiles = stringList("changedFiles");
+  const verification = stringList("verification");
+  const remainingRisks = stringList("remainingRisks");
+  const sections = [
+    `**${summary}**`,
+    `状态：${status} · 任务：${taskId}`,
+    changedFiles.length > 0 ? `修改文件：\n${changedFiles.map((file) => `- ${file}`).join("\n")}` : "修改文件：无",
+    verification.length > 0 ? `验证：\n${verification.map((item) => `- ${item}`).join("\n")}` : "验证：未提供",
+    remainingRisks.length > 0 ? `剩余风险：\n${remainingRisks.map((risk) => `- ${risk}`).join("\n")}` : "剩余风险：无",
+  ];
+  return { content: sections.join("\n\n"), agentId };
+}
+
 function agentStateFromInfo(info: AgentInfo): AgentState {
   return {
     id: info.id,
     parentAgentId: info.parent_agent_id,
+    createdBy: info.created_by,
     name: info.name ?? "Nova",
     avatarId: getOrAssignAgentAvatar(info.id),
     status: info.status,
+    lifecycle: info.lifecycle,
     cwd: info.cwd,
     model: info.model,
     messages: [],
@@ -161,8 +200,10 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
   return {
     ...agent,
     parentAgentId: info.parent_agent_id,
+    createdBy: info.created_by,
     name: info.name ?? agent.name,
     status: info.status,
+    lifecycle: info.lifecycle,
     cwd: info.cwd,
     model: info.model,
     createdAt: info.created_at,
@@ -240,6 +281,32 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         ? message.details as Record<string, unknown>
         : {};
       pendingSourceAgentId = typeof details.sourceAgentId === "string" ? details.sourceAgentId : undefined;
+      continue;
+    }
+
+    if (message.role === "custom" && message.customType === "agent_task_result") {
+      const details = message.details && typeof message.details === "object"
+        ? message.details as Record<string, unknown>
+        : {};
+      const formatted = formatAgentTaskResult(details);
+      hydrated.push({
+        id: nextId(),
+        role: "agent_result",
+        content: formatted.content,
+        timestamp,
+        authorLabel: formatted.agentId,
+        sourceAgentId: formatted.agentId,
+      });
+      continue;
+    }
+
+    if (message.role === "custom" && message.customType === "agent_task_batch_completed") {
+      hydrated.push({
+        id: nextId(),
+        role: "agent_batch",
+        content: messageText(message),
+        timestamp,
+      });
       continue;
     }
 
@@ -333,6 +400,21 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
   agents: [],
   activeAgentId: null,
   availableModels: [],
+  delegatedTasks: [],
+  delegatedBatches: [],
+
+  refreshAgentTasks: async () => {
+    try {
+      const snapshot = await listAgentTasks();
+      set({
+        delegatedTasks: snapshot.tasks,
+        delegatedBatches: snapshot.batches,
+      });
+    } catch {
+      // The hub registry lives in the Rust host; a transient failure just
+      // leaves the previous snapshot in place.
+    }
+  },
 
   addAgent: (agent) =>
     set((s) => {
@@ -481,6 +563,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     }
 
     if (event.type === "agent_delegated_task") {
+      void get().refreshAgentTasks();
       set((s) => ({
         agents: s.agents.map((agent) => agent.id === agentId
           ? {
@@ -495,6 +578,54 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
             }
           : agent),
+      }));
+      return;
+    }
+
+    if (event.type === "agent_task_result") {
+      void get().refreshAgentTasks();
+      const details = event.result;
+      const formatted = formatAgentTaskResult(details);
+      // Non-intrusive toast for background results; skip when the user is
+      // already looking at this agent's conversation.
+      if (get().activeAgentId !== agentId) {
+        const agent = get().agents.find((candidate) => candidate.id === agentId);
+        const status = typeof details.status === "string" ? details.status : "completed";
+        useNotificationStore.getState().push({
+          agentId,
+          agentName: agent?.name ?? "子 Agent",
+          status: status === "completed" || status === "error" || status === "stopped" || status === "orphaned"
+            ? (status as AgentNotificationStatus)
+            : "completed",
+          detail: typeof details.summary === "string" && details.summary
+            ? details.summary
+            : typeof details.error === "string" && details.error
+              ? details.error
+              : typeof details.delegatedTask === "string"
+                ? details.delegatedTask
+                : "",
+        });
+      }
+      set((s) => ({
+        agents: s.agents.map((agent) => {
+          if (agent.id !== agentId) return agent;
+          const duplicate = agent.messages.some(
+            (message) => message.role === "agent_result" && message.content === formatted.content && message.authorLabel === formatted.agentId,
+          );
+          if (duplicate) return agent;
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "agent_result",
+              content: formatted.content,
+              timestamp: Date.now(),
+              authorLabel: formatted.agentId,
+              sourceAgentId: formatted.agentId,
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }),
       }));
       return;
     }
@@ -545,10 +676,22 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           // so never replace messages already rendered.
           if (messages.length === 0 && agent.messages.length > 0) return agent;
           const hydrated = hydrateMessages(messages, feedback);
+          const persistedResultKeys = new Set(
+            hydrated
+              .filter((message) => message.role === "agent_result" || message.role === "agent_batch")
+              .map((message) => `${message.authorLabel ?? ""}\u001f${message.content}`),
+          );
+          const liveResultsMissingFromSnapshot = agent.messages.filter(
+            (message) => (message.role === "agent_result" || message.role === "agent_batch")
+              && !persistedResultKeys.has(`${message.authorLabel ?? ""}\u001f${message.content}`),
+          );
+          const reconciled = liveResultsMissingFromSnapshot.length > 0
+            ? [...hydrated, ...liveResultsMissingFromSnapshot].sort((left, right) => left.timestamp - right.timestamp)
+            : hydrated;
           return {
             ...agent,
-            messages: hydrated,
-            messageCount: Math.max(agent.messageCount, hydrated.length),
+            messages: reconciled,
+            messageCount: Math.max(agent.messageCount, reconciled.length),
           };
         }),
       }));
@@ -725,9 +868,55 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "message_lifecycle": {
       if (event.phase === "start") {
+        if (event.message?.role === "custom") return agent;
         return { ...agent, status: "streaming" as const };
       }
       if (event.phase === "end") {
+        const lifecycleMessage = event.message;
+        if (
+          lifecycleMessage?.role === "custom" &&
+          lifecycleMessage.customType === "agent_task_result"
+        ) {
+          const details = lifecycleMessage.details && typeof lifecycleMessage.details === "object"
+            ? lifecycleMessage.details as Record<string, unknown>
+            : {};
+          const formatted = formatAgentTaskResult(details);
+          const duplicate = agent.messages.some(
+            (message) => message.role === "agent_result" && message.content === formatted.content && message.authorLabel === formatted.agentId,
+          );
+          if (duplicate) return agent;
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "agent_result",
+              content: formatted.content,
+              timestamp: Date.now(),
+              authorLabel: formatted.agentId,
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
+        if (
+          lifecycleMessage?.role === "custom" &&
+          lifecycleMessage.customType === "agent_task_batch_completed"
+        ) {
+          const content = messageText(lifecycleMessage as PersistedRpcMessage);
+          const duplicate = agent.messages.some(
+            (message) => message.role === "agent_batch" && message.content === content,
+          );
+          if (duplicate) return agent;
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "agent_batch",
+              content,
+              timestamp: Date.now(),
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
         const text = extractAssistantText(event.message);
 
         // Check for provider error (e.g. 400 from model API)

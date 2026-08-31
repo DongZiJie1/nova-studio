@@ -17,6 +17,9 @@
         "height": 800,
         "minWidth": 900,
         "minHeight": 600,
+        "theme": "Dark",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "decorations": true,
         "transparent": false,
         "devtools": true
