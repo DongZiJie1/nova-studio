@@ -8550,3 +8550,108 @@ body {
   color: #425673;
   background: rgba(255, 255, 255, 0.26);
 }
+
+/* Expanded tool output uses the same substantial Liquid Glass material as the
+   sidebar. It remains scene-aware, but no longer disappears into detailed or
+   high-contrast wallpaper. */
+.activity-item-open > .activity-row {
+  border-color: color-mix(in srgb, var(--scene-local-border, rgba(255, 255, 255, 0.1)) 82%, rgba(190, 204, 255, 0.18) 18%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--scene-panel-highlight, rgba(255, 255, 255, 0.08)) 72%, transparent), transparent 54%),
+    color-mix(in srgb, var(--scene-panel-film, rgba(18, 23, 34, 0.42)) 78%, rgba(108, 114, 255, 0.08) 22%);
+  box-shadow: inset 0 1px 0 var(--scene-panel-highlight, rgba(255, 255, 255, 0.1));
+}
+
+.activity-item-open > .activity-detail {
+  position: relative;
+  isolation: isolate;
+  margin: 7px 0 12px 24px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--scene-local-border, rgba(255, 255, 255, 0.1)) 78%, rgba(255, 255, 255, 0.18) 22%);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--scene-panel-highlight, rgba(255, 255, 255, 0.08)) 80%, transparent), transparent 42%),
+    color-mix(in srgb, var(--scene-panel-film, rgba(18, 23, 34, 0.42)) 88%, rgba(34, 42, 58, 0.4) 12%);
+  box-shadow:
+    0 14px 36px rgba(8, 12, 20, 0.2),
+    inset 0 1px 0 color-mix(in srgb, var(--scene-panel-highlight, rgba(255, 255, 255, 0.1)) 88%, white 12%),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(30px) saturate(145%);
+  -webkit-backdrop-filter: blur(30px) saturate(145%);
+}
+
+.activity-item-open > .tool-card-detail {
+  padding: 12px 14px;
+  border-left-width: 1px;
+}
+
+.activity-item-open > .bash-detail .bash-command,
+.activity-item-open > .read-detail .read-detail-header {
+  padding: 10px 14px;
+  border-bottom-color: var(--scene-local-border, rgba(255, 255, 255, 0.09));
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--scene-local-film, rgba(255, 255, 255, 0.04)) 72%, transparent);
+}
+
+.activity-item-open > .bash-detail .bash-output,
+.activity-item-open > .read-detail .read-detail-content {
+  padding: 13px 14px 15px;
+  color: color-mix(in srgb, var(--color-text-secondary) 90%, var(--color-text-primary) 10%);
+  line-height: 1.62;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .activity-item-open > .activity-detail {
+  box-shadow:
+    0 14px 34px rgba(57, 78, 111, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58),
+    inset 0 -1px 0 rgba(69, 96, 136, 0.07);
+}
+
+/* Thinking is an inspectable system drawer, not a second assistant message. */
+.thinking-card .activity-kind {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, #c5a6ee 28%, transparent);
+  border-radius: 8px;
+  color: #c5a6ee;
+  background: linear-gradient(135deg, rgba(197, 166, 238, 0.12), rgba(125, 105, 186, 0.055));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  font-size: 10.5px;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+.thinking-card.activity-item-open > .activity-row {
+  border-color: color-mix(in srgb, #c5a6ee 15%, var(--scene-local-border, rgba(255, 255, 255, 0.09)) 85%);
+  background:
+    linear-gradient(135deg, rgba(197, 166, 238, 0.065), transparent 48%),
+    color-mix(in srgb, var(--scene-panel-film, rgba(18, 23, 34, 0.42)) 92%, transparent);
+}
+
+.thinking-card.activity-item-open > .thinking-message {
+  max-height: min(270px, 34vh);
+  margin-left: 42px;
+  padding: 12px 15px 14px;
+  border-color: color-mix(in srgb, #c5a6ee 12%, var(--scene-local-border, rgba(255, 255, 255, 0.09)) 88%);
+  border-radius: 15px;
+  scrollbar-gutter: stable;
+  color: color-mix(in srgb, var(--color-text-secondary) 92%, var(--color-text-primary) 8%);
+}
+
+.thinking-card .thinking-message .md-body {
+  line-height: 1.58;
+}
+
+.thinking-card .thinking-message .md-body p {
+  margin: 0 0 10px;
+}
+
+.thinking-card .thinking-message .md-body p:last-child {
+  margin-bottom: 0;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .thinking-card .activity-kind {
+  border-color: rgba(118, 86, 158, 0.18);
+  color: #68498d !important;
+  background: linear-gradient(135deg, rgba(118, 86, 158, 0.1), rgba(255, 255, 255, 0.2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+}
