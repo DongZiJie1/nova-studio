@@ -8368,9 +8368,13 @@ body {
 }
 
 @media (min-width: 1200px) {
-  .conversation-has-task-summary,
-  .conversation-input-with-task-summary {
+  .conversation-has-task-summary {
     padding-right: 378px !important;
+  }
+
+  .conversation-input-with-task-summary {
+    padding-right: 24px !important;
+    padding-left: 24px !important;
   }
 }
 
