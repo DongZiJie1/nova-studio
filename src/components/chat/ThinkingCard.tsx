@@ -7,7 +7,7 @@ export function ThinkingCard({ content, streaming = false }: { content: string; 
   const summary = content.replace(/\s+/g, " ").trim() || "Thinking…";
 
   return (
-    <div className={`activity-item${open ? " activity-item-open" : ""}`}>
+    <div className={`activity-item thinking-card${open ? " activity-item-open" : ""}`}>
       <button className="activity-row" onClick={() => setOpen((value) => !value)}>
         <span className="activity-toggle-icon">
           <Brain className="activity-kind-icon" size={14} />

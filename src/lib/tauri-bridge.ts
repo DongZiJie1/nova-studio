@@ -48,12 +48,102 @@ export async function sendPrompt(
   message: string,
   images?: ImageContent[],
   fileReferences?: FileReference[],
+  backgroundAgentIds?: string[],
 ): Promise<void> {
-  return invoke("send_prompt", { agentId, message, images, fileReferences });
+  return invoke("send_prompt", { agentId, message, images, fileReferences, backgroundAgentIds });
+}
+
+/** Run a one-off question against a transient session. The parent session is
+ * used only as context provenance; no message is appended to that session. */
+export async function askTemporary(
+  agentId: string,
+  question: string,
+  context: string,
+): Promise<string> {
+  return invoke<string>("ask_temporary", { agentId, question, context });
 }
 
 export async function abortAgent(agentId: string): Promise<void> {
   return invoke("abort_agent", { agentId });
+}
+
+export async function steerAgent(agentId: string, message: string): Promise<void> {
+  return invoke("steer_agent", { agentId, message });
+}
+
+export async function cancelAgent(agentId: string, reason?: string): Promise<void> {
+  return invoke("cancel_agent", { agentId, reason });
+}
+
+export async function forceStopAgent(agentId: string, reason?: string, timedOut = false): Promise<void> {
+  return invoke("force_stop_agent", { agentId, reason, timedOut });
+}
+
+export async function retryAgent(agentId: string, message?: string): Promise<void> {
+  return invoke("retry_agent", { agentId, message });
+}
+
+// ─── Delegated Task Registry (hub task panel) ───
+
+export type AgentTaskStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "error"
+  | "stopped"
+  | "orphaned";
+
+export type AgentBatchStatus = "open" | "running" | "completed" | "error" | "stopped";
+
+export interface AgentTaskInfo {
+  taskId: string;
+  batchId: string;
+  agentId: string;
+  status: AgentTaskStatus;
+  parentAgentId: string;
+  delegatedTask: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  lastActivityAt: string;
+  summary?: string;
+  changedFiles?: string[];
+  verification?: string[];
+  remainingRisks?: string[];
+  finalText?: string;
+  error?: string;
+}
+
+export interface AgentBatchInfo {
+  batchId: string;
+  parentAgentId: string;
+  taskIds: string[];
+  sealed: boolean;
+  resumeTriggered: boolean;
+  status: AgentBatchStatus;
+  tokenBudget: number;
+  costBudgetMicroUsd: number;
+}
+
+export interface AgentTaskSnapshot {
+  tasks: AgentTaskInfo[];
+  batches: AgentBatchInfo[];
+}
+
+export async function listAgentTasks(): Promise<AgentTaskSnapshot> {
+  return invoke("list_agent_tasks");
+}
+
+/**
+ * Re-run a finished (failed/stopped/orphaned) delegated task against the
+ * same child agent with the original task text and timeout.
+ */
+export async function retryTask(taskId: string): Promise<AgentTaskInfo> {
+  return invoke<AgentTaskInfo>("retry_task", { taskId });
+}
+
+export async function cancelTask(taskId: string, reason?: string): Promise<AgentTaskInfo> {
+  return invoke<AgentTaskInfo>("cancel_task", { taskId, reason });
 }
 
 export async function startNewSession(agentId: string): Promise<void> {
