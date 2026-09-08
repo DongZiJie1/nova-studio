@@ -80,3 +80,44 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
+
+      - name: Upload installer to Nova Agent release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.NOVA_AGENT_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${RELEASE_TAG}" != v* ]]; then
+            echo "::error::Release tag must start with v: ${RELEASE_TAG}"
+            exit 1
+          fi
+
+          case "${{ matrix.platform }}" in
+            macos-latest)
+              bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+              extension="dmg"
+              ;;
+            windows-latest)
+              bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle/nsis"
+              extension="exe"
+              ;;
+            *)
+              echo "::error::Unsupported platform: ${{ matrix.platform }}"
+              exit 1
+              ;;
+          esac
+
+          shopt -s nullglob
+          installers=("${bundle_dir}"/*."${extension}")
+          if [[ "${#installers[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one .${extension} installer in ${bundle_dir}"
+            printf '%s\n' "${installers[@]}"
+            exit 1
+          fi
+
+          gh release view "${RELEASE_TAG}" --repo DongZiJie1/nova-agent >/dev/null
+          gh release upload "${RELEASE_TAG}" "${installers[0]}" \
+            --repo DongZiJie1/nova-agent \
+            --clobber
