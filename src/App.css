@@ -7240,6 +7240,11 @@ body {
   pointer-events: none;
 }
 
+/* The photo contrast veil must not tint the default light scene grey. */
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-main::before {
+  content: none;
+}
+
 /* Progressive iOS-style scroll blur beneath the conversation switcher.
    The mask makes the same optical layer fade from strong at the top to
    completely transparent above the readable content area. */
@@ -7546,9 +7551,9 @@ body {
   border-color: rgba(86, 112, 154, 0.2);
   background:
     linear-gradient(125deg, rgba(255, 255, 255, 0.48), transparent 42%),
-    rgba(220, 232, 248, 0.38);
+    rgba(245, 249, 255, 0.64);
   box-shadow:
-    0 22px 54px rgba(57, 80, 116, 0.17),
+    0 10px 28px rgba(57, 80, 116, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     inset 0 -1px 0 rgba(68, 94, 133, 0.08);
   backdrop-filter: blur(34px) saturate(140%);
@@ -8078,6 +8083,42 @@ body {
   border-color: rgba(255, 255, 255, 0.16) !important;
   color: rgba(246, 248, 252, 0.96) !important;
   background: rgba(38, 46, 61, 0.72) !important;
+}
+
+/* Default light scenes use the Sidebar's pale glass for both pickers. */
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] :is(.model-picker-trigger, .project-picker-trigger) {
+  border-color: rgba(79, 106, 148, 0.16) !important;
+  color: var(--color-text-secondary) !important;
+  background: rgba(255, 255, 255, 0.58) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] :is(.model-picker-trigger:hover, .project-picker-trigger:hover, .model-picker-trigger-open, .project-picker-trigger-open) {
+  border-color: rgba(79, 106, 148, 0.24) !important;
+  color: var(--color-text-primary) !important;
+  background: rgba(255, 255, 255, 0.8) !important;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] :is(.model-picker-popover, .project-picker-popover) {
+  border-color: rgba(79, 106, 148, 0.16) !important;
+  color: var(--color-text-primary) !important;
+  background: linear-gradient(145deg, rgba(250, 252, 255, 0.96), rgba(232, 241, 253, 0.94)) !important;
+  box-shadow: 0 12px 32px rgba(57, 80, 116, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] :is(.project-picker-title, .model-picker-provider, .project-picker-option svg, .model-picker-context) {
+  color: var(--color-text-secondary) !important;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] :is(.project-picker-option, .model-picker-option) {
+  color: var(--color-text-primary) !important;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] :is(.project-picker-option:hover, .model-picker-option:hover, .project-picker-option-selected, .model-picker-option-active) {
+  border-color: rgba(88, 126, 218, 0.2) !important;
+  color: var(--color-text-primary) !important;
+  background: linear-gradient(135deg, rgba(111, 151, 238, 0.17), rgba(134, 145, 232, 0.09)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
 }
 
 /* Thinking is system-layer information: use a restrained violet semantic
