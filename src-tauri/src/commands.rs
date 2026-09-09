@@ -238,14 +238,13 @@ pub async fn ask_temporary(
     state: State<'_, AgentManagerState>,
     agent_id: String,
     question: String,
-    context: String,
 ) -> Result<String, String> {
     log::info!(
         "[cmd] ask_temporary parent={} len={}",
         agent_id,
         question.len()
     );
-    state.0.temporary_ask(&agent_id, question, context).await
+    state.0.temporary_ask(&agent_id, question).await
 }
 
 #[tauri::command]

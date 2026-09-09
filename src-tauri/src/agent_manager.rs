@@ -421,6 +421,11 @@ impl AgentManager {
                 .map(|pair| pair[1].clone()),
             "parentAgentId": record.parent_agent_id.clone(),
             "depth": record.depth,
+            "transientContextFromAgentId": if agent_id.starts_with("temporary-") {
+                record.parent_agent_id.clone()
+            } else {
+                None
+            },
         }))?;
         let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
@@ -459,31 +464,36 @@ impl AgentManager {
 
         let info = self.build_info(&agent_id, &record.cwd, &process).await;
 
-        // Forward events from this agent to the global event bus
-        let mut rx = process.subscribe();
-        let global_tx = self.global_event_tx.clone();
-        let records = self.records.clone();
-        let state_path = self.state_path.clone();
-        let persistence_lock = self.persistence_lock.clone();
-        let aid = agent_id.clone();
-        tokio::spawn(async move {
-            while let Ok(msg) = rx.recv().await {
-                if let Some(name) = msg.get("name").and_then(|value| value.as_str()) {
-                    if msg.get("type").and_then(|value| value.as_str()) == Some("agent_name_update")
-                    {
-                        if let Some(record) = records.write().await.get_mut(&aid) {
-                            record.name = Some(name.to_string());
-                        }
-                        if let Err(error) =
-                            persist_records_to_path(&state_path, &records, &persistence_lock).await
+        // Disposable side questions are consumed directly by `ask`; keeping
+        // them off the global bus prevents them appearing in the Studio console.
+        if !agent_id.starts_with("temporary-") {
+            let mut rx = process.subscribe();
+            let global_tx = self.global_event_tx.clone();
+            let records = self.records.clone();
+            let state_path = self.state_path.clone();
+            let persistence_lock = self.persistence_lock.clone();
+            let aid = agent_id.clone();
+            tokio::spawn(async move {
+                while let Ok(msg) = rx.recv().await {
+                    if let Some(name) = msg.get("name").and_then(|value| value.as_str()) {
+                        if msg.get("type").and_then(|value| value.as_str())
+                            == Some("agent_name_update")
                         {
-                            log::warn!("Failed to persist Agent name update: {error}");
+                            if let Some(record) = records.write().await.get_mut(&aid) {
+                                record.name = Some(name.to_string());
+                            }
+                            if let Err(error) =
+                                persist_records_to_path(&state_path, &records, &persistence_lock)
+                                    .await
+                            {
+                                log::warn!("Failed to persist Agent name update: {error}");
+                            }
                         }
                     }
+                    let _ = global_tx.send((aid.clone(), msg));
                 }
-                let _ = global_tx.send((aid.clone(), msg));
-            }
-        });
+            });
+        }
 
         self.agents
             .write()
@@ -574,7 +584,6 @@ impl AgentManager {
         &self,
         parent_agent_id: &str,
         question: String,
-        context: String,
     ) -> Result<String, String> {
         if self.get_process(parent_agent_id).await.is_none() {
             self.activate(parent_agent_id).await?;
@@ -605,15 +614,10 @@ impl AgentManager {
         };
 
         self.spawn_record(transient, false).await?;
-        let prompt = format!(
-            "You are answering a temporary side question. Use the supplied parent-session context, but do not perform tool calls, modify files, delegate work, or claim that this exchange changed the parent conversation. Answer only the user's temporary question.\n\n<PARENT_CONTEXT>\n{}\n</PARENT_CONTEXT>\n\n<TEMPORARY_QUESTION>\n{}\n</TEMPORARY_QUESTION>",
-            context,
-            question,
-        );
         let result = self
             .ask(
                 &transient_id,
-                prompt,
+                question,
                 180,
                 CollaborationContext {
                     request_id: format!("temporary-{short_id}"),

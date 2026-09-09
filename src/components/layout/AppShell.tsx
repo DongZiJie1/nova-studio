@@ -915,33 +915,26 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   const [temporaryEntries, setTemporaryEntries] = useState<TemporaryChatEntry[]>([]);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(`nova-temporary-chat:${sessionId}`);
-      setTemporaryEntries(stored ? JSON.parse(stored) as TemporaryChatEntry[] : []);
-    } catch {
-      setTemporaryEntries([]);
-    }
+    // Remove data written by older builds; side questions are intentionally
+    // scoped to this renderer lifetime only.
+    localStorage.removeItem(`nova-temporary-chat:${sessionId}`);
+    setTemporaryEntries([]);
     setTemporaryInput("");
     setTemporaryError(null);
   }, [sessionId]);
-
-  const persistTemporaryEntries = (entries: TemporaryChatEntry[]) => {
-    setTemporaryEntries(entries);
-    localStorage.setItem(`nova-temporary-chat:${sessionId}`, JSON.stringify(entries));
-  };
 
   const submitTemporaryQuestion = async () => {
     const question = temporaryInput.trim();
     if (!question || temporaryPending) return;
     const userEntry: TemporaryChatEntry = { id: crypto.randomUUID(), role: "user", content: question, createdAt: Date.now() };
     const optimistic = [...temporaryEntries, userEntry];
-    persistTemporaryEntries(optimistic);
+    setTemporaryEntries(optimistic);
     setTemporaryInput("");
     setTemporaryPending(true);
     setTemporaryError(null);
     try {
       const answer = await onTemporaryAsk(question);
-      persistTemporaryEntries([...optimistic, { id: crypto.randomUUID(), role: "assistant", content: answer, createdAt: Date.now() }]);
+      setTemporaryEntries([...optimistic, { id: crypto.randomUUID(), role: "assistant", content: answer, createdAt: Date.now() }]);
     } catch (askError) {
       setTemporaryError(askError instanceof Error ? askError.message : String(askError));
     } finally {
@@ -1321,21 +1314,7 @@ export function AppShell() {
   const showAgentWorkbench = Boolean(activeAgent);
   const handleTemporaryAsk = useCallback(async (question: string) => {
     if (!activeAgent) throw new Error("当前没有可复用上下文的主 Agent");
-    const snapshot = activeAgent.contextSnapshot;
-    const contextParts: string[] = [];
-    if (snapshot?.systemPrompt) contextParts.push(`SYSTEM PROMPT\n${snapshot.systemPrompt}`);
-    if (snapshot?.contextFiles.length) {
-      contextParts.push(snapshot.contextFiles.map((file) => `CONTEXT FILE: ${file.path}\n${file.content}`).join("\n\n"));
-    }
-    const conversation = activeAgent.messages.slice(-100).map((message) => {
-      const toolDetails = (message.toolCalls ?? []).map((tool) => {
-        const result = tool.result === undefined ? "" : ` -> ${JSON.stringify(tool.result).slice(0, 5000)}`;
-        return `[${tool.name}] ${JSON.stringify(tool.args)}${result}`;
-      }).join("\n");
-      return `${message.role.toUpperCase()}: ${message.content}${toolDetails ? `\n${toolDetails}` : ""}`;
-    }).join("\n\n");
-    contextParts.push(`CURRENT CONVERSATION\n${conversation}`);
-    return askTemporary(activeAgent.id, question, contextParts.join("\n\n---\n\n"));
+    return askTemporary(activeAgent.id, question);
   }, [activeAgent]);
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the

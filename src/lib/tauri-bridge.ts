@@ -58,9 +58,8 @@ export async function sendPrompt(
 export async function askTemporary(
   agentId: string,
   question: string,
-  context: string,
 ): Promise<string> {
-  return invoke<string>("ask_temporary", { agentId, question, context });
+  return invoke<string>("ask_temporary", { agentId, question });
 }
 
 export async function abortAgent(agentId: string): Promise<void> {
