@@ -1137,7 +1137,7 @@ export function AppShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
-  const inputCardRef = useRef<HTMLDivElement>(null);
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1658,7 +1658,7 @@ export function AppShell() {
   useEffect(() => {
     if (slashCommands.length === 0 && !fileMention) return;
     const dismissSlashCommands = (event: MouseEvent) => {
-      if (!inputCardRef.current?.contains(event.target as Node)) {
+      if (!composerShellRef.current?.contains(event.target as Node)) {
         setSlashCommandMenuDismissed(true);
         setFileMentionMenuDismissed(true);
       }
@@ -2851,7 +2851,11 @@ export function AppShell() {
               justifyContent: "center",
             }}
           >
-            <div className="composer-shell" style={{ position: "relative", width: "100%", maxWidth: 660 }}>
+            <div
+              ref={composerShellRef}
+              className="composer-shell"
+              style={{ position: "relative", width: "100%", maxWidth: 660 }}
+            >
               {showScrollToBottom && activeAgent && (
                 <button
                   type="button"
@@ -2887,7 +2891,6 @@ export function AppShell() {
               )}
               {/* Input card */}
               <div
-                ref={inputCardRef}
                 className="nova-input"
                 style={{
                   overflow: "visible",
