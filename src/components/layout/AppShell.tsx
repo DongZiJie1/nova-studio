@@ -2876,6 +2876,15 @@ export function AppShell() {
                   </div>
                 </div>
               )}
+              {fileMention && (
+                <FileMentionMenu
+                  files={projectFiles}
+                  loading={projectFilesLoading}
+                  selectedIndex={Math.min(selectedProjectFileIndex, Math.max(0, projectFiles.length - 1))}
+                  onSelectedIndexChange={setSelectedProjectFileIndex}
+                  onSelect={selectProjectFile}
+                />
+              )}
               {/* Input card */}
               <div
                 ref={inputCardRef}
@@ -2979,15 +2988,6 @@ export function AppShell() {
                     selectedIndex={Math.min(selectedSlashCommandIndex, slashCommands.length - 1)}
                     onSelectedIndexChange={setSelectedSlashCommandIndex}
                     onSelect={selectSlashCommand}
-                  />
-                )}
-                {fileMention && (
-                  <FileMentionMenu
-                    files={projectFiles}
-                    loading={projectFilesLoading}
-                    selectedIndex={Math.min(selectedProjectFileIndex, Math.max(0, projectFiles.length - 1))}
-                    onSelectedIndexChange={setSelectedProjectFileIndex}
-                    onSelect={selectProjectFile}
                   />
                 )}
                 <textarea

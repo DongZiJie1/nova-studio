@@ -8652,6 +8652,160 @@ body {
     inset 0 -1px 0 rgba(69, 96, 136, 0.07);
 }
 
+/* File mentions use the same floating Liquid Glass material as the composer
+   and sidebar instead of the older opaque command-menu surface. */
+.file-mention-menu {
+  isolation: isolate;
+  left: 6px;
+  right: 6px;
+  padding: 10px;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--liquid-glass-border) 84%, rgba(190, 204, 255, 0.22) 16%);
+  border-radius: 22px;
+  background:
+    linear-gradient(122deg, color-mix(in srgb, var(--scene-panel-highlight, rgba(255, 255, 255, 0.08)) 90%, transparent), transparent 36%),
+    color-mix(in srgb, var(--scene-panel-film, rgba(18, 24, 35, 0.42)) 90%, rgba(42, 50, 66, 0.28) 10%);
+  box-shadow:
+    0 22px 58px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 color-mix(in srgb, var(--scene-panel-highlight, rgba(255, 255, 255, 0.1)) 88%, white 12%),
+    inset 1px 0 0 rgba(255, 255, 255, 0.045),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(36px) saturate(152%);
+  -webkit-backdrop-filter: blur(36px) saturate(152%);
+  animation: liquid-panel-in 220ms ease-out both;
+}
+
+.file-mention-menu::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(ellipse 74% 30% at 16% 0%, rgba(255, 255, 255, 0.11), transparent 66%),
+    linear-gradient(110deg, rgba(255, 255, 255, 0.025), transparent 30%);
+  pointer-events: none;
+}
+
+.file-mention-menu > * {
+  position: relative;
+  z-index: 1;
+}
+
+.file-mention-title {
+  padding: 7px 12px 9px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+}
+
+.file-mention-menu .slash-command-menu-scroll {
+  padding: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-muted) 30%, transparent) transparent;
+}
+
+.file-mention-option {
+  min-height: 42px;
+  padding: 8px 11px;
+  border-radius: 13px;
+  transition: color 180ms ease-out, background 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out, transform 160ms ease-out;
+}
+
+.file-mention-option:hover {
+  border-color: color-mix(in srgb, var(--scene-local-border, rgba(255, 255, 255, 0.1)) 76%, rgba(255, 255, 255, 0.12) 24%);
+  background: color-mix(in srgb, var(--scene-local-film, rgba(255, 255, 255, 0.055)) 78%, var(--scene-panel-highlight, rgba(255, 255, 255, 0.08)) 22%);
+}
+
+.file-mention-option:active {
+  transform: scale(0.992);
+}
+
+.file-mention-option.slash-command-option-selected {
+  border-color: color-mix(in srgb, var(--color-accent-start) 34%, var(--scene-local-border, rgba(255, 255, 255, 0.1)) 66%);
+  background:
+    linear-gradient(105deg, color-mix(in srgb, var(--color-accent-start) 18%, transparent), color-mix(in srgb, var(--color-accent-end) 9%, transparent)),
+    color-mix(in srgb, var(--scene-local-film, rgba(255, 255, 255, 0.055)) 82%, transparent);
+  box-shadow:
+    0 8px 22px color-mix(in srgb, var(--color-accent-start) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
+}
+
+.file-mention-name {
+  color: var(--color-text-primary);
+}
+
+.file-mention-directory,
+.file-mention-empty,
+.file-mention-menu .slash-command-hint {
+  color: var(--color-text-muted);
+}
+
+.file-mention-icon {
+  color: var(--accent-soft);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--color-accent-start) 24%, transparent));
+}
+
+.file-mention-menu .slash-command-hint {
+  margin-top: 5px;
+  padding: 8px 11px 3px;
+  border-top-color: var(--scene-local-border, rgba(255, 255, 255, 0.08));
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .file-mention-menu {
+  border-color: rgba(86, 112, 154, 0.2);
+  background:
+    linear-gradient(125deg, rgba(255, 255, 255, 0.52), transparent 42%),
+    rgba(232, 240, 252, 0.58);
+  box-shadow:
+    0 18px 46px rgba(57, 80, 116, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    inset 0 -1px 0 rgba(68, 94, 133, 0.08);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .file-mention-menu {
+  border-color: rgba(231, 236, 255, 0.2);
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.075), transparent 38%),
+    linear-gradient(145deg, rgba(42, 50, 66, 0.34), rgba(21, 27, 39, 0.27));
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .file-mention-title {
+  color: #aeb8c8;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .file-mention-name {
+  color: #f0f3f8;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .file-mention-directory {
+  color: #aab3c3;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .file-mention-icon {
+  color: #8fa8ff;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .file-mention-menu .slash-command-hint {
+  color: #98a3b5;
+  border-top-color: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .file-mention-title {
+  color: #657793;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .file-mention-name {
+  color: #213654;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .file-mention-directory,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .file-mention-menu .slash-command-hint {
+  color: #64748b;
+}
+
 /* Thinking is an inspectable system drawer, not a second assistant message. */
 .thinking-card .activity-kind {
   padding: 2px 8px;
