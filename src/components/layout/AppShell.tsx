@@ -67,6 +67,7 @@ import {
   FolderOpen,
   Pencil,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Plus,
   X,
@@ -863,6 +864,7 @@ interface BatchTaskPanelProps {
   onSelect: (agentId: string) => void;
   sessionId: string;
   onTemporaryAsk: (question: string) => Promise<string>;
+  onCollapse: () => void;
 }
 
 interface WorkbenchFile {
@@ -906,8 +908,8 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   onSelect,
   sessionId,
   onTemporaryAsk,
+  onCollapse,
 }: BatchTaskPanelProps) {
-  const [expanded, setExpanded] = useState(true);
   const [activeTab, setActiveTab] = useState<"workbench" | "tasks">("workbench");
   const [temporaryInput, setTemporaryInput] = useState("");
   const [temporaryPending, setTemporaryPending] = useState(false);
@@ -968,14 +970,14 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
       <button
         type="button"
         className="task-panel-header"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={onCollapse}
+        aria-label="收起 Agent 工作台"
       >
         <span className="task-panel-heading"><Bot size={15} />Agent 工作台</span>
         <span className="task-panel-count">{childAgents.length}</span>
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <ChevronRight size={13} />
       </button>
-      {expanded && (
-        <div className="task-panel-body">
+      <div className="task-panel-body">
           <div className="agent-workbench-tabs" role="tablist" aria-label="Agent 工作台视图">
             <button type="button" role="tab" aria-selected={activeTab === "workbench"} className={activeTab === "workbench" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("workbench")}>工作台</button>
             <button type="button" role="tab" aria-selected={activeTab === "tasks"} className={activeTab === "tasks" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("tasks")}>临时提问</button>
@@ -1055,8 +1057,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
               </div>
             </div>
           )}
-        </div>
-      )}
+      </div>
     </section>
   );
 });
@@ -1094,6 +1095,7 @@ export function AppShell() {
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [projectFilesLoading, setProjectFilesLoading] = useState(false);
   const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
+  const [agentWorkbenchOpen, setAgentWorkbenchOpen] = useState(false);
   const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -2360,7 +2362,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${showAgentWorkbench && conversationView === "chat" ? "studio-main-has-task-summary" : ""} relative w-full flex flex-col overflow-hidden`}>
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} relative w-full flex flex-col overflow-hidden`}>
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -2465,7 +2467,7 @@ export function AppShell() {
             onWheelCapture={handleConversationWheel}
             className={`conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
-            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${showAgentWorkbench && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
+            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""}`}
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
@@ -2775,7 +2777,7 @@ export function AppShell() {
             )}
           </div>
 
-          {!settingsOpen && conversationView === "chat" && showAgentWorkbench && (
+          {!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen && (
             <aside className="conversation-task-summary">
               <BatchTaskPanel
                 tasks={activeDelegatedTasks}
@@ -2786,8 +2788,23 @@ export function AppShell() {
                 onSelect={handleSelectAgent}
                 sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
                 onTemporaryAsk={handleTemporaryAsk}
+                onCollapse={() => setAgentWorkbenchOpen(false)}
               />
             </aside>
+          )}
+
+          {!settingsOpen && conversationView === "chat" && showAgentWorkbench && !agentWorkbenchOpen && (
+            <button
+              type="button"
+              className="agent-workbench-trigger"
+              onClick={() => setAgentWorkbenchOpen(true)}
+              aria-label="展开 Agent 工作台"
+              title="Agent 工作台"
+            >
+              <Bot size={17} />
+              <ChevronLeft size={13} />
+              {activeChildAgents.length > 0 && <span>{activeChildAgents.length}</span>}
+            </button>
           )}
 
           {!settingsOpen && conversationView === "chat" && !showAgentWorkbench && showConversationMinimap && (
@@ -2822,7 +2839,7 @@ export function AppShell() {
 
           {/* Input area */}
           <div
-            className={showAgentWorkbench ? "conversation-input-area conversation-input-with-task-summary" : "conversation-input-area"}
+            className="conversation-input-area"
             style={{
               flexShrink: 0,
               padding: "60px 24px 56px",
