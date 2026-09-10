@@ -48,6 +48,7 @@ function isAgentTrajectoryTool(name: string): boolean {
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
+import { ModelSettings } from "../settings/ModelSettings";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { Markdown } from "../chat/Markdown";
@@ -1443,7 +1444,7 @@ export function AppShell() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "activity">("appearance");
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -2023,6 +2024,32 @@ export function AppShell() {
     }
   }, [availableModels, defaultModel, defaultProvider, setDefaultModel, setDefaultProvider]);
 
+  const refreshModelCatalog = useCallback(async () => {
+    const results = await Promise.allSettled([listAllModels(), fetchModelsViaShell()]);
+    const merged = new Map<string, AvailableModel>();
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("[AppShell] model catalog source failed:", result.reason);
+        continue;
+      }
+      for (const model of result.value ?? []) {
+        const mapped: AvailableModel = {
+          id: String(model.id ?? ""),
+          name: String(model.name ?? model.id ?? ""),
+          provider: String(model.provider ?? ""),
+          contextWindow: Number(model.contextWindow ?? 0),
+          maxTokens: Number(model.maxTokens ?? 0),
+          reasoning: Boolean(model.reasoning),
+          images: Boolean(model.images),
+        };
+        if (!mapped.id || !mapped.provider) continue;
+        merged.set(`${mapped.provider}:${mapped.id}`, mapped);
+      }
+    }
+    if (merged.size === 0) throw new Error("模型已保存，但刷新模型列表失败");
+    useAgentStore.setState({ availableModels: Array.from(merged.values()) });
+  }, []);
+
   // Load agents on mount
   useEffect(() => {
     listAgents()
@@ -2039,32 +2066,8 @@ export function AppShell() {
     // Merge the bundled/absolute CLI catalog with the user's shell Nova.
     // The latter includes newly-added models.json providers such as Ollama,
     // while packaged Studio builds may point at an older bundled CLI.
-    void Promise.allSettled([listAllModels(), fetchModelsViaShell()]).then((results) => {
-      const merged = new Map<string, AvailableModel>();
-      for (const result of results) {
-        if (result.status === "rejected") {
-          console.error("[AppShell] model catalog source failed:", result.reason);
-          continue;
-        }
-        for (const model of result.value ?? []) {
-          const mapped: AvailableModel = {
-            id: String(model.id ?? ""),
-            name: String(model.name ?? model.id ?? ""),
-            provider: String(model.provider ?? ""),
-            contextWindow: Number(model.contextWindow ?? 0),
-            maxTokens: Number(model.maxTokens ?? 0),
-            reasoning: Boolean(model.reasoning),
-            images: Boolean(model.images),
-          };
-          if (!mapped.id || !mapped.provider) continue;
-          merged.set(`${mapped.provider}:${mapped.id}`, mapped);
-        }
-      }
-      if (merged.size > 0) {
-        useAgentStore.setState({ availableModels: Array.from(merged.values()) });
-      }
-    });
-  }, []);
+    void refreshModelCatalog().catch((reason) => console.error("[AppShell] initial model refresh failed:", reason));
+  }, [refreshModelCatalog]);
 
   // Cleanup blob URLs on unmount
   useEffect(() => {
@@ -2523,6 +2526,7 @@ export function AppShell() {
                 <>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" title="模型设置"><Bot size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" title="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
               ) : (
@@ -2572,6 +2576,10 @@ export function AppShell() {
                 <button type="button" className={`settings-category-button ${settingsSection === "appearance" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("appearance")}>
                   <Palette size={16} />
                   <span>外观</span>
+                </button>
+                <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
+                  <Bot size={16} />
+                  <span>模型</span>
                 </button>
                 <button type="button" className={`settings-category-button ${settingsSection === "activity" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("activity")}>
                   <ChartNoAxesColumnIncreasing size={16} />
@@ -2785,6 +2793,11 @@ export function AppShell() {
                     </label>
                   </div>
                   </>
+                ) : settingsSection === "models" ? (
+                  <ModelSettings
+                    models={availableModels}
+                    onSaved={refreshModelCatalog}
+                  />
                 ) : (
                   <ActivityHeatmap />
                 )}
