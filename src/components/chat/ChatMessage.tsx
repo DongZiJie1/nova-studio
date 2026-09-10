@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route } from "lucide-react";
+import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route, RotateCcw } from "lucide-react";
 import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
@@ -11,25 +11,27 @@ export interface TurnFileChange {
   kind: "edit" | "write";
   additions: number;
   deletions: number;
-  patch?: string;
+  patches?: string[];
+  created?: boolean;
+  revertible?: boolean;
 }
 
-function FileChangesCard({ changes }: { changes: TurnFileChange[] }) {
-  const [open, setOpen] = useState(false);
+function FileChangesCard({ changes, onRevert, onReview }: { changes: TurnFileChange[]; onRevert?: (change: TurnFileChange) => Promise<void>; onReview?: (path: string) => void }) {
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
   const additions = changes.reduce((total, change) => total + change.additions, 0);
   const deletions = changes.reduce((total, change) => total + change.deletions, 0);
-  const patches = changes.filter((change) => change.patch);
+  const patchableChanges = changes.filter((change) => (change.patches?.length ?? 0) > 0);
   const visibleChanges = changes.length > 4 ? changes.slice(0, 3) : changes;
   const hiddenChanges = changes.length > 4 ? changes.slice(3) : [];
   return (
-    <div className={`turn-file-change ${open ? "turn-file-change-open" : ""}`}>
+    <div className="turn-file-change">
       <div className="turn-file-change-summary">
         <span className="turn-file-change-icon"><FileCode size={18} /></span>
         <span className="turn-file-change-copy"><strong>{changes.length === 1 ? "已编辑 1 个文件" : `已编辑 ${changes.length} 个文件`}</strong><span className="turn-file-change-stats"><b>+{additions}</b><i>-{deletions}</i></span></span>
-        {patches.length > 0 && <button type="button" className="turn-file-change-review" onClick={() => setOpen((value) => !value)}>{open ? "收起" : "审核"}<ChevronRight size={14} /></button>}
+        {patchableChanges.length > 0 && <button type="button" className="turn-file-change-review" onClick={() => onReview?.(patchableChanges[0].path)}>审核<ChevronRight size={14} /></button>}
       </div>
       <div className="turn-file-change-list">
-        {visibleChanges.map((change) => <div className="turn-file-change-row" key={change.path}><span title={change.path}>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></div>)}
+        {visibleChanges.map((change) => <div className="turn-file-change-row" key={change.path}><button type="button" className="turn-file-change-row-main" onClick={() => onReview?.(change.path)}><span title={change.path}>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></button>{onRevert && change.revertible !== false && (change.patches?.length ?? 0) > 0 && <button type="button" className="turn-file-change-revert" disabled={pendingPath === change.path} onClick={() => { setPendingPath(change.path); void onRevert(change).catch(() => {}).finally(() => setPendingPath(null)); }}><RotateCcw size={12} />{pendingPath === change.path ? "撤回中" : "撤回"}</button>}</div>)}
         {hiddenChanges.length > 0 && (
           <div className="turn-file-change-overflow" tabIndex={0}>
             <span>…</span><span>还有 {hiddenChanges.length} 个文件</span>
@@ -39,7 +41,6 @@ function FileChangesCard({ changes }: { changes: TurnFileChange[] }) {
           </div>
         )}
       </div>
-      {open && patches.length > 0 && <div className="turn-file-change-patches">{patches.map((change) => <section key={change.path}><strong>{change.path}</strong><pre>{change.patch}</pre></section>)}</div>}
     </div>
   );
 }
@@ -105,6 +106,8 @@ export const ChatMessage = memo(function ChatMessage({
   onFeedback,
   onFork,
   onOpenAgent,
+  onRevertFileChange,
+  onReviewFileChange,
   fileChanges = [],
 }: {
   message: ChatMessageData;
@@ -114,6 +117,8 @@ export const ChatMessage = memo(function ChatMessage({
   onFeedback?: (message: ChatMessageData, rating: "up" | "down" | null) => void;
   onFork?: (message: ChatMessageData) => void;
   onOpenAgent?: (agentId: string, view: "chat" | "trajectory") => void;
+  onRevertFileChange?: (change: TurnFileChange) => Promise<void>;
+  onReviewFileChange?: (path: string) => void;
   fileChanges?: TurnFileChange[];
 }) {
   const [copied, setCopied] = useState(false);
@@ -207,7 +212,7 @@ export const ChatMessage = memo(function ChatMessage({
         )}
         {!isUser && showActions && fileChanges.length > 0 && (
           <div className="turn-file-changes" aria-label="本轮文件改动">
-            <FileChangesCard changes={fileChanges} />
+            <FileChangesCard changes={fileChanges} onRevert={onRevertFileChange} onReview={onReviewFileChange} />
           </div>
         )}
         {!isUser && showActions && (

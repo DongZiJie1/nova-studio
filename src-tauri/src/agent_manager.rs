@@ -426,6 +426,7 @@ impl AgentManager {
             } else {
                 None
             },
+            "noTools": agent_id.starts_with("temporary-"),
         }))?;
         let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
@@ -580,11 +581,18 @@ impl AgentManager {
     /// Ask through a transient sibling context without mutating the parent
     /// conversation. The disposable Nova session is never registered in the
     /// Studio record catalog and is stopped immediately after the reply.
-    pub async fn temporary_ask(
+    /// Streaming assistant text is re-emitted on the provided emitter so the
+    /// UI can render the answer incrementally.
+    pub async fn temporary_ask<E>(
         &self,
         parent_agent_id: &str,
         question: String,
-    ) -> Result<String, String> {
+        request_id: String,
+        emitter: E,
+    ) -> Result<String, String>
+    where
+        E: Fn(serde_json::Value) + Send + 'static,
+    {
         if self.get_process(parent_agent_id).await.is_none() {
             self.activate(parent_agent_id).await?;
         }
@@ -614,6 +622,34 @@ impl AgentManager {
         };
 
         self.spawn_record(transient, false).await?;
+
+        // Forward streaming assistant text while `ask` collects the final
+        // reply. The broadcast channel delivers every event to both the
+        // forwarder and `ask`; full text per update keeps the UI robust
+        // against missed deltas.
+        if let Some(process) = self.get_process(&transient_id).await {
+            let mut chunk_rx = process.subscribe();
+            let chunk_request_id = request_id.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = chunk_rx.recv().await {
+                    if event.get("type").and_then(|value| value.as_str()) != Some("message_update") {
+                        continue;
+                    }
+                    let Some(message) = event.get("message") else {
+                        continue;
+                    };
+                    if message.get("role").and_then(|value| value.as_str()) != Some("assistant") {
+                        continue;
+                    }
+                    let text = extract_text_from_message(message);
+                    emitter(serde_json::json!({
+                        "requestId": chunk_request_id,
+                        "text": text,
+                    }));
+                }
+            });
+        }
+
         let result = self
             .ask(
                 &transient_id,
@@ -713,6 +749,30 @@ impl AgentManager {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         agent.send_command(&RpcCommand::GetAvailableModels { id: None })
+    }
+
+    pub async fn revert_file_change(
+        &self,
+        agent_id: &str,
+        path: String,
+        patches: Vec<String>,
+        created: Option<bool>,
+    ) -> Result<(), String> {
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.request_agent_command(
+            agent,
+            RpcCommand::RevertFileChange {
+                id: Some(request_id.clone()),
+                path,
+                patches,
+                created,
+            },
+            &request_id,
+            30,
+        )
+        .await?;
+        Ok(())
     }
 
     /// Start a fresh session in an existing Studio agent process.
@@ -1398,7 +1458,6 @@ mod tests {
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
-                created_by: Some("user".to_string()),
                 model: Some("test-model".to_string()),
                 provider: None,
                 args: None,
@@ -1548,6 +1607,7 @@ mod tests {
             PersistedAgent {
                 id: "agent-mock-parent".to_string(),
                 parent_agent_id: None,
+                created_by: Some("user".to_string()),
                 name: Some("Parent".to_string()),
                 cwd: "/tmp".to_string(),
                 model: None,

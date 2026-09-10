@@ -4,7 +4,7 @@ use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, State};
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 50_000;
 const MAX_PROJECT_FILE_RESULTS: usize = 200;
@@ -236,15 +236,26 @@ pub async fn send_prompt(
 #[tauri::command]
 pub async fn ask_temporary(
     state: State<'_, AgentManagerState>,
+    app: tauri::AppHandle,
     agent_id: String,
     question: String,
+    request_id: String,
 ) -> Result<String, String> {
     log::info!(
-        "[cmd] ask_temporary parent={} len={}",
+        "[cmd] ask_temporary parent={} len={} request={}",
         agent_id,
-        question.len()
+        question.len(),
+        request_id
     );
-    state.0.temporary_ask(&agent_id, question).await
+    let emitter = move |payload: serde_json::Value| {
+        if let Err(error) = app.emit("temporary-answer-chunk", &payload) {
+            log::warn!("Failed to emit temporary answer chunk: {error}");
+        }
+    };
+    state
+        .0
+        .temporary_ask(&agent_id, question, request_id, emitter)
+        .await
 }
 
 #[tauri::command]
@@ -426,6 +437,20 @@ pub async fn request_available_models(
     agent_id: String,
 ) -> Result<(), String> {
     state.0.request_available_models(&agent_id).await
+}
+
+#[tauri::command]
+pub async fn revert_file_change(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    path: String,
+    patches: Vec<String>,
+    created: Option<bool>,
+) -> Result<(), String> {
+    state
+        .0
+        .revert_file_change(&agent_id, path, patches, created)
+        .await
 }
 
 #[tauri::command]

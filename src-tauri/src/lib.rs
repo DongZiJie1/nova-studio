@@ -203,6 +203,7 @@ pub fn run() {
             commands::request_execution_traces,
             commands::request_context_snapshot,
             commands::request_available_models,
+            commands::revert_file_change,
             commands::list_all_models,
             commands::set_model,
         ])

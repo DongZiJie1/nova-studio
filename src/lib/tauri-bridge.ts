@@ -53,13 +53,28 @@ export async function sendPrompt(
   return invoke("send_prompt", { agentId, message, images, fileReferences, backgroundAgentIds });
 }
 
-/** Run a one-off question against a transient session. The parent session is
- * used only as context provenance; no message is appended to that session. */
+/** Run a one-off question against a transient, tool-less session. The parent
+ * session is used only as context provenance; no message is appended to that
+ * session. Streaming text arrives via onTemporaryAnswerChunk. */
 export async function askTemporary(
   agentId: string,
   question: string,
+  requestId: string,
 ): Promise<string> {
-  return invoke<string>("ask_temporary", { agentId, question });
+  return invoke<string>("ask_temporary", { agentId, question, requestId });
+}
+
+export interface TemporaryAnswerChunk {
+  requestId: string;
+  text: string;
+}
+
+/** Subscribe to streaming updates for temporary questions. Each payload
+ * carries the full assistant text so far (replace, don't append). */
+export async function onTemporaryAnswerChunk(
+  handler: (chunk: TemporaryAnswerChunk) => void,
+): Promise<UnlistenFn> {
+  return listen<TemporaryAnswerChunk>("temporary-answer-chunk", (event) => handler(event.payload));
 }
 
 export async function abortAgent(agentId: string): Promise<void> {
@@ -80,6 +95,15 @@ export async function forceStopAgent(agentId: string, reason?: string, timedOut 
 
 export async function retryAgent(agentId: string, message?: string): Promise<void> {
   return invoke("retry_agent", { agentId, message });
+}
+
+export async function revertFileChange(
+  agentId: string,
+  path: string,
+  patches: string[],
+  created?: boolean,
+): Promise<void> {
+  return invoke("revert_file_change", { agentId, path, patches, created });
 }
 
 // ─── Delegated Task Registry (hub task panel) ───
