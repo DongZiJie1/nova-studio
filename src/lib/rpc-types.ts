@@ -119,6 +119,19 @@ export type AgentMessage =
       result: unknown;
       isError: boolean;
     }
+  | {
+      type: "tool_permission_requested";
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+    }
+  | {
+      type: "tool_permission_resolved";
+      toolCallId: string;
+      toolName: string;
+      allowed: boolean;
+      reason?: string;
+    }
   | { type: "agent_settled" }
   | { type: "agent_name_update"; name: string }
   | { type: "agent_delegated_task"; sourceAgentId: string; task: string }
@@ -134,6 +147,7 @@ export type AgentMessage =
       timeout?: number;
       [key: string]: unknown;
     }
+  | { type: "extension_ui_cancel"; id: string }
   | { type: "turn_start" }
   | { type: "turn_end"; message?: Record<string, unknown>; toolResults?: unknown[] }
   | { type: "agent_start" }
@@ -229,6 +243,8 @@ export interface ExecutionTrace {
   durationMs?: number;
   stopReason?: string;
   errorMessage?: string;
+  permissionDecision?: "allowed" | "denied";
+  permissionReason?: string;
   usage?: ExecutionTraceUsage;
 }
 

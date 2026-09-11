@@ -562,6 +562,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
                 <div><dt>开始时间</dt><dd>{formatTrajectoryTime(trace?.startedAt)}</dd></div>
                 <div><dt>结束时间</dt><dd>{formatTrajectoryTime(trace?.endedAt)}</dd></div>
                 <div><dt>执行耗时</dt><dd>{formatTrajectoryDuration(trace?.durationMs)}</dd></div>
+                {trace?.permissionDecision && <div><dt>权限检查</dt><dd>{trace.permissionDecision === "allowed" ? "已允许" : "已拒绝"}</dd></div>}
+                {trace?.permissionReason && <div><dt>权限说明</dt><dd>{trace.permissionReason}</dd></div>}
               </dl>
             </div>;
             })()
