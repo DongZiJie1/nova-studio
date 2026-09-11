@@ -4,7 +4,7 @@ import type {
   AgentEventPayload,
   ExtensionUIRequest,
 } from "../lib/rpc-types";
-import { ArrowRight, Check, MessageCircleQuestion, PenLine, X } from "lucide-react";
+import { ArrowRight, Check, MessageCircleQuestion, PenLine, ShieldCheck, X } from "lucide-react";
 
 interface PendingDialog {
   agentId: string;
@@ -29,6 +29,8 @@ export function ExtensionUIPrompt() {
         ExtensionUIRequest;
       if (evt.type === "extension_ui_request" && DIALOG_METHODS.has(evt.method)) {
         setQueue((q) => [...q, { agentId: payload.agentId, request: evt }]);
+      } else if (evt.type === "extension_ui_cancel") {
+        setQueue((q) => q.filter((item) => item.request.id !== evt.id));
       }
     });
     return unlisten;
@@ -53,6 +55,7 @@ export function ExtensionUIPrompt() {
   const { agentId, request } = current;
   const title = request.title || "Nova";
   const message = request.message || "";
+  const isToolPermission = request.method === "confirm" && title === "允许执行工具？";
 
   const respond = (
     resp: { value?: string; confirmed?: boolean; cancelled?: boolean },
@@ -64,12 +67,12 @@ export function ExtensionUIPrompt() {
 
   return (
     <div className="nova-question-overlay" onClick={() => respond({ cancelled: true })}>
-      <div className="nova-question-card" role="dialog" aria-modal="true" aria-labelledby="nova-question-title" onClick={(e) => e.stopPropagation()}>
+      <div className={`nova-question-card${isToolPermission ? " nova-question-card-permission" : ""}`} role="dialog" aria-modal="true" aria-labelledby="nova-question-title" onClick={(e) => e.stopPropagation()}>
         <header className="nova-question-header">
-          <span className="nova-question-icon"><MessageCircleQuestion size={20} /></span>
-          <div><span>需要你的选择</span><h2 id="nova-question-title">{title}</h2></div>
-          {queue.length > 1 && <span className="nova-question-queue">{queue.length} 个问题</span>}
-          <button type="button" className="nova-question-close" onClick={() => respond({ cancelled: true })} aria-label="取消"><X size={17} /></button>
+          <span className="nova-question-icon">{isToolPermission ? <ShieldCheck size={20} /> : <MessageCircleQuestion size={20} />}</span>
+          <div><span>{isToolPermission ? "工具权限" : "需要你的选择"}</span><h2 id="nova-question-title">{title}</h2></div>
+          {queue.length > 1 && <span className="nova-question-queue">还有 {queue.length - 1} 项</span>}
+          <button type="button" className="nova-question-close" onClick={() => respond({ cancelled: true })} aria-label="拒绝"><X size={17} /></button>
         </header>
         <div className="nova-question-body">
           {message ? <div className="nova-question-message">{message}</div> : null}
@@ -99,8 +102,8 @@ export function ExtensionUIPrompt() {
 
         {request.method === "confirm" && (
           <div className="nova-question-actions">
-            <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>取消</button>
-            <button type="button" className="nova-question-button-primary" onClick={() => respond({ confirmed: true })}><Check size={15} />确认</button>
+            <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>{isToolPermission ? "拒绝" : "取消"}</button>
+            <button type="button" className="nova-question-button-primary" onClick={() => respond({ confirmed: true })}><Check size={15} />{isToolPermission ? "允许执行" : "确认"}</button>
           </div>
         )}
 
