@@ -32,7 +32,7 @@ import {
   revertFileChange,
 } from "../../lib/tauri-bridge";
 import { common, createLowlight } from "lowlight";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -98,6 +98,14 @@ import {
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
 const AGENT_NAMES_KEY = "nova-studio.agent-names";
+
+function GithubMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.11.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.28-1.69-1.28-1.69-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.29-5.27-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.16 1.18a10.98 10.98 0 0 1 5.76 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.41-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+    </svg>
+  );
+}
 const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
 const CONVERSATION_MINIMAP_PAIR_THRESHOLD = 6;
 
@@ -1445,7 +1453,7 @@ export function AppShell() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
@@ -2546,6 +2554,7 @@ export function AppShell() {
                     <Plus size={20} />
                   </button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => setSettingsOpen(true)} aria-label="设置" title="设置"><Settings size={19} /></button>
                 </>
               )}
@@ -2707,6 +2716,15 @@ export function AppShell() {
                 ))}
               </div>
               <footer className="sidebar-footer">
+                <button
+                  type="button"
+                  className="sidebar-settings-button"
+                  onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")}
+                  title="在浏览器中打开 Nova Agent GitHub"
+                >
+                  <GithubMark size={16} />
+                  <span>GitHub</span>
+                </button>
                 <button
                   type="button"
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
