@@ -421,6 +421,12 @@ impl AgentManager {
                 .map(|pair| pair[1].clone()),
             "parentAgentId": record.parent_agent_id.clone(),
             "depth": record.depth,
+            "transientContextFromAgentId": if agent_id.starts_with("temporary-") {
+                record.parent_agent_id.clone()
+            } else {
+                None
+            },
+            "noTools": agent_id.starts_with("temporary-"),
         }))?;
         let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
@@ -459,31 +465,36 @@ impl AgentManager {
 
         let info = self.build_info(&agent_id, &record.cwd, &process).await;
 
-        // Forward events from this agent to the global event bus
-        let mut rx = process.subscribe();
-        let global_tx = self.global_event_tx.clone();
-        let records = self.records.clone();
-        let state_path = self.state_path.clone();
-        let persistence_lock = self.persistence_lock.clone();
-        let aid = agent_id.clone();
-        tokio::spawn(async move {
-            while let Ok(msg) = rx.recv().await {
-                if let Some(name) = msg.get("name").and_then(|value| value.as_str()) {
-                    if msg.get("type").and_then(|value| value.as_str()) == Some("agent_name_update")
-                    {
-                        if let Some(record) = records.write().await.get_mut(&aid) {
-                            record.name = Some(name.to_string());
-                        }
-                        if let Err(error) =
-                            persist_records_to_path(&state_path, &records, &persistence_lock).await
+        // Disposable side questions are consumed directly by `ask`; keeping
+        // them off the global bus prevents them appearing in the Studio console.
+        if !agent_id.starts_with("temporary-") {
+            let mut rx = process.subscribe();
+            let global_tx = self.global_event_tx.clone();
+            let records = self.records.clone();
+            let state_path = self.state_path.clone();
+            let persistence_lock = self.persistence_lock.clone();
+            let aid = agent_id.clone();
+            tokio::spawn(async move {
+                while let Ok(msg) = rx.recv().await {
+                    if let Some(name) = msg.get("name").and_then(|value| value.as_str()) {
+                        if msg.get("type").and_then(|value| value.as_str())
+                            == Some("agent_name_update")
                         {
-                            log::warn!("Failed to persist Agent name update: {error}");
+                            if let Some(record) = records.write().await.get_mut(&aid) {
+                                record.name = Some(name.to_string());
+                            }
+                            if let Err(error) =
+                                persist_records_to_path(&state_path, &records, &persistence_lock)
+                                    .await
+                            {
+                                log::warn!("Failed to persist Agent name update: {error}");
+                            }
                         }
                     }
+                    let _ = global_tx.send((aid.clone(), msg));
                 }
-                let _ = global_tx.send((aid.clone(), msg));
-            }
-        });
+            });
+        }
 
         self.agents
             .write()
@@ -570,12 +581,18 @@ impl AgentManager {
     /// Ask through a transient sibling context without mutating the parent
     /// conversation. The disposable Nova session is never registered in the
     /// Studio record catalog and is stopped immediately after the reply.
-    pub async fn temporary_ask(
+    /// Streaming assistant text is re-emitted on the provided emitter so the
+    /// UI can render the answer incrementally.
+    pub async fn temporary_ask<E>(
         &self,
         parent_agent_id: &str,
         question: String,
-        context: String,
-    ) -> Result<String, String> {
+        request_id: String,
+        emitter: E,
+    ) -> Result<String, String>
+    where
+        E: Fn(serde_json::Value) + Send + 'static,
+    {
         if self.get_process(parent_agent_id).await.is_none() {
             self.activate(parent_agent_id).await?;
         }
@@ -605,15 +622,38 @@ impl AgentManager {
         };
 
         self.spawn_record(transient, false).await?;
-        let prompt = format!(
-            "You are answering a temporary side question. Use the supplied parent-session context, but do not perform tool calls, modify files, delegate work, or claim that this exchange changed the parent conversation. Answer only the user's temporary question.\n\n<PARENT_CONTEXT>\n{}\n</PARENT_CONTEXT>\n\n<TEMPORARY_QUESTION>\n{}\n</TEMPORARY_QUESTION>",
-            context,
-            question,
-        );
+
+        // Forward streaming assistant text while `ask` collects the final
+        // reply. The broadcast channel delivers every event to both the
+        // forwarder and `ask`; full text per update keeps the UI robust
+        // against missed deltas.
+        if let Some(process) = self.get_process(&transient_id).await {
+            let mut chunk_rx = process.subscribe();
+            let chunk_request_id = request_id.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = chunk_rx.recv().await {
+                    if event.get("type").and_then(|value| value.as_str()) != Some("message_update") {
+                        continue;
+                    }
+                    let Some(message) = event.get("message") else {
+                        continue;
+                    };
+                    if message.get("role").and_then(|value| value.as_str()) != Some("assistant") {
+                        continue;
+                    }
+                    let text = extract_text_from_message(message);
+                    emitter(serde_json::json!({
+                        "requestId": chunk_request_id,
+                        "text": text,
+                    }));
+                }
+            });
+        }
+
         let result = self
             .ask(
                 &transient_id,
-                prompt,
+                question,
                 180,
                 CollaborationContext {
                     request_id: format!("temporary-{short_id}"),
@@ -709,6 +749,30 @@ impl AgentManager {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         agent.send_command(&RpcCommand::GetAvailableModels { id: None })
+    }
+
+    pub async fn revert_file_change(
+        &self,
+        agent_id: &str,
+        path: String,
+        patches: Vec<String>,
+        created: Option<bool>,
+    ) -> Result<(), String> {
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.request_agent_command(
+            agent,
+            RpcCommand::RevertFileChange {
+                id: Some(request_id.clone()),
+                path,
+                patches,
+                created,
+            },
+            &request_id,
+            30,
+        )
+        .await?;
+        Ok(())
     }
 
     /// Start a fresh session in an existing Studio agent process.
@@ -1394,7 +1458,6 @@ mod tests {
             .spawn(SpawnRequest {
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
-                created_by: Some("user".to_string()),
                 model: Some("test-model".to_string()),
                 provider: None,
                 args: None,
@@ -1544,6 +1607,7 @@ mod tests {
             PersistedAgent {
                 id: "agent-mock-parent".to_string(),
                 parent_agent_id: None,
+                created_by: Some("user".to_string()),
                 name: Some("Parent".to_string()),
                 cwd: "/tmp".to_string(),
                 model: None,

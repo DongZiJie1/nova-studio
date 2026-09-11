@@ -26,7 +26,7 @@ export const useUiStore = create<UiState>()(
       bgPreset: "mesh-amber",
       customBgUrl: DEFAULT_BACKGROUND_URL,
       backgroundBlur: 0,
-      sidebarCollapsed: false,
+      sidebarCollapsed: true,
 
       setTheme: (theme) => set({ theme }),
       toggleTheme: () => set((state) => ({

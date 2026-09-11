@@ -203,8 +203,13 @@ pub fn run() {
             commands::request_execution_traces,
             commands::request_context_snapshot,
             commands::request_available_models,
+            commands::revert_file_change,
             commands::list_all_models,
             commands::set_model,
+            commands::save_model_configuration,
+            commands::get_model_configurations,
+            commands::delete_model_configuration,
+            commands::delete_provider_configuration,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,5 @@
 import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -20,6 +20,7 @@ import {
   requestExecutionTraces,
   requestContextSnapshot,
   askTemporary,
+  onTemporaryAnswerChunk,
   listAllModels,
   fetchModelsViaShell,
   startNewSession,
@@ -28,10 +29,10 @@ import {
   setMessageFeedback,
   forkSession,
   requestMessages,
-  type AgentBatchInfo,
-  type AgentTaskInfo,
+  revertFileChange,
 } from "../../lib/tauri-bridge";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { common, createLowlight } from "lowlight";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -47,6 +48,7 @@ function isAgentTrajectoryTool(name: string): boolean {
 import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
+import { ModelSettings } from "../settings/ModelSettings";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { Markdown } from "../chat/Markdown";
@@ -67,6 +69,7 @@ import {
   FolderOpen,
   Pencil,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Plus,
   X,
@@ -95,6 +98,14 @@ import {
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
 const AGENT_NAMES_KEY = "nova-studio.agent-names";
+
+function GithubMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.11.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.28-1.69-1.28-1.69-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.29-5.27-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.16 1.18a10.98 10.98 0 0 1 5.76 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.41-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+    </svg>
+  );
+}
 const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
 const CONVERSATION_MINIMAP_PAIR_THRESHOLD = 6;
 
@@ -119,6 +130,278 @@ interface PendingAttachment {
   previewUrl?: string;  // blob URL for image thumbnails
 }
 
+function readWorkbenchPanelWidth(key: string, fallback: number): number {
+  const stored = Number(localStorage.getItem(key));
+  const maxWidth = Math.max(420, window.innerWidth - 460);
+  const width = Number.isFinite(stored) && stored >= 320 ? stored : fallback;
+  return Math.min(width, maxWidth);
+}
+
+function createNewFileDisplayPatch(path: string, content: string): string | undefined {
+  if (!content) return undefined;
+  const body = content.endsWith("\n") ? content.slice(0, -1) : content;
+  const lines = body.split("\n");
+  const noNewlineMarker = content.endsWith("\n") ? "" : "\n\\ No newline at end of file";
+  return `Index: ${path}\n===================================================================\n--- ${path}\n+++ ${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join("\n")}${noNewlineMarker}`;
+}
+
+type HastNode = {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: { className?: unknown };
+  children?: HastNode[];
+};
+
+interface DiffToken {
+  text: string;
+  cls: string;
+}
+
+interface DiffCell {
+  no?: number;
+  text: string;
+  kind: "add" | "del" | "ctx";
+  tokens?: DiffToken[];
+}
+
+type DiffRow =
+  | { type: "gap"; count: number }
+  | { type: "marker"; side: "left" | "right" }
+  | { type: "row"; left?: DiffCell; right?: DiffCell };
+
+const lowlight = createLowlight(common);
+const highlightCache = new Map<string, DiffToken[][]>();
+
+const EXTENSION_LANGUAGES: Record<string, string> = {
+  ts: "typescript", tsx: "typescript", mts: "typescript",
+  js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
+  py: "python", pyi: "python", rb: "ruby", rs: "rust", go: "go", java: "java", kt: "kotlin", cs: "csharp",
+  c: "c", h: "c", cpp: "cpp", cc: "cpp", hpp: "cpp", hh: "cpp", swift: "swift", php: "php", lua: "lua",
+  sql: "sql", r: "r", json: "json", yaml: "yaml", yml: "yaml", ini: "ini", toml: "ini",
+  css: "css", scss: "scss", less: "less", html: "xml", xml: "xml", svg: "xml", vue: "xml",
+  md: "markdown", mdx: "markdown", sh: "bash", bash: "bash", zsh: "bash",
+  diff: "diff", patch: "diff", graphql: "graphql", gql: "graphql", perl: "perl", pl: "perl",
+};
+
+function diffLanguageForPath(path: string): string {
+  const name = (path.split(/[\\/]/).pop() ?? "").toLowerCase();
+  if (name === "makefile") return "makefile";
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+  return EXTENSION_LANGUAGES[ext] ?? "plaintext";
+}
+
+const FILE_BADGE_TONES: Record<string, string> = {
+  ts: "ts", tsx: "ts", mts: "ts", js: "ts", jsx: "ts", mjs: "ts", cjs: "ts",
+  css: "style", scss: "style", less: "style",
+  html: "web", xml: "web", svg: "web", vue: "web",
+  md: "doc", mdx: "doc", txt: "doc",
+  json: "data", yaml: "data", yml: "data", toml: "data", ini: "data",
+  py: "py",
+  rs: "sys", go: "sys", java: "sys", c: "sys", h: "sys", cpp: "sys", cc: "sys", hpp: "sys",
+  swift: "sys", kt: "sys", cs: "sys", php: "sys", sql: "sys", lua: "sys",
+  sh: "sh", bash: "sh", zsh: "sh",
+};
+
+function fileBadge(path: string): { label: string; tone: string } {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "";
+  return { label: (ext || "file").slice(0, 4).toUpperCase(), tone: FILE_BADGE_TONES[ext] ?? "plain" };
+}
+
+/**
+ * Highlight a contiguous block of diff lines as one snippet so multi-line
+ * tokens survive, then split the resulting hast tree back into per-line
+ * token arrays (safe React spans, no raw HTML).
+ */
+function highlightRun(text: string, language: string): DiffToken[][] {
+  const cacheKey = `${language}\u0000${text}`;
+  const cached = highlightCache.get(cacheKey);
+  if (cached) return cached;
+  const lines: DiffToken[][] = [[]];
+  try {
+    const visit = (node: HastNode, inherited: string) => {
+      if (node.type === "text") {
+        const parts = (node.value ?? "").split("\n");
+        parts.forEach((part, partIndex) => {
+          if (partIndex > 0) lines.push([]);
+          if (part) lines[lines.length - 1].push({ text: part, cls: inherited });
+        });
+        return;
+      }
+      const raw = node.properties?.className;
+      const own = Array.isArray(raw) ? raw.filter((item) => typeof item === "string").join(" ") : "";
+      const next = own ? (inherited ? `${inherited} ${own}` : own) : inherited;
+      for (const child of node.children ?? []) visit(child, next);
+    };
+    for (const child of lowlight.highlight(language, text).children) visit(child as HastNode, "");
+  } catch {
+    lines.length = 0;
+    for (const line of text.split("\n")) lines.push([{ text: line, cls: "" }]);
+  }
+  if (highlightCache.size > 600) highlightCache.clear();
+  highlightCache.set(cacheKey, lines);
+  return lines;
+}
+
+const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+function parseDiffRows(patches: string[]): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let nextOld = 0;
+  let nextNew = 0;
+  let started = false;
+  let lastMarkerSide: "left" | "right" = "right";
+  let pendingDelete: DiffCell[] = [];
+  let pendingAdd: DiffCell[] = [];
+
+  // Pair a run of deletions with the following run of additions row by row
+  // (GitHub split-diff alignment); the shorter side stays empty.
+  const flushChangeRun = () => {
+    const count = Math.max(pendingDelete.length, pendingAdd.length);
+    for (let index = 0; index < count; index++) {
+      rows.push({ type: "row", left: pendingDelete[index], right: pendingAdd[index] });
+    }
+    pendingDelete = [];
+    pendingAdd = [];
+  };
+
+  for (const patch of patches) {
+    for (const line of patch.split("\n")) {
+      const header = line.match(HUNK_HEADER_PATTERN);
+      if (header) {
+        flushChangeRun();
+        const oldStart = Number(header[1]);
+        if (!started) {
+          if (oldStart > 1) rows.push({ type: "gap", count: oldStart - 1 });
+          started = true;
+        } else if (oldStart > nextOld) {
+          rows.push({ type: "gap", count: oldStart - nextOld });
+        }
+        nextOld = oldStart;
+        nextNew = Number(header[3]);
+        continue;
+      }
+      if (!started) continue; // Index:/===/---/+++ meta lines
+      if (line.startsWith("+")) {
+        pendingAdd.push({ no: nextNew++, text: line.slice(1), kind: "add" });
+        lastMarkerSide = "right";
+        continue;
+      }
+      if (line.startsWith("-")) {
+        pendingDelete.push({ no: nextOld++, text: line.slice(1), kind: "del" });
+        lastMarkerSide = "left";
+        continue;
+      }
+      flushChangeRun();
+      if (line.startsWith("\\")) {
+        rows.push({ type: "marker", side: lastMarkerSide });
+        continue;
+      }
+      rows.push({
+        type: "row",
+        left: { no: nextOld++, text: line.slice(1), kind: "ctx" },
+        right: { no: nextNew++, text: line.slice(1), kind: "ctx" },
+      });
+      lastMarkerSide = "right";
+    }
+  }
+  flushChangeRun();
+  return rows;
+}
+
+function applyDiffHighlighting(rows: DiffRow[], language: string) {
+  const highlightSide = (side: "left" | "right") => {
+    let run: DiffCell[] = [];
+    const flushRun = () => {
+      if (!run.length) return;
+      const tokens = highlightRun(run.map((cell) => cell.text).join("\n"), language);
+      run.forEach((cell, index) => {
+        cell.tokens = tokens[index] ?? [{ text: cell.text, cls: "" }];
+      });
+      run = [];
+    };
+    for (const row of rows) {
+      if (row.type !== "row") {
+        flushRun();
+        continue;
+      }
+      const cell = row[side];
+      if (cell) run.push(cell);
+    }
+    flushRun();
+  };
+  highlightSide("left");
+  highlightSide("right");
+}
+
+function FileDiff({ patches, path }: { patches: string[]; path: string }) {
+  const rows = useMemo(() => {
+    const parsed = parseDiffRows(patches);
+    applyDiffHighlighting(parsed, diffLanguageForPath(path));
+    return parsed;
+  }, [patches, path]);
+
+  const renderCell = (cell?: DiffCell) => {
+    if (!cell) return null;
+    const tokens = cell.tokens ?? [];
+    if (!tokens.length || (tokens.length === 1 && !tokens[0].text)) return "\u00A0";
+    return tokens.map((token, index) =>
+      token.cls ? <span key={index} className={token.cls}>{token.text}</span> : <span key={index}>{token.text}</span>,
+    );
+  };
+
+  return (
+    <div className="split-diff">
+      <table className="split-diff-table">
+        <colgroup>
+          <col className="split-diff-col-num" />
+          <col className="split-diff-col-code" />
+          <col className="split-diff-col-num" />
+          <col className="split-diff-col-code" />
+        </colgroup>
+        <tbody>
+          {rows.map((row, index) => {
+            if (row.type === "gap") {
+              return (
+                <tr key={index} className="split-diff-gap">
+                  <td colSpan={4}><span className="split-diff-gap-label">{row.count} unmodified lines</span></td>
+                </tr>
+              );
+            }
+            if (row.type === "marker") {
+              return (
+                <tr key={index} className="split-diff-marker">
+                  <td className="split-diff-num" />
+                  <td className="split-diff-code">{row.side === "left" ? "\\ No newline at end of file" : "\u00A0"}</td>
+                  <td className="split-diff-num" />
+                  <td className="split-diff-code">{row.side === "right" ? "\\ No newline at end of file" : "\u00A0"}</td>
+                </tr>
+              );
+            }
+            const { left, right } = row;
+            const rowClass = !left && right
+              ? " is-add"
+              : left && !right
+                ? " is-del"
+                : left && right && (left.kind !== "ctx" || right.kind !== "ctx")
+                  ? " is-mod"
+                  : "";
+            return (
+              <tr key={index} className={`split-diff-row${rowClass}`}>
+                <td className="split-diff-num">{left?.no ?? ""}</td>
+                <td className={`split-diff-code split-diff-code-left${left ? ` is-${left.kind}` : " is-empty"}`}>{renderCell(left)}</td>
+                <td className="split-diff-num">{right?.no ?? ""}</td>
+                <td className={`split-diff-code${right ? ` is-${right.kind}` : " is-empty"}`}>{renderCell(right)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 interface SelectedTrajectoryEntry {
   id: string;
   label: string;
@@ -136,6 +419,8 @@ interface ChatHistoryProps {
   onFeedback: (message: AgentState["messages"][number], rating: "up" | "down" | null) => void;
   onFork: (message: AgentState["messages"][number]) => void;
   onOpenAgent: (agentId: string, view: "chat" | "trajectory") => void;
+  onRevertFileChange: (assistantMessageId: string, change: TurnFileChange) => Promise<void>;
+  onReviewFileChange: (assistantMessageId: string, path: string) => void;
 }
 
 const ChatHistory = memo(function ChatHistory({
@@ -147,6 +432,8 @@ const ChatHistory = memo(function ChatHistory({
   onFeedback,
   onFork,
   onOpenAgent,
+  onRevertFileChange,
+  onReviewFileChange,
 }: ChatHistoryProps) {
   return messages.map((message) => (
     <div
@@ -162,6 +449,8 @@ const ChatHistory = memo(function ChatHistory({
         onFeedback={onFeedback}
         onFork={onFork}
         onOpenAgent={onOpenAgent}
+        onRevertFileChange={(change) => onRevertFileChange(message.id, change)}
+        onReviewFileChange={(path) => onReviewFileChange(message.id, path)}
         fileChanges={turnFileChangesByAssistantId.get(message.id)}
       />
     </div>
@@ -854,22 +1143,26 @@ const AgentTreeNode = memo(function AgentTreeNode({
   );
 });
 
-interface BatchTaskPanelProps {
-  tasks: AgentTaskInfo[];
-  batches: AgentBatchInfo[];
-  childAgents: AgentState[];
-  files: WorkbenchFile[];
-  agentNames: Record<string, string>;
-  onSelect: (agentId: string) => void;
-  sessionId: string;
-  onTemporaryAsk: (question: string) => Promise<string>;
+interface ReviewFileEntry {
+  path: string;
+  kind: TurnFileChange["kind"];
+  created?: boolean;
+  additions: number;
+  deletions: number;
+  turns: { patches: string[]; additions: number; deletions: number }[];
 }
 
-interface WorkbenchFile {
-  key: string;
-  name: string;
-  path: string;
-  directions: Array<"input" | "output">;
+interface BatchTaskPanelProps {
+  sessionId: string;
+  onTemporaryAsk: (question: string, onDelta?: (text: string) => void) => Promise<string>;
+  onCollapse: () => void;
+  mode: "review" | "temporary" | "agents";
+  reviewFiles: ReviewFileEntry[];
+  expandedReviewFiles: Set<string>;
+  onToggleReviewFile: (path: string) => void;
+  childAgents: AgentState[];
+  agentNames: Record<string, string>;
+  onSelectAgent: (agentId: string) => void;
 }
 
 interface TemporaryChatEntry {
@@ -877,20 +1170,7 @@ interface TemporaryChatEntry {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
-}
-
-function WorkbenchFileIcon({ name }: { name: string }) {
-  const extension = name.split(".").pop()?.toLowerCase() ?? "";
-  const Icon = ["ts", "tsx", "js", "jsx", "java", "py", "rs", "go", "c", "cpp", "css", "html"].includes(extension)
-    ? FileCode
-    : extension === "json"
-      ? FileJson
-      : ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(extension)
-        ? Image
-        : ["md", "txt", "doc", "docx", "pdf"].includes(extension)
-          ? FileText
-          : File;
-  return <Icon size={15} strokeWidth={1.8} />;
+  streaming?: boolean;
 }
 
 /**
@@ -898,110 +1178,150 @@ function WorkbenchFileIcon({ name }: { name: string }) {
  * tasks by batch, with live status and controls for each child agent.
  */
 const BatchTaskPanel = memo(function BatchTaskPanel({
-  tasks,
-  batches,
-  childAgents,
-  files,
-  agentNames,
-  onSelect,
   sessionId,
   onTemporaryAsk,
+  onCollapse,
+  mode,
+  reviewFiles,
+  expandedReviewFiles,
+  onToggleReviewFile,
+  childAgents,
+  agentNames,
+  onSelectAgent,
 }: BatchTaskPanelProps) {
-  const [expanded, setExpanded] = useState(true);
-  const [activeTab, setActiveTab] = useState<"workbench" | "tasks">("workbench");
+  const [turnIndexes, setTurnIndexes] = useState<Record<string, number>>({});
   const [temporaryInput, setTemporaryInput] = useState("");
   const [temporaryPending, setTemporaryPending] = useState(false);
   const [temporaryError, setTemporaryError] = useState<string | null>(null);
   const [temporaryEntries, setTemporaryEntries] = useState<TemporaryChatEntry[]>([]);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(`nova-temporary-chat:${sessionId}`);
-      setTemporaryEntries(stored ? JSON.parse(stored) as TemporaryChatEntry[] : []);
-    } catch {
-      setTemporaryEntries([]);
-    }
+    // Remove data written by older builds; side questions are intentionally
+    // scoped to this renderer lifetime only.
+    localStorage.removeItem(`nova-temporary-chat:${sessionId}`);
+    setTemporaryEntries([]);
     setTemporaryInput("");
     setTemporaryError(null);
   }, [sessionId]);
-
-  const persistTemporaryEntries = (entries: TemporaryChatEntry[]) => {
-    setTemporaryEntries(entries);
-    localStorage.setItem(`nova-temporary-chat:${sessionId}`, JSON.stringify(entries));
-  };
 
   const submitTemporaryQuestion = async () => {
     const question = temporaryInput.trim();
     if (!question || temporaryPending) return;
     const userEntry: TemporaryChatEntry = { id: crypto.randomUUID(), role: "user", content: question, createdAt: Date.now() };
-    const optimistic = [...temporaryEntries, userEntry];
-    persistTemporaryEntries(optimistic);
+    const answerEntryId = crypto.randomUUID();
+    setTemporaryEntries([...temporaryEntries, userEntry, { id: answerEntryId, role: "assistant", content: "", createdAt: Date.now(), streaming: true }]);
     setTemporaryInput("");
     setTemporaryPending(true);
     setTemporaryError(null);
     try {
-      const answer = await onTemporaryAsk(question);
-      persistTemporaryEntries([...optimistic, { id: crypto.randomUUID(), role: "assistant", content: answer, createdAt: Date.now() }]);
+      const answer = await onTemporaryAsk(question, (text) => {
+        setTemporaryEntries((current) => current.map((entry) => entry.id === answerEntryId ? { ...entry, content: text } : entry));
+      });
+      setTemporaryEntries((current) => current.map((entry) => entry.id === answerEntryId ? { ...entry, content: answer || entry.content, streaming: false } : entry));
     } catch (askError) {
+      setTemporaryEntries((current) => current.filter((entry) => entry.id !== answerEntryId));
       setTemporaryError(askError instanceof Error ? askError.message : String(askError));
     } finally {
       setTemporaryPending(false);
     }
   };
 
-  const groups = useMemo(() => {
-    const byBatch = new Map<string, AgentTaskInfo[]>();
-    for (const task of tasks) {
-      const list = byBatch.get(task.batchId) ?? [];
-      list.push(task);
-      byBatch.set(task.batchId, list);
-    }
-    const batchById = new Map(batches.map((batch) => [batch.batchId, batch]));
-    return Array.from(byBatch.entries())
-      .map(([batchId, batchTasks]) => ({
-        batchId,
-        batch: batchById.get(batchId) ?? null,
-        tasks: batchTasks,
-        newestAt: batchTasks.reduce(
-          (latest, task) => Math.max(latest, Date.parse(task.createdAt) || 0),
-          0,
-        ),
-      }))
-      .sort((a, b) => b.newestAt - a.newestAt);
-  }, [tasks, batches]);
-
   return (
-    <section className="task-panel agent-workbench" aria-label="Agent 工作台">
+    <section className="task-panel agent-workbench" aria-label={mode === "review" ? "文件审查" : mode === "agents" ? "子 Agent" : "临时提问"}>
       <button
         type="button"
         className="task-panel-header"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={onCollapse}
+        aria-label={mode === "review" ? "收起文件审查" : mode === "agents" ? "收起子 Agent" : "收起临时提问"}
       >
-        <span className="task-panel-heading"><Bot size={15} />Agent 工作台</span>
-        <span className="task-panel-count">{childAgents.length}</span>
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span className="task-panel-heading">
+          {mode === "review" ? <FileCode size={15} /> : mode === "agents" ? <Bot size={15} /> : <MessageCircle size={15} />}
+          {mode === "review" ? "文件审查" : mode === "agents" ? "子 Agent" : "临时提问"}
+        </span>
+        {mode === "review" && reviewFiles.length > 0 && <span className="task-panel-count">{reviewFiles.length}</span>}
+        {mode === "agents" && childAgents.length > 0 && <span className="task-panel-count">{childAgents.length}</span>}
+        <ChevronRight size={13} />
       </button>
-      {expanded && (
-        <div className="task-panel-body">
-          <div className="agent-workbench-tabs" role="tablist" aria-label="Agent 工作台视图">
-            <button type="button" role="tab" aria-selected={activeTab === "workbench"} className={activeTab === "workbench" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("workbench")}>工作台</button>
-            <button type="button" role="tab" aria-selected={activeTab === "tasks"} className={activeTab === "tasks" ? "agent-workbench-tab-active" : ""} onClick={() => setActiveTab("tasks")}>临时提问</button>
-          </div>
-          {activeTab === "workbench" ? (
-            <div className="agent-workbench-content">
+      <div className="task-panel-body">
+          {mode === "review" ? (
+            <div className="agent-file-review">
+              {reviewFiles.length > 0 ? (
+                <section className="agent-file-review-turn">
+                  <header className="agent-file-review-turn-header">
+                    <span>会话累计 · {reviewFiles.length} 个文件</span>
+                    <span className="turn-file-change-stats"><b>+{reviewFiles.reduce((total, file) => total + file.additions, 0)}</b><i>-{reviewFiles.reduce((total, file) => total + file.deletions, 0)}</i></span>
+                  </header>
+                  <div className="agent-file-review-entries">
+                    {reviewFiles.map((file) => {
+                      const badge = fileBadge(file.path);
+                      const slashIndex = file.path.lastIndexOf("/");
+                      const expanded = expandedReviewFiles.has(file.path);
+                      return (
+                        <div key={file.path} className="agent-file-review-entry">
+                          <button
+                            type="button"
+                            className={`agent-file-review-file${expanded ? " agent-file-review-file-active" : ""}`}
+                            title={file.path}
+                            onClick={() => {
+                              if (expanded) {
+                                setTurnIndexes((current) => {
+                                  if (!(file.path in current)) return current;
+                                  const next = { ...current };
+                                  delete next[file.path];
+                                  return next;
+                                });
+                              }
+                              onToggleReviewFile(file.path);
+                            }}
+                            aria-expanded={expanded}
+                          >
+                            <ChevronRight size={11} className={`agent-file-review-chevron${expanded ? " agent-file-review-chevron-open" : ""}`} />
+                            <span className={`agent-file-review-badge agent-file-review-badge-${badge.tone}`}>{badge.label}</span>
+                            <span className="agent-file-review-file-path">
+                              <span className="agent-file-review-file-dir">{slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : ""}</span>
+                              <strong>{slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path}</strong>
+                            </span>
+                            <span className="turn-file-change-stats"><b>+{file.additions}</b><i>-{file.deletions}</i></span>
+                          </button>
+                          {expanded && (() => {
+                            const turns = file.turns;
+                            if (turns.length === 0 || (turns[0]?.patches.length ?? 0) === 0) return <p>此文件没有可展示的 Diff</p>;
+                            if (turns.length === 1) return <FileDiff patches={turns[0].patches} path={file.path} />;
+                            const index = Math.min(turnIndexes[file.path] ?? turns.length - 1, turns.length - 1);
+                            const turn = turns[index];
+                            return (
+                              <>
+                                <div className="agent-file-review-diff-nav">
+                                  <button
+                                    type="button"
+                                    disabled={index <= 0}
+                                    onClick={() => setTurnIndexes((current) => ({ ...current, [file.path]: index - 1 }))}
+                                  >
+                                    <ChevronLeft size={11} />上一轮
+                                  </button>
+                                  <span className="turn-file-change-stats"><b>+{turn.additions}</b><i>-{turn.deletions}</i></span>
+                                  <button
+                                    type="button"
+                                    disabled={index >= turns.length - 1}
+                                    onClick={() => setTurnIndexes((current) => ({ ...current, [file.path]: index + 1 }))}
+                                  >
+                                    下一轮<ChevronRight size={11} />
+                                  </button>
+                                </div>
+                                <FileDiff patches={turn.patches} path={file.path} />
+                              </>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : <p className="agent-workbench-empty">点击助手回复下方的文件即可审查 Diff</p>}
+            </div>
+          ) : mode === "agents" ? (
+            <div className="agent-workbench-content agent-workbench-agent-overview">
               <section className="agent-workbench-section">
-                <h4>涉及文件</h4>
-                <div className="agent-workbench-files">
-                  {files.length > 0 ? files.map((file) => (
-                    <div key={file.key} className="agent-workbench-file" title={file.path}>
-                      <span className="agent-workbench-file-icon"><WorkbenchFileIcon name={file.name} /></span>
-                      <span className="agent-workbench-file-name">{file.name}</span>
-                      <span className="agent-workbench-file-kind">{file.directions.map((direction) => direction === "input" ? "输入" : "输出").join(" · ")}</span>
-                    </div>
-                  )) : <p className="agent-workbench-empty">当前会话暂无输入或输出文件</p>}
-                </div>
-              </section>
-              <section className="agent-workbench-section agent-workbench-agents-section">
                 <h4>当前子 Agent</h4>
                 <div className="agent-workbench-agents">
                   {childAgents.length > 0 ? childAgents.map((agent) => {
@@ -1014,7 +1334,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                       : agent.status === "error";
                     const statusLabel = running ? "进行中" : failed ? "异常" : taskStatus === "completed" ? "已完成" : "已结束";
                     return (
-                      <button key={agent.id} type="button" className="agent-workbench-agent" onClick={() => onSelect(agent.id)} title={agent.id}>
+                      <button key={agent.id} type="button" className="agent-workbench-agent" onClick={() => onSelectAgent(agent.id)} title={agent.id}>
                         <img src={agentAvatarSrc(agent.avatarId)} alt="" />
                         <span className="agent-workbench-agent-name">{agentDisplayName(agent, agentNames)}</span>
                         <span className={`agent-workbench-agent-status ${running ? "is-running" : failed ? "is-error" : "is-completed"}`}>
@@ -1025,23 +1345,6 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                   }) : <p className="agent-workbench-empty">当前会话暂无子 Agent</p>}
                 </div>
               </section>
-              {groups.length > 0 && (
-                <section className="agent-workbench-section">
-                  <h4>任务批次</h4>
-                  <div className="agent-workbench-batch-list">
-                    {groups.map(({ batchId, batch, tasks: batchTasks }, index) => {
-                      const completed = batchTasks.filter((task) => task.status === "completed").length;
-                      const batchStatus = batch?.status ?? (completed === batchTasks.length ? "completed" : "running");
-                      return (
-                        <div key={batchId} className="agent-workbench-batch-summary" title={batchId}>
-                          <span>批次 {groups.length - index}</span>
-                          <span className={`task-batch-status task-batch-status-${batchStatus}`}>{completed}/{batchTasks.length} 已完成</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
             </div>
           ) : (
             <div className="temporary-chat">
@@ -1050,10 +1353,13 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                 {temporaryEntries.length > 0 ? temporaryEntries.map((entry) => (
                   <div key={entry.id} className={`temporary-chat-message temporary-chat-message-${entry.role}`}>
                     <span>{entry.role === "user" ? "你" : "Nova"}</span>
-                    <div>{entry.role === "assistant" ? <Markdown content={entry.content} highlightCode={false} /> : entry.content}</div>
+                    <div>{entry.role === "assistant" ? (entry.streaming
+                      ? <div className="temporary-chat-streaming-text">{entry.content}</div>
+                      : <Markdown content={entry.content} highlightCode={false} />)
+                      : entry.content}</div>
                   </div>
                 )) : <p className="agent-workbench-empty">在这里提问，不会影响主 Agent 的上下文</p>}
-                {temporaryPending && <div className="temporary-chat-thinking"><LoaderCircle size={13} className="tool-spin" />正在旁路思考…</div>}
+                {temporaryPending && !temporaryEntries.some((entry) => entry.streaming && entry.content) && <div className="temporary-chat-thinking"><LoaderCircle size={13} className="tool-spin" />正在旁路思考…</div>}
                 {temporaryError && <div className="temporary-chat-error">{temporaryError}</div>}
               </div>
               <div className="temporary-chat-composer">
@@ -1062,8 +1368,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
               </div>
             </div>
           )}
-        </div>
-      )}
+      </div>
     </section>
   );
 });
@@ -1077,8 +1382,6 @@ export function AppShell() {
   const setActiveAgent = useAgentStore((s) => s.setActiveAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
   const availableModels = useAgentStore((s) => s.availableModels);
-  const delegatedTasks = useAgentStore((s) => s.delegatedTasks);
-  const delegatedBatches = useAgentStore((s) => s.delegatedBatches);
   const refreshAgentTasks = useAgentStore((s) => s.refreshAgentTasks);
 
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
@@ -1101,23 +1404,56 @@ export function AppShell() {
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [projectFilesLoading, setProjectFilesLoading] = useState(false);
   const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
+  const [agentWorkbenchOpen, setAgentWorkbenchOpen] = useState(false);
+  const [agentWorkbenchMode, setAgentWorkbenchMode] = useState<"review" | "temporary" | "agents">("review");
+  const [expandedReviewFiles, setExpandedReviewFiles] = useState<Set<string>>(() => new Set());
+  const [reviewPanelWidth, setReviewPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-review", Math.round(window.innerWidth * 0.45)));
+  const [temporaryPanelWidth, setTemporaryPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-temporary", Math.round(window.innerWidth * 0.32)));
+  const [dockResizing, setDockResizing] = useState(false);
+  const dockResizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const workbenchPanelWidth = agentWorkbenchMode === "review" ? reviewPanelWidth : temporaryPanelWidth;
+  const handleDockResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dockResizeDrag.current = { startX: event.clientX, startWidth: workbenchPanelWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDockResizing(true);
+  };
+  const handleDockResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dockResizeDrag.current;
+    if (!drag) return;
+    const maxWidth = Math.max(420, window.innerWidth - 460);
+    const nextWidth = Math.min(maxWidth, Math.max(320, drag.startWidth + (drag.startX - event.clientX)));
+    if (agentWorkbenchMode === "review") setReviewPanelWidth(nextWidth);
+    else setTemporaryPanelWidth(nextWidth);
+  };
+  const handleDockResizeEnd = () => {
+    if (!dockResizeDrag.current) return;
+    dockResizeDrag.current = null;
+    setDockResizing(false);
+    localStorage.setItem(agentWorkbenchMode === "review" ? "nova-workbench-width-review" : "nova-workbench-width-temporary", String(workbenchPanelWidth));
+  };
   const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   // Pull the delegated task/batch snapshot once when the shell mounts.
   useEffect(() => { void refreshAgentTasks(); }, [refreshAgentTasks]);
+  useEffect(() => {
+    setExpandedReviewFiles(new Set());
+    setAgentWorkbenchOpen(false);
+  }, [activeId]);
   // Keep ref in sync for cleanup on unmount
   useEffect(() => { attachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [savedInput, setSavedInput] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [revertedFileChanges, setRevertedFileChanges] = useState<Set<string>>(() => new Set());
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "activity">("appearance");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [selectedTrajectoryEntry, setSelectedTrajectoryEntry] = useState<SelectedTrajectoryEntry | null>(null);
@@ -1137,7 +1473,7 @@ export function AppShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
-  const inputCardRef = useRef<HTMLDivElement>(null);
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1224,7 +1560,7 @@ export function AppShell() {
   const activeAgent = activeId && visibleAgentIds.has(activeId)
     ? agents.find((agent) => agent.id === activeId)
     : undefined;
-  const activeDelegatedAgents = useMemo(() => {
+  const currentSubAgents = useMemo(() => {
     if (!activeAgent) return [];
     const descendants = new Set<string>();
     const pending = [activeAgent.id];
@@ -1238,104 +1574,37 @@ export function AppShell() {
         }
       }
     }
-    return agents.filter(
-      (agent) => descendants.has(agent.id) && (agent.status === "starting" || agent.status === "streaming"),
-    );
+    return agents.filter((agent) => descendants.has(agent.id));
   }, [activeAgent, agents]);
-  const activeChildAgents = useMemo(() => {
-    if (!activeAgent) return [];
-    const descendants = new Set<string>();
-    const pending = [activeAgent.id];
-    while (pending.length > 0) {
-      const parentId = pending.pop();
-      if (!parentId) continue;
-      for (const agent of agents) {
-        if (agent.parentAgentId === parentId && !descendants.has(agent.id)) {
-          descendants.add(agent.id);
-          pending.push(agent.id);
-        }
-      }
-    }
-    return agents
-      .filter((agent) => descendants.has(agent.id))
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  }, [activeAgent, agents]);
-  const activeDelegatedTasks = useMemo(
-    () => activeAgent
-      ? delegatedTasks.filter((task) => task.parentAgentId === activeAgent.id)
-      : [],
-    [activeAgent, delegatedTasks],
+  const activeDelegatedAgents = useMemo(
+    () => currentSubAgents.filter((agent) => agent.status === "starting" || agent.status === "streaming"),
+    [currentSubAgents],
   );
-  const activeDelegatedBatchIds = useMemo(
-    () => new Set(activeDelegatedTasks.map((task) => task.batchId)),
-    [activeDelegatedTasks],
-  );
-  const activeDelegatedBatches = useMemo(
-    () => delegatedBatches.filter(
-      (batch) => batch.parentAgentId === activeAgent?.id && activeDelegatedBatchIds.has(batch.batchId),
-    ),
-    [activeAgent?.id, activeDelegatedBatchIds, delegatedBatches],
-  );
-  const agentWorkbenchFiles = useMemo<WorkbenchFile[]>(() => {
-    if (!activeAgent) return [];
-    const files = new Map<string, { name: string; path: string; directions: Set<"input" | "output"> }>();
-    const addFile = (rawPath: string, direction: "input" | "output") => {
-      const path = rawPath.trim().replace(/^['"`]|['"`,.;，。；]+$/g, "");
-      if (!path) return;
-      const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-      if (!name.includes(".")) return;
-      const key = path.toLowerCase();
-      const existing = files.get(key) ?? { name, path, directions: new Set<"input" | "output">() };
-      existing.directions.add(direction);
-      files.set(key, existing);
-    };
-
-    for (const message of activeAgent.messages) {
-      if (message.role !== "user") continue;
-      for (const attachment of message.attachments ?? []) addFile(attachment.name, "input");
-      for (const match of message.content.matchAll(/@([^\s，。！？、；;]+)/g)) addFile(match[1], "input");
-    }
-
-    for (const task of activeDelegatedTasks) {
-      for (const path of task.changedFiles ?? []) addFile(path, "output");
-    }
-
-    for (const agent of [activeAgent, ...activeChildAgents]) {
-      for (const message of agent.messages) {
-        for (const tool of message.toolCalls ?? []) {
-          if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
-          const args = tool.args && typeof tool.args === "object" ? tool.args as Record<string, unknown> : {};
-          const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
-          if (path) addFile(path, "output");
-        }
-      }
-    }
-
-    return Array.from(files.entries()).map(([key, file]) => ({
-      key,
-      name: file.name,
-      path: file.path,
-      directions: Array.from(file.directions),
-    }));
-  }, [activeAgent, activeChildAgents, activeDelegatedTasks]);
   const showAgentWorkbench = Boolean(activeAgent);
-  const handleTemporaryAsk = useCallback(async (question: string) => {
+  const temporaryStreamHandlers = useRef<Map<string, (text: string) => void>>(new Map());
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onTemporaryAnswerChunk((chunk) => {
+      temporaryStreamHandlers.current.get(chunk.requestId)?.(chunk.text);
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+  const handleTemporaryAsk = useCallback(async (question: string, onDelta?: (text: string) => void) => {
     if (!activeAgent) throw new Error("当前没有可复用上下文的主 Agent");
-    const snapshot = activeAgent.contextSnapshot;
-    const contextParts: string[] = [];
-    if (snapshot?.systemPrompt) contextParts.push(`SYSTEM PROMPT\n${snapshot.systemPrompt}`);
-    if (snapshot?.contextFiles.length) {
-      contextParts.push(snapshot.contextFiles.map((file) => `CONTEXT FILE: ${file.path}\n${file.content}`).join("\n\n"));
+    const requestId = crypto.randomUUID();
+    if (onDelta) temporaryStreamHandlers.current.set(requestId, onDelta);
+    try {
+      return await askTemporary(activeAgent.id, question, requestId);
+    } finally {
+      temporaryStreamHandlers.current.delete(requestId);
     }
-    const conversation = activeAgent.messages.slice(-100).map((message) => {
-      const toolDetails = (message.toolCalls ?? []).map((tool) => {
-        const result = tool.result === undefined ? "" : ` -> ${JSON.stringify(tool.result).slice(0, 5000)}`;
-        return `[${tool.name}] ${JSON.stringify(tool.args)}${result}`;
-      }).join("\n");
-      return `${message.role.toUpperCase()}: ${message.content}${toolDetails ? `\n${toolDetails}` : ""}`;
-    }).join("\n\n");
-    contextParts.push(`CURRENT CONVERSATION\n${conversation}`);
-    return askTemporary(activeAgent.id, question, contextParts.join("\n\n---\n\n"));
   }, [activeAgent]);
   // Source of truth for the model shown in the picker. Prefer the agent's
   // modelMeta (from get_state, reflects the actual session model) over the
@@ -1477,28 +1746,99 @@ export function AppShell() {
           if (!path) continue;
           const resultRecord = tool.result && typeof tool.result === "object" ? tool.result as Record<string, unknown> : {};
           const details = resultRecord.details && typeof resultRecord.details === "object" ? resultRecord.details as Record<string, unknown> : {};
-          const patch = typeof details.patch === "string" ? details.patch : undefined;
+          const backendPatch = typeof details.patch === "string" ? details.patch : undefined;
+          const patch = backendPatch ?? (tool.name === "write" && typeof args.content === "string"
+            ? createNewFileDisplayPatch(path, args.content)
+            : undefined);
           const patchLines = patch?.split("\n") ?? [];
+          const previous = byPath.get(path);
+          const patches = patch ? [...(previous?.patches ?? []), patch] : previous?.patches;
           const additions = tool.name === "write"
             ? (typeof args.content === "string" && args.content ? args.content.split("\n").length : 0)
             : patchLines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
           const deletions = tool.name === "edit"
             ? patchLines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
             : 0;
-          const previous = byPath.get(path);
           byPath.set(path, {
             path,
             kind: tool.name,
             additions: (previous?.additions ?? 0) + additions,
             deletions: (previous?.deletions ?? 0) + deletions,
-            patch: [previous?.patch, patch].filter(Boolean).join("\n\n") || undefined,
+            patches,
+            created: previous?.created ?? (details.created === true),
+            revertible: (previous?.revertible ?? true) && Boolean(backendPatch),
           });
         }
       }
-      if (byPath.size > 0) result.set(assistant.id, Array.from(byPath.values()));
+      const visible = Array.from(byPath.values()).filter((change) => !revertedFileChanges.has(`${assistant.id}:${change.path}`));
+      if (visible.length > 0) result.set(assistant.id, visible);
     }
     return result;
-  }, [trajectoryRequests]);
+  }, [trajectoryRequests, revertedFileChanges]);
+  // Session-cumulative view: one entry per file, with its per-turn changes kept in order.
+  const cumulativeReviewFiles = useMemo(() => {
+    const byPath = new Map<string, {
+      path: string;
+      kind: TurnFileChange["kind"];
+      created?: boolean;
+      additions: number;
+      deletions: number;
+      turns: { patches: string[]; additions: number; deletions: number }[];
+    }>();
+    for (const [, changes] of turnFileChangesByAssistantId) {
+      for (const change of changes) {
+        const turn = { patches: change.patches ?? [], additions: change.additions, deletions: change.deletions };
+        const existing = byPath.get(change.path);
+        if (existing) {
+          existing.additions += change.additions;
+          existing.deletions += change.deletions;
+          existing.turns.push(turn);
+        } else {
+          byPath.set(change.path, {
+            path: change.path,
+            kind: change.kind,
+            created: change.created,
+            additions: change.additions,
+            deletions: change.deletions,
+            turns: [turn],
+          });
+        }
+      }
+    }
+    return Array.from(byPath.values());
+  }, [turnFileChangesByAssistantId]);
+  const handleReviewFileChange = useCallback((_assistantId: string, path: string) => {
+    setExpandedReviewFiles(new Set([path]));
+    setAgentWorkbenchMode("review");
+    setAgentWorkbenchOpen(true);
+  }, []);
+  const toggleReviewFile = useCallback((path: string) => {
+    setExpandedReviewFiles((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const handleRevertFileChange = useCallback(async (assistantMessageId: string, change: TurnFileChange) => {
+    if (!activeAgent || !change.patches?.length) return;
+    try {
+      await revertFileChange(activeAgent.id, change.path, change.patches, change.created);
+      setRevertedFileChanges((current) => new Set(current).add(`${assistantMessageId}:${change.path}`));
+      setExpandedReviewFiles((current) => {
+        if (!current.has(change.path)) return current;
+        const next = new Set(current);
+        next.delete(change.path);
+        return next;
+      });
+    } catch (revertError) {
+      const message = revertError instanceof Error ? revertError.message : String(revertError);
+      setError(message);
+      window.setTimeout(() => setError(null), 8000);
+      throw revertError;
+    }
+  }, [activeAgent?.id]);
 
   const handleMessageFeedback = useCallback((message: AgentState["messages"][number], rating: "up" | "down" | null) => {
     if (!activeAgent || !message.entryId) return;
@@ -1658,7 +1998,7 @@ export function AppShell() {
   useEffect(() => {
     if (slashCommands.length === 0 && !fileMention) return;
     const dismissSlashCommands = (event: MouseEvent) => {
-      if (!inputCardRef.current?.contains(event.target as Node)) {
+      if (!composerShellRef.current?.contains(event.target as Node)) {
         setSlashCommandMenuDismissed(true);
         setFileMentionMenuDismissed(true);
       }
@@ -1692,6 +2032,32 @@ export function AppShell() {
     }
   }, [availableModels, defaultModel, defaultProvider, setDefaultModel, setDefaultProvider]);
 
+  const refreshModelCatalog = useCallback(async () => {
+    const results = await Promise.allSettled([listAllModels(), fetchModelsViaShell()]);
+    const merged = new Map<string, AvailableModel>();
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("[AppShell] model catalog source failed:", result.reason);
+        continue;
+      }
+      for (const model of result.value ?? []) {
+        const mapped: AvailableModel = {
+          id: String(model.id ?? ""),
+          name: String(model.name ?? model.id ?? ""),
+          provider: String(model.provider ?? ""),
+          contextWindow: Number(model.contextWindow ?? 0),
+          maxTokens: Number(model.maxTokens ?? 0),
+          reasoning: Boolean(model.reasoning),
+          images: Boolean(model.images),
+        };
+        if (!mapped.id || !mapped.provider) continue;
+        merged.set(`${mapped.provider}:${mapped.id}`, mapped);
+      }
+    }
+    if (merged.size === 0) throw new Error("模型已保存，但刷新模型列表失败");
+    useAgentStore.setState({ availableModels: Array.from(merged.values()) });
+  }, []);
+
   // Load agents on mount
   useEffect(() => {
     listAgents()
@@ -1708,32 +2074,8 @@ export function AppShell() {
     // Merge the bundled/absolute CLI catalog with the user's shell Nova.
     // The latter includes newly-added models.json providers such as Ollama,
     // while packaged Studio builds may point at an older bundled CLI.
-    void Promise.allSettled([listAllModels(), fetchModelsViaShell()]).then((results) => {
-      const merged = new Map<string, AvailableModel>();
-      for (const result of results) {
-        if (result.status === "rejected") {
-          console.error("[AppShell] model catalog source failed:", result.reason);
-          continue;
-        }
-        for (const model of result.value ?? []) {
-          const mapped: AvailableModel = {
-            id: String(model.id ?? ""),
-            name: String(model.name ?? model.id ?? ""),
-            provider: String(model.provider ?? ""),
-            contextWindow: Number(model.contextWindow ?? 0),
-            maxTokens: Number(model.maxTokens ?? 0),
-            reasoning: Boolean(model.reasoning),
-            images: Boolean(model.images),
-          };
-          if (!mapped.id || !mapped.provider) continue;
-          merged.set(`${mapped.provider}:${mapped.id}`, mapped);
-        }
-      }
-      if (merged.size > 0) {
-        useAgentStore.setState({ availableModels: Array.from(merged.values()) });
-      }
-    });
-  }, []);
+    void refreshModelCatalog().catch((reason) => console.error("[AppShell] initial model refresh failed:", reason));
+  }, [refreshModelCatalog]);
 
   // Cleanup blob URLs on unmount
   useEffect(() => {
@@ -2076,8 +2418,9 @@ export function AppShell() {
 
   return (
     <div
-      className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}
+      className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}${!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen ? " studio-root-dock-open" : ""}`}
       data-custom-background={customBgUrl ? "true" : "false"}
+      style={{ "--conversation-sidebar-width": `${workbenchPanelWidth}px` } as CSSProperties}
     >
       <Background />
       <div
@@ -2191,6 +2534,7 @@ export function AppShell() {
                 <>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" title="模型设置"><Bot size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" title="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
               ) : (
@@ -2210,6 +2554,7 @@ export function AppShell() {
                     <Plus size={20} />
                   </button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => setSettingsOpen(true)} aria-label="设置" title="设置"><Settings size={19} /></button>
                 </>
               )}
@@ -2240,6 +2585,10 @@ export function AppShell() {
                 <button type="button" className={`settings-category-button ${settingsSection === "appearance" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("appearance")}>
                   <Palette size={16} />
                   <span>外观</span>
+                </button>
+                <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
+                  <Bot size={16} />
+                  <span>模型</span>
                 </button>
                 <button type="button" className={`settings-category-button ${settingsSection === "activity" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("activity")}>
                   <ChartNoAxesColumnIncreasing size={16} />
@@ -2369,6 +2718,15 @@ export function AppShell() {
               <footer className="sidebar-footer">
                 <button
                   type="button"
+                  className="sidebar-settings-button"
+                  onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")}
+                  title="在浏览器中打开 Nova Agent GitHub"
+                >
+                  <GithubMark size={16} />
+                  <span>GitHub</span>
+                </button>
+                <button
+                  type="button"
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
                   onClick={() => setSettingsOpen(true)}
                 >
@@ -2381,7 +2739,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${showAgentWorkbench && conversationView === "chat" ? "studio-main-has-task-summary" : ""} relative w-full flex flex-col overflow-hidden`}>
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} relative w-full flex flex-col overflow-hidden`}>
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -2453,6 +2811,11 @@ export function AppShell() {
                     </label>
                   </div>
                   </>
+                ) : settingsSection === "models" ? (
+                  <ModelSettings
+                    models={availableModels}
+                    onSaved={refreshModelCatalog}
+                  />
                 ) : (
                   <ActivityHeatmap />
                 )}
@@ -2479,6 +2842,9 @@ export function AppShell() {
               </button>
             </div>
           )}
+          {/* Content area + docked workbench sidebar */}
+          <div className={`conversation-dock${!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen ? " conversation-dock-open" : ""}${dockResizing ? " conversation-dock-resizing" : ""}`}>
+            <div className="conversation-dock-main">
           {/* Content area */}
           <div
             ref={scrollRef}
@@ -2486,7 +2852,7 @@ export function AppShell() {
             onWheelCapture={handleConversationWheel}
             className={`conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 ${
               !hasMessages ? "justify-center" : "justify-start"
-            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""} ${showAgentWorkbench && conversationView === "chat" ? "conversation-has-task-summary" : ""}`}
+            } ${hasMessages ? "conversation-scroll-has-messages" : ""} ${hasMessages && conversationView === "chat" ? "conversation-scroll-chat" : ""}`}
             style={{ paddingTop: activeAgent && !settingsOpen ? 54 : undefined }}
           >
             {conversationView === "trajectory" && activeAgent ? (
@@ -2772,6 +3138,8 @@ export function AppShell() {
                       handleSelectAgent(agentId);
                       setConversationView(view);
                     }}
+                    onRevertFileChange={handleRevertFileChange}
+                    onReviewFileChange={handleReviewFileChange}
                   />
                 )}
 
@@ -2795,21 +3163,6 @@ export function AppShell() {
               </div>
             )}
           </div>
-
-          {!settingsOpen && conversationView === "chat" && showAgentWorkbench && (
-            <aside className="conversation-task-summary">
-              <BatchTaskPanel
-                tasks={activeDelegatedTasks}
-                batches={activeDelegatedBatches}
-                childAgents={activeChildAgents}
-                files={agentWorkbenchFiles}
-                agentNames={agentNames}
-                onSelect={handleSelectAgent}
-                sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
-                onTemporaryAsk={handleTemporaryAsk}
-              />
-            </aside>
-          )}
 
           {!settingsOpen && conversationView === "chat" && !showAgentWorkbench && showConversationMinimap && (
             <nav
@@ -2843,7 +3196,7 @@ export function AppShell() {
 
           {/* Input area */}
           <div
-            className={showAgentWorkbench ? "conversation-input-area conversation-input-with-task-summary" : "conversation-input-area"}
+            className="conversation-input-area"
             style={{
               flexShrink: 0,
               padding: "60px 24px 56px",
@@ -2851,7 +3204,11 @@ export function AppShell() {
               justifyContent: "center",
             }}
           >
-            <div className="composer-shell" style={{ position: "relative", width: "100%", maxWidth: 660 }}>
+            <div
+              ref={composerShellRef}
+              className="composer-shell"
+              style={{ position: "relative", width: "100%", maxWidth: 660 }}
+            >
               {showScrollToBottom && activeAgent && (
                 <button
                   type="button"
@@ -2876,9 +3233,17 @@ export function AppShell() {
                   </div>
                 </div>
               )}
+              {fileMention && (
+                <FileMentionMenu
+                  files={projectFiles}
+                  loading={projectFilesLoading}
+                  selectedIndex={Math.min(selectedProjectFileIndex, Math.max(0, projectFiles.length - 1))}
+                  onSelectedIndexChange={setSelectedProjectFileIndex}
+                  onSelect={selectProjectFile}
+                />
+              )}
               {/* Input card */}
               <div
-                ref={inputCardRef}
                 className="nova-input"
                 style={{
                   overflow: "visible",
@@ -2979,15 +3344,6 @@ export function AppShell() {
                     selectedIndex={Math.min(selectedSlashCommandIndex, slashCommands.length - 1)}
                     onSelectedIndexChange={setSelectedSlashCommandIndex}
                     onSelect={selectSlashCommand}
-                  />
-                )}
-                {fileMention && (
-                  <FileMentionMenu
-                    files={projectFiles}
-                    loading={projectFilesLoading}
-                    selectedIndex={Math.min(selectedProjectFileIndex, Math.max(0, projectFiles.length - 1))}
-                    onSelectedIndexChange={setSelectedProjectFileIndex}
-                    onSelect={selectProjectFile}
                   />
                 )}
                 <textarea
@@ -3441,6 +3797,69 @@ export function AppShell() {
               </div>
 
             </div>
+          </div>
+            </div>
+            {!settingsOpen && conversationView === "chat" && showAgentWorkbench && (
+              <div className="agent-workbench-triggers" aria-label="会话工具">
+                <button
+                  type="button"
+                  className={`agent-workbench-trigger ${agentWorkbenchOpen && agentWorkbenchMode === "review" ? "agent-workbench-trigger-active" : ""}`}
+                  onClick={() => { setAgentWorkbenchMode("review"); setExpandedReviewFiles((current) => { const valid = new Set([...current].filter((path) => cumulativeReviewFiles.some((file) => file.path === path))); if (valid.size === 0 && cumulativeReviewFiles[0]) valid.add(cumulativeReviewFiles[0].path); return valid; }); setAgentWorkbenchOpen((open) => agentWorkbenchMode === "review" ? !open : true); }}
+                  aria-label="文件审查"
+                >
+                  <FileCode size={17} />
+                  {cumulativeReviewFiles.length > 0 && <span className="agent-workbench-trigger-count">{cumulativeReviewFiles.length}</span>}
+                  <span className="agent-workbench-trigger-tip">文件审查</span>
+                </button>
+                <button
+                  type="button"
+                  className={`agent-workbench-trigger ${agentWorkbenchOpen && agentWorkbenchMode === "temporary" ? "agent-workbench-trigger-active" : ""}`}
+                  onClick={() => { setAgentWorkbenchMode("temporary"); setAgentWorkbenchOpen((open) => agentWorkbenchMode === "temporary" ? !open : true); }}
+                  aria-label="临时提问"
+                >
+                  <MessageCircle size={17} />
+                  <span className="agent-workbench-trigger-tip">临时提问</span>
+                </button>
+                <button
+                  type="button"
+                  className={`agent-workbench-trigger agent-workbench-agent-trigger ${activeDelegatedAgents.length > 0 ? "agent-workbench-trigger-running" : ""} ${agentWorkbenchOpen && agentWorkbenchMode === "agents" ? "agent-workbench-trigger-active" : ""}`}
+                  onClick={() => { setAgentWorkbenchMode("agents"); setAgentWorkbenchOpen((open) => agentWorkbenchMode === "agents" ? !open : true); }}
+                  aria-label={`子 Agent，${currentSubAgents.length} 个，${activeDelegatedAgents.length} 个进行中`}
+                >
+                  <Bot size={17} />
+                  {currentSubAgents.length > 0 && <span className="agent-workbench-trigger-count">{currentSubAgents.length}</span>}
+                  <span className="agent-workbench-trigger-tip">子 Agent · {activeDelegatedAgents.length} 进行中</span>
+                </button>
+              </div>
+            )}
+            {!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen && (
+              <>
+                <div
+                  className="conversation-dock-resize"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="拖拽调整侧栏宽度"
+                  onPointerDown={handleDockResizeStart}
+                  onPointerMove={handleDockResizeMove}
+                  onPointerUp={handleDockResizeEnd}
+                  onPointerCancel={handleDockResizeEnd}
+                />
+                <aside className="conversation-task-summary">
+                  <BatchTaskPanel
+                    sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
+                    onTemporaryAsk={handleTemporaryAsk}
+                    onCollapse={() => setAgentWorkbenchOpen(false)}
+                    mode={agentWorkbenchMode}
+                    reviewFiles={cumulativeReviewFiles}
+                    expandedReviewFiles={expandedReviewFiles}
+                    onToggleReviewFile={toggleReviewFile}
+                    childAgents={currentSubAgents}
+                    agentNames={agentNames}
+                    onSelectAgent={handleSelectAgent}
+                  />
+                </aside>
+              </>
+            )}
           </div>
         </main>
         </div>

@@ -53,14 +53,28 @@ export async function sendPrompt(
   return invoke("send_prompt", { agentId, message, images, fileReferences, backgroundAgentIds });
 }
 
-/** Run a one-off question against a transient session. The parent session is
- * used only as context provenance; no message is appended to that session. */
+/** Run a one-off question against a transient, tool-less session. The parent
+ * session is used only as context provenance; no message is appended to that
+ * session. Streaming text arrives via onTemporaryAnswerChunk. */
 export async function askTemporary(
   agentId: string,
   question: string,
-  context: string,
+  requestId: string,
 ): Promise<string> {
-  return invoke<string>("ask_temporary", { agentId, question, context });
+  return invoke<string>("ask_temporary", { agentId, question, requestId });
+}
+
+export interface TemporaryAnswerChunk {
+  requestId: string;
+  text: string;
+}
+
+/** Subscribe to streaming updates for temporary questions. Each payload
+ * carries the full assistant text so far (replace, don't append). */
+export async function onTemporaryAnswerChunk(
+  handler: (chunk: TemporaryAnswerChunk) => void,
+): Promise<UnlistenFn> {
+  return listen<TemporaryAnswerChunk>("temporary-answer-chunk", (event) => handler(event.payload));
 }
 
 export async function abortAgent(agentId: string): Promise<void> {
@@ -81,6 +95,15 @@ export async function forceStopAgent(agentId: string, reason?: string, timedOut 
 
 export async function retryAgent(agentId: string, message?: string): Promise<void> {
   return invoke("retry_agent", { agentId, message });
+}
+
+export async function revertFileChange(
+  agentId: string,
+  path: string,
+  patches: string[],
+  created?: boolean,
+): Promise<void> {
+  return invoke("revert_file_change", { agentId, path, patches, created });
 }
 
 // ─── Delegated Task Registry (hub task panel) ───
@@ -188,6 +211,56 @@ export async function requestAvailableModels(agentId: string): Promise<void> {
 
 export async function listAllModels(): Promise<Record<string, unknown>[]> {
   return invoke<Record<string, unknown>[]>("list_all_models");
+}
+
+export interface ModelConfigurationInput {
+  providerId: string;
+  /** When empty, only the provider API key is saved (no models.json entry). */
+  modelId?: string;
+  displayName?: string;
+  baseUrl: string;
+  api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
+  apiKey?: string;
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  images: boolean;
+}
+
+export async function saveModelConfiguration(input: ModelConfigurationInput): Promise<void> {
+  return invoke("save_model_configuration", { input });
+}
+
+export interface ProviderModelInfo {
+  id: string;
+  name?: string;
+  reasoning: boolean;
+  images: boolean;
+  contextWindow: number;
+  maxTokens: number;
+}
+
+export interface ProviderConfiguration {
+  providerId: string;
+  baseUrl?: string;
+  api?: string;
+  /** Plaintext API key — masking/reveal is handled in the frontend only. */
+  apiKey?: string;
+  /** Where the key was found: "auth" (auth.json) or "models" (models.json). */
+  apiKeySource?: "auth" | "models";
+  models: ProviderModelInfo[];
+}
+
+export async function getModelConfigurations(): Promise<ProviderConfiguration[]> {
+  return invoke<ProviderConfiguration[]>("get_model_configurations");
+}
+
+export async function deleteModelConfiguration(providerId: string, modelId: string): Promise<void> {
+  return invoke("delete_model_configuration", { providerId, modelId });
+}
+
+export async function deleteProviderConfiguration(providerId: string): Promise<void> {
+  return invoke("delete_provider_configuration", { providerId });
 }
 
 /**

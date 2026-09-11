@@ -124,6 +124,13 @@ pub enum RpcCommand {
     GetExecutionTraces { id: Option<String> },
     #[serde(rename = "get_available_models")]
     GetAvailableModels { id: Option<String> },
+    #[serde(rename = "revert_file_change")]
+    RevertFileChange {
+        id: Option<String>,
+        path: String,
+        patches: Vec<String>,
+        created: Option<bool>,
+    },
     #[serde(rename = "new_session")]
     NewSession { id: Option<String> },
     #[serde(rename = "fork")]
@@ -365,6 +372,21 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"customInstructions\":\"keep it short\""));
         assert!(!json.contains("custom_instructions"));
+    }
+
+    #[test]
+    fn revert_file_change_serializes_reversible_patches() {
+        let cmd = RpcCommand::RevertFileChange {
+            id: Some("revert-1".into()),
+            path: "src/main.ts".into(),
+            patches: vec!["patch-one".into(), "patch-two".into()],
+            created: Some(false),
+        };
+        let json = serde_json::to_value(cmd).unwrap();
+        assert_eq!(json["type"], "revert_file_change");
+        assert_eq!(json["path"], "src/main.ts");
+        assert_eq!(json["patches"][1], "patch-two");
+        assert_eq!(json["created"], false);
     }
 
     /// nova prompt images are ImageContent[] ({ type, data, mimeType }) — packages/ai/src/types.ts
