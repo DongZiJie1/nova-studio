@@ -1,6 +1,7 @@
 use crate::agent_api::{TaskRegistry, TaskSnapshot};
 use crate::agent_manager::AgentManager;
 use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
+use crate::worktree::{MergeOutcome, WorktreeStatus};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -488,15 +489,18 @@ pub async fn spawn_agent(
     cwd: String,
     model: Option<String>,
     provider: Option<String>,
+    worktree_enabled: Option<bool>,
 ) -> Result<AgentInfo, String> {
     log::info!(
-        "[cmd] spawn_agent cwd={:?} model={:?} provider={:?}",
+        "[cmd] spawn_agent cwd={:?} model={:?} provider={:?} worktree={:?}",
         cwd,
         model,
-        provider
+        provider,
+        worktree_enabled
     );
     let request = SpawnRequest {
         cwd,
+        worktree_enabled: worktree_enabled.unwrap_or(false),
         parent_agent_id: None,
         model,
         provider,
@@ -522,6 +526,54 @@ pub async fn stop_agent(
 ) -> Result<(), String> {
     log::info!("[cmd] stop_agent id={}", agent_id);
     state.0.stop(&agent_id).await
+}
+
+/// Whether a project directory can host worktree-isolated agents.
+#[tauri::command]
+pub async fn check_worktree_available(
+    state: State<'_, AgentManagerState>,
+    cwd: String,
+) -> Result<bool, String> {
+    Ok(state.0.worktree_available(&cwd).await)
+}
+
+/// Files the agent changed inside its worktree, measured against the base commit.
+#[tauri::command]
+pub async fn get_worktree_status(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<WorktreeStatus, String> {
+    state.0.worktree_status(&agent_id).await
+}
+
+/// Unified diff of a single file in the agent's worktree, including uncommitted work.
+#[tauri::command]
+pub async fn get_worktree_diff(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    path: String,
+) -> Result<String, String> {
+    state.0.worktree_diff(&agent_id, &path).await
+}
+
+/// Squash-merge the agent's work into the project. Reports conflicts instead of forcing them.
+#[tauri::command]
+pub async fn accept_worktree(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<MergeOutcome, String> {
+    log::info!("[cmd] accept_worktree id={}", agent_id);
+    state.0.accept_worktree(&agent_id).await
+}
+
+/// Discard the agent's work and remove its worktree.
+#[tauri::command]
+pub async fn reject_worktree(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    log::info!("[cmd] reject_worktree id={}", agent_id);
+    state.0.reject_worktree(&agent_id).await
 }
 
 #[tauri::command]

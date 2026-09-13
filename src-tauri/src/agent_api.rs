@@ -1282,6 +1282,8 @@ async fn spawn_agent(
 ) -> Result<Json<SpawnResponse>, (StatusCode, Json<ApiError>)> {
     let request = SpawnRequest {
         cwd: body.cwd,
+        // Delegated children share their parent's checkout instead of creating a nested one.
+        worktree_enabled: false,
         parent_agent_id: body.parent_agent_id,
         model: body.model,
         provider: body.provider,
@@ -1545,6 +1547,8 @@ async fn delegate_task(
             .manager
             .spawn(SpawnRequest {
                 cwd: body.cwd,
+                // Delegated children share their parent's checkout instead of creating a nested one.
+                worktree_enabled: false,
                 parent_agent_id: (!body.source_agent_id.is_empty())
                     .then_some(body.source_agent_id.clone()),
                 model: body.model,
@@ -2237,6 +2241,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2248,6 +2253,7 @@ mod tests {
             .unwrap();
         let agent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2364,6 +2370,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2375,6 +2382,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2386,6 +2394,7 @@ mod tests {
             .unwrap();
         let grandchild = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(child.id.clone()),
                 model: None,
@@ -2397,6 +2406,7 @@ mod tests {
             .unwrap();
         let unrelated = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2447,6 +2457,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2458,6 +2469,7 @@ mod tests {
             .unwrap();
         let child_a = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2469,6 +2481,7 @@ mod tests {
             .unwrap();
         let child_b = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2572,6 +2585,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2583,6 +2597,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2714,6 +2729,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2725,6 +2741,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2825,6 +2842,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2836,6 +2854,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -2928,6 +2947,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -2939,6 +2959,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -3060,6 +3081,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -3071,6 +3093,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -3208,6 +3231,7 @@ mod tests {
         ));
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -3219,6 +3243,7 @@ mod tests {
             .unwrap();
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,

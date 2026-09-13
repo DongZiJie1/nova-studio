@@ -376,13 +376,17 @@ pub struct WorktreeStore {
 }
 
 impl WorktreeStore {
-    pub fn new(index_path: PathBuf) -> Result<Self, String> {
-        Ok(Self {
+    /// The base directory falls back to the temp directory when the home directory cannot be
+    /// resolved, so manager construction never fails on an unusual environment.
+    pub fn new(index_path: PathBuf) -> Self {
+        let base_dir =
+            default_base_dir().unwrap_or_else(|_| std::env::temp_dir().join("nova-worktrees"));
+        Self {
             index_path,
-            base_dir: default_base_dir()?,
+            base_dir,
             entries: Arc::new(RwLock::new(HashMap::new())),
             lock: Mutex::new(()),
-        })
+        }
     }
 
     #[cfg(test)]

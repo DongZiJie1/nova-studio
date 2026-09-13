@@ -3,6 +3,9 @@ use crate::nova_host_process::NovaHostProcess;
 use crate::rpc_types::{
     AgentInfo, CollaborationContext, FileReference, ImageContent, RpcCommand, SpawnRequest,
 };
+use crate::worktree::{
+    self, MergeOutcome, WorktreeInfo, WorktreeState, WorktreeStatus, WorktreeStore,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -27,6 +30,7 @@ pub struct AgentManager {
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
     persistence_lock: Arc<Mutex<()>>,
     host: Mutex<Option<Arc<NovaHostProcess>>>,
+    worktrees: WorktreeStore,
 }
 
 struct AskCancellationGuard {
@@ -71,6 +75,12 @@ struct PersistedAgent {
     #[serde(default)]
     message_count: usize,
     depth: u64,
+    /// Repository root when this agent (or its owner) runs in a worktree.
+    #[serde(default)]
+    project_cwd: Option<String>,
+    /// Set only on the agent that owns the worktree; delegated children share the checkout.
+    #[serde(default)]
+    worktree: Option<WorktreeInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +104,7 @@ struct NovaSessionSummary {
 impl AgentManager {
     pub fn new(cli_path: String, state_path: PathBuf) -> Self {
         let (global_event_tx, _) = broadcast::channel(512);
+        let worktrees = WorktreeStore::new(state_path.with_file_name("worktrees.json"));
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             global_event_tx,
@@ -104,6 +115,7 @@ impl AgentManager {
             records: Arc::new(RwLock::new(HashMap::new())),
             persistence_lock: Arc::new(Mutex::new(())),
             host: Mutex::new(None),
+            worktrees,
         }
     }
 
@@ -186,6 +198,8 @@ impl AgentManager {
                             created_at: session.created_at,
                             message_count: session.message_count,
                             depth: legacy.map_or(0, |item| item.depth),
+                            project_cwd: legacy.and_then(|item| item.project_cwd.clone()),
+                            worktree: legacy.and_then(|item| item.worktree.clone()),
                         },
                     )
                 })
@@ -202,6 +216,33 @@ impl AgentManager {
             }
             Err(error) => return Err(error),
         };
+        // Worktree metadata lives outside the agent records so session-catalog pruning
+        // cannot drop it; reattach it here and flag checkouts that disappeared.
+        self.worktrees.load().await?;
+        let mut records: HashMap<String, PersistedAgent> = records;
+        for (id, record) in records.iter_mut() {
+            if let Some(info) = self.worktrees.get(id).await {
+                record.project_cwd = Some(info.project_cwd.clone());
+                record.worktree = Some(info);
+            }
+        }
+        for (id, info) in self.worktrees.list().await {
+            if info.state != WorktreeState::Active {
+                continue;
+            }
+            if !worktree::verify_existing(&info).await {
+                log::warn!("Worktree for {} is gone from disk: {}", id, info.path);
+                let mut missing = info.clone();
+                missing.state = WorktreeState::Missing;
+                self.worktrees.put(&id, missing).await?;
+            } else if !records.contains_key(&id) {
+                log::warn!(
+                    "Worktree {} has no matching agent record; left in place at {}",
+                    id,
+                    info.path
+                );
+            }
+        }
         *self.records.write().await = records;
         self.persist_records().await?;
         Ok(())
@@ -283,6 +324,8 @@ impl AgentManager {
                         created_at: session.created_at,
                         message_count: session.message_count,
                         depth: 0,
+                        project_cwd: None,
+                        worktree: None,
                     },
                 );
             }
@@ -329,8 +372,34 @@ impl AgentManager {
             }
         }
 
-        let cwd = normalize_project_cwd(&request.cwd)?;
+        let project_cwd = normalize_project_cwd(&request.cwd)?;
         let short_id = Uuid::new_v4().to_string()[..8].to_string();
+        let agent_id = format!("agent-{short_id}");
+
+        // A delegated child inherits its parent's checkout rather than creating a nested
+        // worktree, so one root agent owns one worktree for the whole task group.
+        let inherited_project_cwd = match request.parent_agent_id.as_deref() {
+            Some(parent_id) => self
+                .worktrees
+                .get(parent_id)
+                .await
+                .map(|parent| parent.project_cwd),
+            None => None,
+        };
+        let worktree = if request.worktree_enabled {
+            Some(self.worktrees.create(&project_cwd, &agent_id).await?)
+        } else {
+            None
+        };
+        let cwd = match worktree.as_ref() {
+            Some(info) => normalize_project_cwd(&info.path)?,
+            None => project_cwd,
+        };
+        let project_cwd = worktree
+            .as_ref()
+            .map(|info| info.project_cwd.clone())
+            .or(inherited_project_cwd);
+
         let mut args = request.args.unwrap_or_default();
         if let Some(parent_id) = request.parent_agent_id.as_ref() {
             let mut parent_file = self
@@ -355,7 +424,7 @@ impl AgentManager {
             }
         }
         let record = PersistedAgent {
-            id: format!("agent-{short_id}"),
+            id: agent_id.clone(),
             created_by: Some(request.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())),
             parent_agent_id: request.parent_agent_id,
             name: Some("Nova".to_string()),
@@ -368,8 +437,22 @@ impl AgentManager {
             created_at: chrono::Utc::now().to_rfc3339(),
             message_count: 0,
             depth: request.depth,
+            project_cwd,
+            worktree: worktree.clone(),
         };
-        self.spawn_record(record, true).await
+        match self.spawn_record(record, true).await {
+            Ok(info) => Ok(info),
+            Err(error) => {
+                // Never leak a checkout for an agent that failed to start.
+                if let Some(info) = worktree.as_ref() {
+                    if let Err(cleanup) = worktree::remove_worktree(info).await {
+                        log::warn!("Failed to clean up worktree {}: {}", info.path, cleanup);
+                    }
+                    let _ = self.worktrees.remove(&agent_id).await;
+                }
+                Err(error)
+            }
+        }
     }
 
     async fn spawn_record(
@@ -463,7 +546,7 @@ impl AgentManager {
             })?;
         }
 
-        let info = self.build_info(&agent_id, &record.cwd, &process).await;
+        let info = self.build_info(&agent_id, &record.cwd, &process, Some(&record)).await;
 
         // Disposable side questions are consumed directly by `ask`; keeping
         // them off the global bus prevents them appearing in the Studio console.
@@ -620,6 +703,10 @@ impl AgentManager {
             created_at: chrono::Utc::now().to_rfc3339(),
             message_count: 0,
             depth: parent.depth.saturating_add(1),
+            // A temporary side question runs in the parent's directory but never owns
+            // its worktree, so resolving that worktree stays a single action.
+            project_cwd: parent.project_cwd.clone(),
+            worktree: None,
         };
 
         self.spawn_record(transient, false).await?;
@@ -861,6 +948,102 @@ impl AgentManager {
         let agents = self.agents.read().await;
         let agent = agents.get(agent_id).ok_or("Agent not found")?;
         agent.send_command(&RpcCommand::SetToolPermissionMode { id: None, mode })
+    }
+
+    // =========================================================================
+    // Worktree isolation
+    // =========================================================================
+
+    /// Whether the given directory can host worktree-isolated agents.
+    pub async fn worktree_available(&self, cwd: &str) -> bool {
+        match normalize_project_cwd(cwd) {
+            Ok(project) => worktree::is_git_repo(&project).await,
+            Err(_) => false,
+        }
+    }
+
+    /// The worktree owned by this agent, if any.
+    pub async fn worktree_for(&self, agent_id: &str) -> Option<WorktreeInfo> {
+        self.worktrees.get(agent_id).await
+    }
+
+    pub async fn worktree_status(&self, agent_id: &str) -> Result<WorktreeStatus, String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        worktree::status(&info).await
+    }
+
+    pub async fn worktree_diff(&self, agent_id: &str, path: &str) -> Result<String, String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        worktree::file_diff(&info, path).await
+    }
+
+    /// Squash-merge the agent's work into the project and retire the worktree.
+    /// Nothing is written when the project is dirty or the merge would conflict.
+    pub async fn accept_worktree(&self, agent_id: &str) -> Result<MergeOutcome, String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        let label = self.worktree_label(agent_id).await;
+        let outcome = worktree::merge_back(&info, &label).await?;
+        if outcome.merged {
+            worktree::remove_worktree(&info).await?;
+            self.finish_worktree(agent_id, &info, WorktreeState::Merged).await?;
+        }
+        Ok(outcome)
+    }
+
+    /// Discard the agent's work and remove the worktree.
+    pub async fn reject_worktree(&self, agent_id: &str) -> Result<(), String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        worktree::remove_worktree(&info).await?;
+        self.finish_worktree(agent_id, &info, WorktreeState::Rejected).await
+    }
+
+    async fn require_active_worktree(&self, agent_id: &str) -> Result<WorktreeInfo, String> {
+        let info = self
+            .worktrees
+            .get(agent_id)
+            .await
+            .ok_or_else(|| format!("Agent {agent_id} has no worktree"))?;
+        if info.state != WorktreeState::Active {
+            return Err(format!(
+                "This agent's worktree was already resolved ({:?})",
+                info.state
+            ));
+        }
+        Ok(info)
+    }
+
+    /// Record the final state, move the agent back to the project directory, and stop it —
+    /// its sandbox is gone, so continuing to run it would only produce broken tool calls.
+    async fn finish_worktree(
+        &self,
+        agent_id: &str,
+        info: &WorktreeInfo,
+        state: WorktreeState,
+    ) -> Result<(), String> {
+        let mut updated = info.clone();
+        updated.state = state;
+        self.worktrees.put(agent_id, updated.clone()).await?;
+        if let Some(record) = self.records.write().await.get_mut(agent_id) {
+            record.worktree = Some(updated);
+            if let Some(project) = record.project_cwd.clone() {
+                record.cwd = project;
+            }
+        }
+        self.persist_records().await?;
+        if self.get_process(agent_id).await.is_some() {
+            self.stop(agent_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn worktree_label(&self, agent_id: &str) -> String {
+        self.records
+            .read()
+            .await
+            .get(agent_id)
+            .and_then(|record| record.name.clone())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| agent_id.to_string())
     }
 
     /// Answer a pending tool permission request for an agent
@@ -1237,7 +1420,7 @@ impl AgentManager {
         let mut infos = Vec::new();
         for (id, record) in records.iter() {
             if let Some(agent) = agents.get(id) {
-                let mut info = self.build_info(id, &record.cwd, agent).await;
+                let mut info = self.build_info(id, &record.cwd, agent, Some(record)).await;
                 info.lifecycle = lifecycles.remove(id);
                 infos.push(info);
             } else {
@@ -1260,7 +1443,7 @@ impl AgentManager {
     /// Get info about a specific agent
     pub async fn get_info(&self, agent_id: &str) -> Result<AgentInfo, String> {
         if let Some(agent) = self.agents.read().await.get(agent_id).cloned() {
-            let mut info = self.build_info(agent_id, &agent.cwd, &agent).await;
+            let mut info = self.build_info(agent_id, &agent.cwd, &agent, None).await;
             info.lifecycle = agent.request_lifecycle().await;
             return Ok(info);
         }
@@ -1303,7 +1486,21 @@ impl AgentManager {
         self.agents.read().await.len()
     }
 
-    async fn build_info(&self, id: &str, cwd: &str, process: &AgentProcess) -> AgentInfo {
+    async fn build_info(
+        &self,
+        id: &str,
+        cwd: &str,
+        process: &AgentProcess,
+        record: Option<&PersistedAgent>,
+    ) -> AgentInfo {
+        let stored = match record {
+            Some(record) => Some(record.clone()),
+            None => self.records.read().await.get(id).cloned(),
+        };
+        let (project_cwd, worktree) = match stored {
+            Some(record) => (record.project_cwd, record.worktree),
+            None => (None, None),
+        };
         AgentInfo {
             id: id.to_string(),
             parent_agent_id: process.parent_agent_id.clone(),
@@ -1312,6 +1509,8 @@ impl AgentManager {
             status: process.get_status().await,
             lifecycle: None,
             cwd: cwd.to_string(),
+            project_cwd,
+            worktree,
             model: process.model.clone(),
             session_id: Some(process.session_id.clone()),
             created_at: process.created_at.clone(),
@@ -1352,6 +1551,8 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
         status: crate::rpc_types::AgentStatus::Stopped,
         lifecycle: None,
         cwd: record.cwd.clone(),
+        project_cwd: record.project_cwd.clone(),
+        worktree: record.worktree.clone(),
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),
         created_at: record.created_at.clone(),
@@ -1491,6 +1692,7 @@ mod tests {
 
         let info = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: Some("test-model".to_string()),
@@ -1590,6 +1792,7 @@ mod tests {
         let manager = AgentManager::new(mock_cli_path(), state_path.clone());
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -1602,6 +1805,7 @@ mod tests {
 
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -1653,6 +1857,8 @@ mod tests {
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 message_count: 0,
                 depth: 0,
+                project_cwd: None,
+                worktree: None,
             },
             PersistedAgent {
                 id: "agent-mock-child".to_string(),
@@ -1668,6 +1874,8 @@ mod tests {
                 created_at: "2026-01-01T00:00:01Z".to_string(),
                 message_count: 0,
                 depth: 1,
+                project_cwd: None,
+                worktree: None,
             },
         ];
         tokio::fs::write(&state_path, serde_json::to_vec(&records).unwrap())
@@ -1690,6 +1898,7 @@ mod tests {
         );
         let err = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some("agent-missing".to_string()),
                 model: None,

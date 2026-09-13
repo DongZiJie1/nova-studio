@@ -1,3 +1,4 @@
+use crate::worktree::WorktreeInfo;
 use serde::{Deserialize, Serialize};
 
 /// Image content for prompt messages — mirrors nova's ImageContent
@@ -322,6 +323,13 @@ pub struct AgentInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<AgentLifecycleSnapshot>,
     pub cwd: String,
+    /// Repository root this agent belongs to when it runs in an isolated worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_cwd: Option<String>,
+    /// Present when this agent owns an isolated worktree. Delegated children share their
+    /// parent's checkout and carry only `project_cwd`, so accepting stays a single action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeInfo>,
     pub model: Option<String>,
     pub session_id: Option<String>,
     pub created_at: String,
@@ -333,6 +341,9 @@ pub struct AgentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnRequest {
     pub cwd: String,
+    /// Run this agent in its own git worktree instead of the project directory.
+    #[serde(default)]
+    pub worktree_enabled: bool,
     /// The agent that delegated this process, or None for a user-created root.
     #[serde(default)]
     pub parent_agent_id: Option<String>,
