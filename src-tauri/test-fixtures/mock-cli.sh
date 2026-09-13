@@ -36,6 +36,14 @@ while IFS= read -r line; do
     *'"type":"get_messages"'*)
       printf '{"type":"response","command":"get_messages","success":true,"agentId":"%s","data":{"messages":[{"role":"user","content":[{"type":"text","text":"restored question"}],"timestamp":1},{"role":"assistant","content":[{"type":"text","text":"restored answer"}],"timestamp":2}]}}\n' "$agent_id"
       ;;
+    *'"type":"get_tool_permission_mode"'*)
+      printf '{"type":"response","id":"%s","command":"get_tool_permission_mode","success":true,"agentId":"%s","data":{"mode":"edits"}}\n' "$request_id" "$agent_id"
+      ;;
+    *'"type":"set_tool_permission_mode"'*)
+      mode=$(printf '%s' "$line" | sed -n 's/.*"mode":"\([^"]*\)".*/\1/p')
+      printf '{"type":"tool_permission_mode_changed","agentId":"%s","mode":"%s","previousMode":"ask"}\n' "$agent_id" "$mode"
+      printf '{"type":"response","id":"%s","command":"set_tool_permission_mode","success":true,"agentId":"%s"}\n' "$request_id" "$agent_id"
+      ;;
     *'"type":"prompt"'*)
       reply="mock reply url=$NOVA_HUB_URL id=$agent_id token=$NOVA_HUB_TOKEN depth=$last_depth"
       if [[ "$line" == *"NOVA_MOCK_SLOW"* ]]; then

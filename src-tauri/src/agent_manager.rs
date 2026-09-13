@@ -387,6 +387,7 @@ impl AgentManager {
                 .map(|parent| parent.project_cwd),
             None => None,
         };
+        let parent_id = request.parent_agent_id.clone();
         let worktree = if request.worktree_enabled {
             Some(self.worktrees.create(&project_cwd, &agent_id).await?)
         } else {
@@ -442,7 +443,27 @@ impl AgentManager {
             worktree: worktree.clone(),
         };
         match self.spawn_record(record, true).await {
-            Ok(info) => Ok(info),
+            Ok(info) => {
+                // A delegated child must not be able to escape the policy its parent runs
+                // under, so it starts with the parent's mode instead of the host default.
+                if let Some(parent_id) = parent_id.as_deref() {
+                    match self.inherit_permission_mode(&agent_id, parent_id).await {
+                        Ok(mode) => log::info!(
+                            "[spawn] {} inherited tool permission mode {:?} from {}",
+                            agent_id,
+                            mode,
+                            parent_id
+                        ),
+                        Err(error) => log::warn!(
+                            "[spawn] couldn't align {} with {}'s permission mode: {}",
+                            agent_id,
+                            parent_id,
+                            error
+                        ),
+                    }
+                }
+                Ok(info)
+            }
             Err(error) => {
                 // Never leak a checkout for an agent that failed to start.
                 if let Some(info) = worktree.as_ref() {
@@ -966,6 +987,57 @@ impl AgentManager {
     /// The worktree owned by this agent, if any.
     pub async fn worktree_for(&self, agent_id: &str) -> Option<WorktreeInfo> {
         self.worktrees.get(agent_id).await
+    }
+
+    /// Tool permission policy of a running agent, used to inherit onto its children.
+    ///
+    /// Fails closed: an agent whose policy cannot be read is treated as `ask`, so a
+    /// delegated child can never end up looser than the agent that spawned it.
+    pub async fn permission_mode(&self, agent_id: &str) -> String {
+        let Some(agent) = self.get_process(agent_id).await else {
+            log::warn!("Agent {} is not running; reporting permission mode as ask", agent_id);
+            return "ask".to_string();
+        };
+        let request_id = Uuid::new_v4().to_string();
+        match self
+            .request_agent_command(
+                agent,
+                RpcCommand::GetToolPermissionMode {
+                    id: Some(request_id.clone()),
+                },
+                &request_id,
+                3,
+            )
+            .await
+        {
+            Ok(data) => data
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("ask")
+                .to_string(),
+            Err(error) => {
+                log::warn!(
+                    "Could not read the permission mode of {}: {}; reporting ask",
+                    agent_id,
+                    error
+                );
+                "ask".to_string()
+            }
+        }
+    }
+
+    /// Apply the spawning agent's policy to a freshly created child.
+    async fn inherit_permission_mode(&self, child_id: &str, parent_id: &str) -> Result<String, String> {
+        let inherited = self.permission_mode(parent_id).await;
+        let child = self
+            .get_process(child_id)
+            .await
+            .ok_or_else(|| format!("Child agent not found: {child_id}"))?;
+        child.send_command(&RpcCommand::SetToolPermissionMode {
+            id: None,
+            mode: inherited.clone(),
+        })?;
+        Ok(inherited)
     }
 
     pub async fn worktree_status(&self, agent_id: &str) -> Result<WorktreeStatus, String> {
@@ -1887,6 +1959,73 @@ mod tests {
         restored.restore().await.unwrap();
         let child = restored.get_info("agent-mock-child").await.unwrap();
         assert_eq!(child.parent_agent_id.as_deref(), Some("agent-mock-parent"));
+
+        let _ = tokio::fs::remove_file(state_path).await;
+    }
+
+    #[tokio::test]
+    async fn child_agents_inherit_the_parent_permission_mode() {
+        let manager = AgentManager::new(
+            mock_cli_path(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4())),
+        );
+        let mut events = manager.subscribe_global();
+        let parent = manager
+            .spawn(SpawnRequest {
+                worktree_enabled: false,
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        // The mock reports "edits" for the parent; the child must be switched to it.
+        let child = manager
+            .spawn(SpawnRequest {
+                worktree_enabled: false,
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+
+        let (agent_id, event) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            recv_lifecycle_event(&mut events, "tool_permission_mode_changed"),
+        )
+        .await
+        .expect("the child never had its permission mode aligned with the parent");
+        assert_eq!(agent_id, child.id);
+        assert_eq!(event.get("mode").and_then(|value| value.as_str()), Some("edits"));
+    }
+
+    #[tokio::test]
+    async fn permission_mode_fails_closed_to_ask_when_the_agent_is_not_running() {
+        let state_path = std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4()));
+        let manager = AgentManager::new(mock_cli_path(), state_path.clone());
+        let parent = manager
+            .spawn(SpawnRequest {
+                worktree_enabled: false,
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        manager.stop(&parent.id).await.unwrap();
+
+        // With no readable parent policy the child must land on the strictest mode.
+        assert_eq!(manager.permission_mode(&parent.id).await, "ask");
 
         let _ = tokio::fs::remove_file(state_path).await;
     }
