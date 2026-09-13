@@ -4283,11 +4283,16 @@ export function AppShell() {
                           minWidth: 240,
                           width: "max-content",
                           maxWidth: 500,
+                          display: "flex",
+                          flexDirection: "column",
+                          maxHeight: "min(56vh, 420px)",
+                          overflow: "hidden",
                         }}
                       >
                         <div
                           className="project-picker-title"
                           style={{
+                            flexShrink: 0,
                             padding: "4px 8px 5px",
                             fontSize: 10,
                             fontWeight: 600,
@@ -4296,37 +4301,43 @@ export function AppShell() {
                         >
                           选择项目
                         </div>
-                        {availableProjectCwds.map((cwd) => {
-                          const selected = cwd === inputProjectCwd;
-                          return (
-                            <button
-                              key={cwd}
-                              type="button"
-                              onClick={() => {
-                                setPendingProjectCwd(cwd);
-                                setActiveAgent(null);
-                                setProjectPickerOpen(false);
-                              }}
-                              title={cwd}
-                              className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
-                            >
-                              <FolderOpen
-                                size={12}
-                                style={{ flexShrink: 0 }}
-                              />
-                              <span
-                                style={{
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  fontSize: 12,
+                        <div
+                          style={{
+                            flex: 1,
+                            minHeight: 0,
+                            overflowY: "auto",
+                            overscrollBehavior: "contain",
+                          }}
+                        >
+                          {availableProjectCwds.map((cwd) => {
+                            const selected = cwd === inputProjectCwd;
+                            return (
+                              <button
+                                key={cwd}
+                                type="button"
+                                onClick={() => {
+                                  setPendingProjectCwd(cwd);
+                                  setActiveAgent(null);
+                                  setProjectPickerOpen(false);
                                 }}
+                                title={cwd}
+                                className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
                               >
-                                {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
-                              </span>
-                            </button>
-                          );
-                        })}
+                                <FolderOpen size={12} style={{ flexShrink: 0 }} />
+                                <span
+                                  style={{
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                         <button
                           type="button"
                           onClick={async () => {
@@ -4343,6 +4354,7 @@ export function AppShell() {
                           }}
                           className="project-picker-option"
                           style={{
+                            flexShrink: 0,
                             borderTop: "1px solid rgba(255, 255, 255, 0.06)",
                             marginTop: 4,
                             paddingTop: 8,
