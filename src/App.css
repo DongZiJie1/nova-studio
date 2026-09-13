@@ -812,6 +812,20 @@ body {
   animation: fadeInUp 0.2s ease-out;
 }
 
+/* System remarks such as a turn stopped by the runtime limit */
+.msg-notice {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(140, 148, 170, 0.28);
+  background: rgba(140, 148, 170, 0.1);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
 .message-response-actions {
   display: flex;
   align-items: center;

@@ -53,7 +53,7 @@ export interface ChatMessage {
   id: string;
   entryId?: string;
   feedback?: "up" | "down";
-  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch";
+  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch" | "notice";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
@@ -321,6 +321,18 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
       hydrated.push({
         id: nextId(),
         role: "agent_batch",
+        content: messageText(message),
+        timestamp,
+      });
+      continue;
+    }
+
+    // Runtime remarks such as a turn stopped by the turn timeout belong in the transcript,
+    // otherwise the abort looks like a crash.
+    if (message.role === "custom" && message.customType === "turn_timeout") {
+      hydrated.push({
+        id: nextId(),
+        role: "notice",
         content: messageText(message),
         timestamp,
       });
@@ -993,6 +1005,22 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
             messages: [...agent.messages, {
               id: nextId(),
               role: "agent_batch",
+              content,
+              timestamp: Date.now(),
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
+        if (lifecycleMessage?.role === "custom" && lifecycleMessage.customType === "turn_timeout") {
+          const content = messageText(lifecycleMessage as PersistedRpcMessage);
+          if (agent.messages.some((message) => message.role === "notice" && message.content === content)) {
+            return agent;
+          }
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "notice" as const,
               content,
               timestamp: Date.now(),
             }],

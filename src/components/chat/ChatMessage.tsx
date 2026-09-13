@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route, RotateCcw } from "lucide-react";
+import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route, RotateCcw, Info } from "lucide-react";
 import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
 import { Markdown } from "./Markdown";
@@ -163,6 +163,17 @@ export const ChatMessage = memo(function ChatMessage({
   fileChanges?: TurnFileChange[];
 }) {
   const [copied, setCopied] = useState(false);
+  if (message.role === "notice") {
+    // System-level remark about the session (e.g. a turn stopped by the runtime limit).
+    return (
+      <div className="msg-row msg-row-special">
+        <div className="msg-notice" role="status">
+          <Info size={13} />
+          <span>{message.content}</span>
+        </div>
+      </div>
+    );
+  }
   if (message.role === "thinking") {
     return <div className="msg-row msg-row-special"><ThinkingCard content={message.content} /></div>;
   }

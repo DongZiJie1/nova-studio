@@ -536,6 +536,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
             ? "子 Agent 回传"
             : role === "agent_batch"
               ? "子任务批次完成指令"
+              : role === "notice"
+                ? "系统提示"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
