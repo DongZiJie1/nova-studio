@@ -5439,6 +5439,18 @@ body {
   accent-color: var(--color-accent-start);
 }
 
+.model-settings-options small {
+  display: inline-block;
+  /* Fixed width so toggling "当前 1M" / "当前 200K" cannot shift the
+     neighbouring checkboxes. */
+  min-width: 52px;
+  margin-left: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .model-settings-actions {
   display: flex;
   min-height: 42px;

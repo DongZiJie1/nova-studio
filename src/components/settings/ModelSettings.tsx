@@ -108,6 +108,28 @@ function providerLogo(providerId: string): string | undefined {
  */
 type ModelForm = Omit<ModelConfigurationInput, "maxTokens">;
 
+/**
+ * The context window is a binary choice rather than a free number: models are
+ * either long-context (1M) or conventional (200K).
+ */
+const LONG_CONTEXT_WINDOW = 1_000_000;
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+function isLongContext(contextWindow: number): boolean {
+  return contextWindow >= LONG_CONTEXT_WINDOW;
+}
+
+/**
+ * Prefilled capability defaults for a newly added model. Current models broadly
+ * support long context, reasoning and image input, so these start checked and
+ * the user only unticks the exceptions.
+ */
+const DEFAULT_CAPABILITIES = {
+  contextWindow: LONG_CONTEXT_WINDOW,
+  reasoning: true,
+  images: true,
+} as const;
+
 const INITIAL_FORM: ModelForm = {
   providerId: "",
   modelId: "",
@@ -115,9 +137,7 @@ const INITIAL_FORM: ModelForm = {
   baseUrl: "",
   api: "openai-completions",
   apiKey: "",
-  contextWindow: 128000,
-  reasoning: false,
-  images: false,
+  ...DEFAULT_CAPABILITIES,
 };
 
 type ModelRow = Pick<ModelForm, "modelId" | "displayName" | "contextWindow" | "reasoning" | "images">;
@@ -125,9 +145,7 @@ type ModelRow = Pick<ModelForm, "modelId" | "displayName" | "contextWindow" | "r
 const INITIAL_MODEL_ROW: ModelRow = {
   modelId: "",
   displayName: "",
-  contextWindow: 128000,
-  reasoning: false,
-  images: false,
+  ...DEFAULT_CAPABILITIES,
 };
 
 const AVATAR_COLORS = ["#4f6ef7", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#64748b"];
@@ -183,19 +201,33 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
     return grouped;
   }, [models]);
 
+  // Providers that exist in models.json / auth but have no preset entry (for
+  // example ollama) still need a chip, otherwise their configuration is
+  // unreachable from this page.
+  const providerChips = useMemo(() => {
+    const known = new Set(PRESET_PROVIDERS.map((preset) => preset.id));
+    const extras = new Set<string>();
+    for (const providerId of configMap.keys()) if (!known.has(providerId)) extras.add(providerId);
+    for (const model of models) if (!known.has(model.provider)) extras.add(model.provider);
+    return [
+      ...PRESET_PROVIDERS.map((preset) => ({ id: preset.id, name: preset.name, preset: true })),
+      ...[...extras].sort().map((id) => ({ id, name: id, preset: false })),
+    ];
+  }, [configMap, models]);
+
   const normalizedPresetQuery = presetQuery.trim().toLowerCase();
   const presetChips = useMemo(() => {
-    const matched = PRESET_PROVIDERS.filter(
-      (preset) => !normalizedPresetQuery || `${preset.id} ${preset.name}`.toLowerCase().includes(normalizedPresetQuery),
+    const matched = providerChips.filter(
+      (chip) => !normalizedPresetQuery || `${chip.id} ${chip.name}`.toLowerCase().includes(normalizedPresetQuery),
     );
     return matched.sort((left, right) => {
       const leftConnected = connectedIds.has(left.id) ? 0 : 1;
       const rightConnected = connectedIds.has(right.id) ? 0 : 1;
       return leftConnected - rightConnected || left.name.localeCompare(right.name);
     });
-  }, [normalizedPresetQuery, connectedIds]);
+  }, [normalizedPresetQuery, connectedIds, providerChips]);
 
-  const selectedPreset = selected && selected !== CUSTOM_PROVIDER ? PRESET_PROVIDERS.find((preset) => preset.id === selected) : undefined;
+  const selectedPreset = selected && selected !== CUSTOM_PROVIDER ? providerChips.find((chip) => chip.id === selected) : undefined;
   const selectedConfig = selected && selected !== CUSTOM_PROVIDER ? configMap.get(selected) : undefined;
   const selectedConnected = selected ? connectedIds.has(selected) : false;
   const isBuiltinSelection = Boolean(selectedPreset);
@@ -207,19 +239,18 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
 
   const applyPresetPrefill = useCallback(
     (providerId: string) => {
+      // Presets carry default connection details; providers that only exist in
+      // models.json (ollama, a self-hosted proxy, …) fall back to what is saved.
       const preset = PRESET_PROVIDERS.find((entry) => entry.id === providerId);
-      if (!preset) return;
       const savedConfig = configMap.get(providerId);
       setForm({
-        providerId: preset.id,
+        providerId,
         modelId: "",
         displayName: "",
-        baseUrl: savedConfig?.baseUrl ?? preset.baseUrl,
-        api: (savedConfig?.api as ModelConfigurationInput["api"] | undefined) ?? preset.api,
+        baseUrl: savedConfig?.baseUrl ?? preset?.baseUrl ?? "",
+        api: (savedConfig?.api as ModelConfigurationInput["api"] | undefined) ?? preset?.api ?? "openai-completions",
         apiKey: savedConfig?.apiKey ?? "",
-        contextWindow: INITIAL_FORM.contextWindow,
-        reasoning: false,
-        images: false,
+        ...DEFAULT_CAPABILITIES,
       });
       setModelRows([{ ...INITIAL_MODEL_ROW }]);
     },
@@ -317,6 +348,8 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
           await saveModelConfiguration({
             ...form,
             ...row,
+            // Renaming in the edit form must replace the row it started from.
+            previousModelId: editing && index === 0 ? editing.modelId : undefined,
             maxTokens: maxTokensForRow(row, selectedModels),
             apiKey: index === 0 ? form.apiKey : "",
           });
@@ -364,8 +397,8 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       <section className="settings-card model-catalog-card">
         <div className="model-catalog-header">
           <div className="settings-card-copy">
-            <h2><LayoutGrid size={15} />预设供应商 <span className="model-count">{PRESET_PROVIDERS.length}</span></h2>
-            <p>选中一个供应商，在下方填入接入信息。已接入的供应商会高亮显示。</p>
+            <h2><LayoutGrid size={15} />供应商 <span className="model-count">{providerChips.length}</span></h2>
+            <p>选中一个供应商，在下方管理接入信息和模型。已接入的会高亮显示。</p>
           </div>
           <label className="model-search">
             <Search size={14} />
@@ -437,7 +470,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                   ? "手动填写所有必要字段，相同 Provider ID 和模型 ID 会更新已有配置。"
                   : selectedConnected
                     ? "管理接入信息和模型。"
-                    : "填入 API Key 即可接入；模型 ID 留空则使用内置模型目录。"}
+                    : "填入 API Key 并至少添加一个模型，才会出现在模型选择器中。"}
               </p>
             </div>
             {selectedConfig && selected !== CUSTOM_PROVIDER && (
@@ -534,9 +567,21 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                   <div className="model-settings-grid">
                     <label><span>模型 ID</span><input required={modelRequired || modelRows.length > 1} value={row.modelId ?? ""} onChange={(event) => updateModelRow(index, "modelId", event.target.value)} placeholder="例如 gpt-5" /></label>
                     <label><span>显示名称 <small>可选</small></span><input value={row.displayName ?? ""} onChange={(event) => updateModelRow(index, "displayName", event.target.value)} placeholder="模型在选择器中的名称" /></label>
-                    <label className="model-settings-wide"><span>上下文窗口</span><input required={Boolean(row.modelId?.trim())} min={1} type="number" value={row.contextWindow} onChange={(event) => updateModelRow(index, "contextWindow", Number(event.target.value))} /></label>
                   </div>
                   <div className="model-settings-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={isLongContext(row.contextWindow)}
+                        onChange={(event) =>
+                          updateModelRow(index, "contextWindow", event.target.checked ? LONG_CONTEXT_WINDOW : DEFAULT_CONTEXT_WINDOW)
+                        }
+                      />
+                      <span>
+                        支持 1M 上下文
+                        <small>当前 {formatContextWindow(row.contextWindow)}</small>
+                      </span>
+                    </label>
                     <label><input type="checkbox" checked={row.reasoning} onChange={(event) => updateModelRow(index, "reasoning", event.target.checked)} /><span>支持推理</span></label>
                     <label><input type="checkbox" checked={row.images} onChange={(event) => updateModelRow(index, "images", event.target.checked)} /><span>支持图片输入</span></label>
                   </div>
