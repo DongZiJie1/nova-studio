@@ -206,6 +206,8 @@ pub fn run() {
             commands::revert_file_change,
             commands::list_all_models,
             commands::set_model,
+            commands::set_tool_permission_mode,
+            commands::respond_tool_permission,
             commands::save_model_configuration,
             commands::get_model_configurations,
             commands::delete_model_configuration,

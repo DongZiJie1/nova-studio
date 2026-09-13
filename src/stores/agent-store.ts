@@ -10,6 +10,8 @@ import type {
   ModelMeta,
   PersistedRpcMessage,
   SessionUsage,
+  ToolPermissionMode,
+  ToolPermissionRequest,
 } from "../lib/rpc-types";
 import {
   parseAgentEvent,
@@ -92,6 +94,10 @@ export interface AgentState {
   contextSnapshot: ContextSnapshot | null;
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
+  /** Tool permission mode for the agent's session (from get_tool_permission_mode / events) */
+  toolPermissionMode: ToolPermissionMode;
+  /** Tool call awaiting user approval (ask mode), if any */
+  pendingPermission: ToolPermissionRequest | null;
   /** Live usage of the in-flight turn, streamed from message_update events */
   liveUsage: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
   /** Accumulated output tokens since the last user message */
@@ -191,6 +197,8 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     executionTraces: [],
     contextSnapshot: null,
     autoCompactionEnabled: true,
+    toolPermissionMode: "ask",
+    pendingPermission: null,
     liveUsage: null,
     outputSinceLastUserInput: 0,
   };
@@ -562,6 +570,44 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       return;
     }
 
+    if (event.type === "tool_permission_requested") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId
+            ? {
+                ...agent,
+                pendingPermission: {
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  args: event.args,
+                },
+              }
+            : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (event.type === "tool_permission_resolved") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId && agent.pendingPermission?.toolCallId === event.toolCallId
+            ? { ...agent, pendingPermission: null }
+            : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (event.type === "tool_permission_mode_changed") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, toolPermissionMode: event.mode } : agent,
+        ),
+      }));
+      return;
+    }
+
     if (event.type === "agent_delegated_task") {
       void get().refreshAgentTasks();
       set((s) => ({
@@ -714,9 +760,35 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         images: Array.isArray(m.input) ? (m.input as string[]).includes("image") : Boolean(m.images),
       };
       const autoCompactionEnabled = Boolean(event.data.autoCompactionEnabled ?? true);
+      const toolPermissionMode = event.data.toolPermissionMode;
       set((s) => ({
         agents: s.agents.map((agent) =>
-          agent.id === agentId ? { ...agent, modelMeta: meta, autoCompactionEnabled } : agent,
+          agent.id === agentId
+            ? {
+                ...agent,
+                modelMeta: meta,
+                autoCompactionEnabled,
+                ...(toolPermissionMode === "ask" || toolPermissionMode === "edits" || toolPermissionMode === "allow"
+                  ? { toolPermissionMode }
+                  : {}),
+              }
+            : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_tool_permission_mode" &&
+      event.success &&
+      event.data
+    ) {
+      const mode = event.data.mode;
+      if (mode !== "ask" && mode !== "edits" && mode !== "allow") return;
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, toolPermissionMode: mode } : agent,
         ),
       }));
       return;
