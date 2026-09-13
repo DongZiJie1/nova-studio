@@ -18,14 +18,12 @@ import {
   setModel,
   setToolPermissionMode,
   respondToolPermission,
-  requestAvailableModels,
   requestSessionStats,
   requestExecutionTraces,
   requestContextSnapshot,
   askTemporary,
   onTemporaryAnswerChunk,
-  listAllModels,
-  fetchModelsViaShell,
+  getModelCatalog,
   startNewSession,
   compactSession,
   setSessionName,
@@ -1923,10 +1921,15 @@ export function AppShell() {
   const activeModelId = activeAgent
     ? (activeAgent.modelMeta?.id ?? activeAgent.model)
     : defaultModel;
-  const activeModelName = useMemo(
-    () => availableModels.find((m) => m.id === activeModelId)?.name ?? activeModelId ?? "Model",
-    [availableModels, activeModelId],
-  );
+  const activeModelProvider = activeAgent
+    ? (activeAgent.modelMeta?.provider ?? defaultProvider)
+    : defaultProvider;
+  const activeModelName = useMemo(() => {
+    const match = availableModels.find(
+      (m) => m.id === activeModelId && (!activeModelProvider || m.provider === activeModelProvider),
+    );
+    return match?.name ?? activeModelId ?? "Model";
+  }, [availableModels, activeModelId, activeModelProvider]);
   const hasMessages =
     (activeAgent?.messages.length ?? 0) > 0 ||
     (activeAgent?.messageCount ?? 0) > 0;
@@ -2465,7 +2468,12 @@ export function AppShell() {
   // Auto-select a default model when models are loaded and none is configured yet
   useEffect(() => {
     if (availableModels.length === 0) return;
-    if (defaultModel) return;
+    // Re-pick when the stored default no longer exists in the directory (for
+    // example after the model it pointed at was removed in settings).
+    const defaultStillValid = availableModels.some(
+      (m) => m.id === defaultModel && (!defaultProvider || m.provider === defaultProvider),
+    );
+    if (defaultModel && defaultStillValid) return;
 
     const pick = (pool: AvailableModel[]): AvailableModel | undefined => {
       // Prefer non-dated flagship ids (no -YYYYMMDD suffix)
@@ -2487,30 +2495,11 @@ export function AppShell() {
     }
   }, [availableModels, defaultModel, defaultProvider, setDefaultModel, setDefaultProvider]);
 
+  // The model directory lives in models.json; this is the only reader, so the
+  // settings page and the picker always render the same set.
   const refreshModelCatalog = useCallback(async () => {
-    const results = await Promise.allSettled([listAllModels(), fetchModelsViaShell()]);
-    const merged = new Map<string, AvailableModel>();
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error("[AppShell] model catalog source failed:", result.reason);
-        continue;
-      }
-      for (const model of result.value ?? []) {
-        const mapped: AvailableModel = {
-          id: String(model.id ?? ""),
-          name: String(model.name ?? model.id ?? ""),
-          provider: String(model.provider ?? ""),
-          contextWindow: Number(model.contextWindow ?? 0),
-          maxTokens: Number(model.maxTokens ?? 0),
-          reasoning: Boolean(model.reasoning),
-          images: Boolean(model.images),
-        };
-        if (!mapped.id || !mapped.provider) continue;
-        merged.set(`${mapped.provider}:${mapped.id}`, mapped);
-      }
-    }
-    if (merged.size === 0) throw new Error("模型已保存，但刷新模型列表失败");
-    useAgentStore.setState({ availableModels: Array.from(merged.values()) });
+    const catalog = await getModelCatalog();
+    useAgentStore.getState().setModelCatalog(catalog);
   }, []);
 
   // Load agents on mount
@@ -2519,17 +2508,24 @@ export function AppShell() {
       .then((infos) => {
         syncAgents(infos);
         setAgentsLoaded(true);
-        // If there's a running agent, get models from it
-        if (infos.length > 0) {
-          void requestAvailableModels(infos[0].id).catch(() => {});
-        }
       })
       .catch(() => setAgentsLoaded(true));
 
-    // Merge the bundled/absolute CLI catalog with the user's shell Nova.
-    // The latter includes newly-added models.json providers such as Ollama,
-    // while packaged Studio builds may point at an older bundled CLI.
     void refreshModelCatalog().catch((reason) => console.error("[AppShell] initial model refresh failed:", reason));
+  }, [refreshModelCatalog]);
+
+  // models.json can also be edited outside the app (hand edits, `nova` CLI), so
+  // re-read the directory whenever the window regains focus.
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshModelCatalog().catch((reason) => console.error("[AppShell] model refresh failed:", reason));
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [refreshModelCatalog]);
 
   // Cleanup blob URLs on unmount
@@ -2698,10 +2694,6 @@ export function AppShell() {
         addAgent(newAgent);
         agentId = info.id;
         setPendingProjectCwd(null);
-        // Request available models for the new agent
-        void requestAvailableModels(info.id).catch((err) =>
-          console.error("Failed to request available models:", err)
-        );
       }
 
       // Add user message to UI immediately
@@ -2841,10 +2833,6 @@ export function AppShell() {
           model: info.model,
           messageCount: Math.max(info.message_count, agentsById.get(agentId)?.messageCount ?? 0),
         });
-        // Request available models for the activated agent
-        void requestAvailableModels(agentId).catch((err) =>
-          console.error("Failed to request available models:", err)
-        );
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -4054,19 +4042,20 @@ export function AppShell() {
                               return Array.from(grouped.entries()).map(([provider, models]) => (
                                 <div key={provider}>
                                   <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                                    {provider}
+                                    {models[0]?.providerName || provider}
                                   </div>
                                   {models.map((m) => {
-                                    const isActive = activeModelId === m.id;
+                                    const isActive = activeModelId === m.id && activeModelProvider === m.provider;
                                     return (
                                       <button
                                         key={m.id}
                                         type="button"
                                         className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                        title={m.authConfigured ? undefined : "该 Provider 未配置 API Key"}
                                         onClick={() => {
                                           if (activeAgent) {
                                             setModel(activeAgent.id, m.provider, m.id);
-                                            updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
+                                            updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, provider: m.provider, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
                                           } else {
                                             // On homepage, save as default model for new agents
                                             setDefaultModel(m.id);
@@ -4085,6 +4074,7 @@ export function AppShell() {
                                           cursor: "pointer",
                                           textAlign: "left",
                                           transition: "all 0.12s ease",
+                                          opacity: m.authConfigured ? 1 : 0.5,
                                         }}
                                       >
                                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>

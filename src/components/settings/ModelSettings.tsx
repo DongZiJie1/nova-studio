@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Check, LayoutGrid, LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
 import {
+  deleteModelConfiguration,
   deleteProviderConfiguration,
   getModelConfigurations,
   saveModelConfiguration,
@@ -145,6 +146,18 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
     return ids;
   }, [configMap, models]);
 
+  // The model rows shown here are the very same records the chat picker
+  // renders — both read the directory published from models.json.
+  const modelsByProvider = useMemo(() => {
+    const grouped = new Map<string, AvailableModel[]>();
+    for (const model of models) {
+      const list = grouped.get(model.provider) ?? [];
+      list.push(model);
+      grouped.set(model.provider, list);
+    }
+    return grouped;
+  }, [models]);
+
   const normalizedPresetQuery = presetQuery.trim().toLowerCase();
   const presetChips = useMemo(() => {
     const matched = PRESET_PROVIDERS.filter(
@@ -161,37 +174,65 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
   const selectedConfig = selected && selected !== CUSTOM_PROVIDER ? configMap.get(selected) : undefined;
   const selectedConnected = selected ? connectedIds.has(selected) : false;
   const isBuiltinSelection = Boolean(selectedPreset);
-  const modelRequired = selected === CUSTOM_PROVIDER || editing !== null;
+  const selectedModels = selected && selected !== CUSTOM_PROVIDER ? (modelsByProvider.get(selected) ?? []) : [];
+  // Every model the picker can show must exist in models.json, so a provider
+  // with no models yet has to get one before it can be connected. Providers
+  // that already have models only need the connection fields re-saved.
+  const modelRequired = selected === CUSTOM_PROVIDER || editing !== null || (Boolean(selected) && selectedModels.length === 0);
 
   const applyPresetPrefill = useCallback(
     (providerId: string) => {
       const preset = PRESET_PROVIDERS.find((entry) => entry.id === providerId);
       if (!preset) return;
       const savedConfig = configMap.get(providerId);
-      const catalogModel = models.find((model) => model.provider === providerId);
       setForm({
         providerId: preset.id,
-        modelId: catalogModel?.id ?? "",
-        displayName: catalogModel && catalogModel.name !== catalogModel.id ? catalogModel.name : "",
-        baseUrl: preset.baseUrl,
-        api: preset.api,
+        modelId: "",
+        displayName: "",
+        baseUrl: savedConfig?.baseUrl ?? preset.baseUrl,
+        api: (savedConfig?.api as ModelConfigurationInput["api"] | undefined) ?? preset.api,
         apiKey: savedConfig?.apiKey ?? "",
-        contextWindow: catalogModel?.contextWindow || INITIAL_FORM.contextWindow,
-        maxTokens: catalogModel?.maxTokens || INITIAL_FORM.maxTokens,
-        reasoning: catalogModel?.reasoning ?? false,
-        images: catalogModel?.images ?? false,
+        contextWindow: INITIAL_FORM.contextWindow,
+        maxTokens: INITIAL_FORM.maxTokens,
+        reasoning: false,
+        images: false,
       });
-      setModelRows([catalogModel ? {
-        modelId: catalogModel.id,
-        displayName: catalogModel.name !== catalogModel.id ? catalogModel.name : "",
-        contextWindow: catalogModel.contextWindow || INITIAL_MODEL_ROW.contextWindow,
-        maxTokens: catalogModel.maxTokens || INITIAL_MODEL_ROW.maxTokens,
-        reasoning: catalogModel.reasoning,
-        images: catalogModel.images,
-      } : INITIAL_MODEL_ROW]);
+      setModelRows([{ ...INITIAL_MODEL_ROW }]);
     },
-    [configMap, models],
+    [configMap],
   );
+
+  const startEditing = (model: AvailableModel) => {
+    setEditing({ providerId: model.provider, modelId: model.id });
+    setError(null);
+    setSaved(false);
+    setModelRows([
+      {
+        modelId: model.id,
+        displayName: model.name !== model.id ? model.name : "",
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        reasoning: model.reasoning,
+        images: model.images,
+      },
+    ]);
+  };
+
+  const removeModel = async (providerId: string, modelId: string) => {
+    const confirmed = await ask(`确定删除模型「${modelId}」？删除后它不会再出现在模型选择器中。`, {
+      title: "删除模型",
+      kind: "warning",
+    });
+    if (!confirmed) return;
+    try {
+      await deleteModelConfiguration(providerId, modelId);
+      if (editing?.modelId === modelId) cancelEdit();
+      await onSaved();
+      await refreshConfigs();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
 
   const selectPreset = (providerId: string) => {
     setSelected(providerId);
@@ -259,8 +300,9 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       if (editing) setEditing(null);
       if (!selected || selected === CUSTOM_PROVIDER) {
         setForm(INITIAL_FORM);
-        setModelRows([INITIAL_MODEL_ROW]);
       }
+      // The saved model now lives in the list above, so clear the editor.
+      setModelRows([{ ...INITIAL_MODEL_ROW }]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -374,9 +416,9 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
               <button
                 type="button"
                 className="model-icon-btn model-icon-danger"
-                onClick={() => void removeProvider(selected, selectedConfig.models.length > 0)}
+                onClick={() => void removeProvider(selected, selectedModels.length > 0)}
               >
-                <Trash2 size={12} />{selectedConfig.models.length > 0 ? "删除 Provider" : "移除 API Key"}
+                <Trash2 size={12} />{selectedModels.length > 0 ? "删除 Provider" : "移除 API Key"}
               </button>
             )}
           </div>
@@ -399,11 +441,53 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
               <label className="model-settings-wide"><span>API Key <small>{selectedConnected ? "已回填，可直接修改" : "请输入访问密钥"}</small></span><input type="text" autoComplete="off" value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder="sk-..." /></label>
             </div>
 
+            {selectedModels.length > 0 && (
+              <div className="model-list-editor">
+                <div className="model-list-editor-header">
+                  <div>
+                    <strong>已配置模型</strong>
+                    <small>与聊天模型选择器显示同一份数据</small>
+                  </div>
+                </div>
+                {selectedModels.map((model) => (
+                  <div className="model-row-editor" key={model.id}>
+                    <div className="model-row-editor-title">
+                      <span>{model.name}</span>
+                      <span>
+                        <button type="button" className="model-icon-btn" onClick={() => startEditing(model)}>编辑</button>
+                        <button
+                          type="button"
+                          className="model-icon-btn model-icon-danger"
+                          title="删除模型"
+                          onClick={() => void removeModel(model.provider, model.id)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </span>
+                    </div>
+                    <div className="model-settings-options">
+                      <span>{model.id}</span>
+                      <span>{model.contextWindow.toLocaleString()} 上下文</span>
+                      <span>{model.maxTokens.toLocaleString()} 最大输出</span>
+                      {model.reasoning && <span>支持推理</span>}
+                      {model.images && <span>支持图片输入</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="model-list-editor">
               <div className="model-list-editor-header">
                 <div>
-                  <strong>模型</strong>
-                  {!modelRequired && <small>可选；不填写则使用内置模型目录</small>}
+                  <strong>{editing ? "编辑模型" : "添加模型"}</strong>
+                  <small>
+                    {editing
+                      ? `正在编辑 ${editing.modelId}`
+                      : selectedModels.length > 0
+                        ? "可选；留空则只更新接入信息"
+                        : "必须至少填写一个模型，否则该 Provider 不会出现在模型选择器中"}
+                  </small>
                 </div>
                 {!editing && <button type="button" className="model-add-row" onClick={addModelRow}><Plus size={13} />添加模型</button>}
               </div>

@@ -212,6 +212,8 @@ export interface ExtensionUIResponse {
 
 export interface ModelMeta {
   id: string;
+  /** Provider the model belongs to. Model ids are only unique per provider. */
+  provider?: string;
   name: string;
   contextWindow: number;
   maxTokens: number;

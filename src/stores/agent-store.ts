@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ModelCatalog } from "../lib/tauri-bridge";
 import type {
   AgentStatus,
   AgentLifecycleSnapshot,
@@ -115,10 +116,35 @@ export interface AvailableModel {
   id: string;
   name: string;
   provider: string;
+  /** Human-readable provider label from the catalog. */
+  providerName: string;
+  api: string;
+  baseUrl: string;
   contextWindow: number;
   maxTokens: number;
   reasoning: boolean;
   images: boolean;
+  /** Whether the provider has usable credentials. */
+  authConfigured: boolean;
+}
+
+/** Flatten the provider/model directory into the picker's row shape. */
+export function flattenModelCatalog(catalog: ModelCatalog): AvailableModel[] {
+  return catalog.providers.flatMap((provider) =>
+    provider.models.map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: provider.provider,
+      providerName: provider.name,
+      api: model.api,
+      baseUrl: model.baseUrl,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      reasoning: model.reasoning,
+      images: model.input.includes("image"),
+      authConfigured: provider.auth.configured,
+    })),
+  );
 }
 
 interface AgentStoreState {
@@ -137,7 +163,8 @@ interface AgentStoreState {
   setActiveAgent: (id: string | null) => void;
   updateAgent: (id: string, update: Partial<AgentState>) => void;
   getAgent: (id: string) => AgentState | undefined;
-  setAvailableModels: (models: AvailableModel[]) => void;
+  /** Replace the model directory with the payload read from models.json. */
+  setModelCatalog: (catalog: ModelCatalog) => void;
   /** Pull the latest task/batch snapshot from the Rust registry. */
   refreshAgentTasks: () => Promise<void>;
 
@@ -485,7 +512,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
 
   setActiveAgent: (id) => set({ activeAgentId: id }),
 
-  setAvailableModels: (models) => set({ availableModels: models }),
+  setModelCatalog: (catalog) => set({ availableModels: flattenModelCatalog(catalog) }),
 
   updateAgent: (id, update) =>
     set((s) => ({
@@ -775,6 +802,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       const m = event.data.model as Record<string, unknown>;
       const meta: ModelMeta = {
         id: String(m.id ?? ""),
+        provider: m.provider === undefined ? undefined : String(m.provider),
         name: String(m.name ?? ""),
         contextWindow: Number(m.contextWindow ?? 0),
         maxTokens: Number(m.maxTokens ?? 0),
@@ -869,32 +897,10 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       return;
     }
 
-    if (
-      event.type === "response" &&
-      event.command === "get_available_models" &&
-      event.success &&
-      Array.isArray(event.data?.models)
-    ) {
-      const models: AvailableModel[] = (event.data.models as Record<string, unknown>[]).map((m) => ({
-        id: String(m.id ?? ""),
-        name: String(m.name ?? ""),
-        provider: String(m.provider ?? ""),
-        contextWindow: Number(m.contextWindow ?? 0),
-        maxTokens: Number(m.maxTokens ?? 0),
-        reasoning: Boolean(m.reasoning),
-        images: Boolean(m.images),
-      }));
-      set((state) => {
-        const merged = new Map(
-          state.availableModels.map((model) => [`${model.provider}:${model.id}`, model]),
-        );
-        for (const model of models) {
-          merged.set(`${model.provider}:${model.id}`, model);
-        }
-        return { availableModels: Array.from(merged.values()) };
-      });
-      return;
-    }
+    // `get_available_models` responses are intentionally ignored: that RPC
+    // reports the agent's full resolvable set (including built-in catalog
+    // entries), while the app's model directory is defined solely by the
+    // providers/models the user configured. The catalog is refreshed instead.
 
     const parsed = parseAgentEvent(event);
     if (parsed.kind === "turn_lifecycle" && parsed.phase === "end" && parsed.usage) {
