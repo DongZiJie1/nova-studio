@@ -2042,6 +2042,17 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [pendingPermission, pendingPermissionAgentId]);
 
+  // nova denies the request once its deadline passes and emits tool_permission_resolved.
+  // If that event never arrives (agent crash, dropped RPC) the dialog would stay up
+  // forever, so close it locally instead. The request is denied either way.
+  useEffect(() => {
+    if (!pendingPermission || !pendingPermissionAgentId) return;
+    const timer = setTimeout(() => {
+      useAgentStore.getState().updateAgent(pendingPermissionAgentId, { pendingPermission: null });
+    }, pendingPermission.timeoutMs ?? 120_000);
+    return () => clearTimeout(timer);
+  }, [pendingPermission, pendingPermissionAgentId]);
+
   useEffect(() => {
     if (slashCommands.length === 0 && !fileMention) return;
     const dismissSlashCommands = (event: MouseEvent) => {

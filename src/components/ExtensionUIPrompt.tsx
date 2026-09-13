@@ -50,6 +50,18 @@ export function ExtensionUIPrompt() {
     }
   }, [current]);
 
+  // nova resolves its own timeout and emits extension_ui_cancel. If that event is lost
+  // (dropped RPC, agent crash) the sheet would sit there forever, so expire it locally
+  // too. No response is sent — nova has already moved on.
+  useEffect(() => {
+    if (!current?.request.timeout) return;
+    const { agentId, request } = current;
+    const timer = setTimeout(() => {
+      setQueue((q) => q.filter((item) => !(item.agentId === agentId && item.request.id === request.id)));
+    }, request.timeout);
+    return () => clearTimeout(timer);
+  }, [current]);
+
   if (!current) return null;
 
   const { agentId, request } = current;

@@ -580,6 +580,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
                   toolCallId: event.toolCallId,
                   toolName: event.toolName,
                   args: event.args,
+                  timeoutMs: event.timeoutMs,
                 },
               }
             : agent,

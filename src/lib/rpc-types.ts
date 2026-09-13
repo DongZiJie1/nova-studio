@@ -45,6 +45,8 @@ export interface ToolPermissionRequest {
   toolCallId: string;
   toolName: string;
   args: unknown;
+  /** Deadline enforced by nova; the dialog closes when it elapses without an answer. */
+  timeoutMs?: number;
 }
 
 // ─── Spawn / Prompt requests (Tauri command args) ───
@@ -135,6 +137,8 @@ export type AgentMessage =
       toolCallId: string;
       toolName: string;
       args: unknown;
+      /** Deadline enforced by nova; once it passes the request is denied server-side. */
+      timeoutMs?: number;
     }
   | {
       type: "tool_permission_resolved";
