@@ -4,6 +4,7 @@ mod agent_process;
 mod commands;
 mod nova_host_process;
 mod rpc_types;
+mod worktree;
 
 use agent_manager::AgentManager;
 use commands::AgentManagerState;
