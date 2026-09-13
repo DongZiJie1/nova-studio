@@ -15,6 +15,8 @@ import {
   spawnAgent,
   sendPrompt,
   setModel,
+  setToolPermissionMode,
+  respondToolPermission,
   requestAvailableModels,
   requestSessionStats,
   requestExecutionTraces,
@@ -39,6 +41,13 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
+import type { ToolPermissionMode } from "../../lib/rpc-types";
+
+const TOOL_PERMISSION_MODES: Array<{ value: ToolPermissionMode; label: string; description: string }> = [
+  { value: "ask", label: "询问", description: "危险操作前弹窗确认" },
+  { value: "edits", label: "自动编辑", description: "文件编辑自动批准，其余仍询问" },
+  { value: "allow", label: "全部放行", description: "跳过所有权限检查" },
+];
 
 const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 
@@ -1453,6 +1462,7 @@ export function AppShell() {
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [permissionPickerOpen, setPermissionPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -1475,6 +1485,7 @@ export function AppShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const permissionPickerRef = useRef<HTMLDivElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1998,6 +2009,40 @@ export function AppShell() {
   }, [modelPickerOpen]);
 
   useEffect(() => {
+    if (!permissionPickerOpen) return;
+    const closePicker = (event: MouseEvent) => {
+      if (!permissionPickerRef.current?.contains(event.target as Node)) {
+        setPermissionPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [permissionPickerOpen]);
+
+  const pendingPermission = activeAgent?.pendingPermission ?? null;
+  const pendingPermissionAgentId = activeAgent?.id ?? null;
+  useEffect(() => {
+    if (!pendingPermission || !pendingPermissionAgentId) return;
+    // Capture phase so the dialog consumes Enter/Esc before the composer
+    // (or any other global shortcut) behind it can react.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        void respondToolPermission(pendingPermissionAgentId, pendingPermission.toolCallId, false);
+        useAgentStore.getState().updateAgent(pendingPermissionAgentId, { pendingPermission: null });
+      } else if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        event.stopPropagation();
+        void respondToolPermission(pendingPermissionAgentId, pendingPermission.toolCallId, true);
+        useAgentStore.getState().updateAgent(pendingPermissionAgentId, { pendingPermission: null });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [pendingPermission, pendingPermissionAgentId]);
+
+  useEffect(() => {
     if (slashCommands.length === 0 && !fileMention) return;
     const dismissSlashCommands = (event: MouseEvent) => {
       if (!composerShellRef.current?.contains(event.target as Node)) {
@@ -2234,6 +2279,8 @@ export function AppShell() {
           executionTraces: [],
           contextSnapshot: null,
           autoCompactionEnabled: true,
+          toolPermissionMode: "ask",
+          pendingPermission: null,
           liveUsage: null,
           outputSinceLastUserInput: 0,
         };
@@ -3643,6 +3690,82 @@ export function AppShell() {
                         )}
                       </div>
                     )}
+                    {/* Permission mode selector - per active agent session */}
+                    {activeAgent && (
+                      <div style={{ position: "relative" }}>
+                        <button
+                          type="button"
+                          className={`input-toolbar-control model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
+                          onClick={() => setPermissionPickerOpen((open) => !open)}
+                          title="工具权限模式"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "5px 10px",
+                            borderRadius: 8,
+                            fontSize: 11.5,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                            <rect x="3" y="11" width="18" height="11" rx="2" />
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                          </svg>
+                          <span style={{ whiteSpace: "nowrap" }}>
+                            {TOOL_PERMISSION_MODES.find((m) => m.value === activeAgent.toolPermissionMode)?.label ?? activeAgent.toolPermissionMode}
+                          </span>
+                        </button>
+                        {permissionPickerOpen && (
+                          <div
+                            ref={permissionPickerRef}
+                            className="model-picker-popover"
+                            style={{
+                              position: "absolute",
+                              right: 0,
+                              bottom: 36,
+                              width: 240,
+                            }}
+                          >
+                            <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                              工具权限模式
+                            </div>
+                            {TOOL_PERMISSION_MODES.map((mode) => {
+                              const isActive = activeAgent.toolPermissionMode === mode.value;
+                              return (
+                                <button
+                                  key={mode.value}
+                                  type="button"
+                                  className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                  onClick={() => {
+                                    setToolPermissionMode(activeAgent.id, mode.value);
+                                    updateAgent(activeAgent.id, { toolPermissionMode: mode.value });
+                                    setPermissionPickerOpen(false);
+                                  }}
+                                  style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "flex-start",
+                                    gap: 1,
+                                    width: "100%",
+                                    padding: "6px 10px",
+                                    borderRadius: 7,
+                                    fontSize: 12,
+                                    cursor: "pointer",
+                                    textAlign: "left",
+                                    transition: "all 0.12s ease",
+                                  }}
+                                >
+                                  <span>{mode.label}</span>
+                                  <span style={{ fontSize: 10.5, opacity: 0.65 }}>{mode.description}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <button
                       type="button"
                       className={`input-toolbar-control project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
@@ -3958,6 +4081,55 @@ export function AppShell() {
           </div>
         </div>
       )}
+      {activeAgent?.pendingPermission && (
+        <div className="project-modal-backdrop">
+          <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="project-modal-header">
+              <div>
+                <h3>允许执行工具？</h3>
+                <p style={{ fontFamily: "monospace", fontSize: 13 }}>{activeAgent.pendingPermission.toolName}</p>
+              </div>
+            </div>
+            <div
+              style={{
+                maxHeight: 260,
+                overflowY: "auto",
+                margin: "8px 0 12px",
+                padding: 10,
+                borderRadius: 8,
+                background: "var(--bg-tertiary, rgba(0,0,0,0.2))",
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                fontFamily: "monospace",
+              }}
+            >
+              {safePermissionArgsText(activeAgent.pendingPermission.args)}
+            </div>
+            <div className="project-modal-actions">
+              <button
+                className="project-open-button"
+                onClick={() => {
+                  void respondToolPermission(activeAgent.id, activeAgent.pendingPermission!.toolCallId, false);
+                  updateAgent(activeAgent.id, { pendingPermission: null });
+                }}
+              >
+                拒绝 (Esc)
+              </button>
+              <button
+                className="agent-hide-confirm"
+                onClick={() => {
+                  void respondToolPermission(activeAgent.id, activeAgent.pendingPermission!.toolCallId, true);
+                  updateAgent(activeAgent.id, { pendingPermission: null });
+                }}
+              >
+                允许 (Enter)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {hidingAgent && (
         <div className="project-modal-backdrop" onMouseDown={() => setHidingAgent(null)}>
           <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -4002,4 +4174,13 @@ export function AppShell() {
       )}
     </div>
   );
+}
+
+function safePermissionArgsText(args: unknown): string {
+  if (args == null) return "(无参数)";
+  try {
+    return JSON.stringify(args, null, 2) ?? String(args);
+  } catch {
+    return String(args);
+  }
 }

@@ -818,3 +818,25 @@ pub async fn set_model(
 ) -> Result<(), String> {
     state.0.set_model(&agent_id, provider, model_id).await
 }
+
+#[tauri::command]
+pub async fn set_tool_permission_mode(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    mode: String,
+) -> Result<(), String> {
+    state.0.set_tool_permission_mode(&agent_id, mode).await
+}
+
+#[tauri::command]
+pub async fn respond_tool_permission(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    tool_call_id: String,
+    allowed: bool,
+) -> Result<bool, String> {
+    state
+        .0
+        .respond_tool_permission(&agent_id, tool_call_id, allowed)
+        .await
+}

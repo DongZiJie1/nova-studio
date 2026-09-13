@@ -34,7 +34,18 @@ export type RpcCommand =
   | { type: "get_execution_traces"; id?: string }
   | { type: "new_session"; id?: string }
   | { type: "set_thinking_level"; id?: string; level: string }
-  | { type: "compact"; id?: string; customInstructions?: string };
+  | { type: "compact"; id?: string; customInstructions?: string }
+  | { type: "get_tool_permission_mode"; id?: string }
+  | { type: "set_tool_permission_mode"; id?: string; mode: ToolPermissionMode }
+  | { type: "respond_tool_permission"; id?: string; toolCallId: string; allowed: boolean };
+
+export type ToolPermissionMode = "ask" | "edits" | "allow";
+
+export interface ToolPermissionRequest {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+}
 
 // ─── Spawn / Prompt requests (Tauri command args) ───
 
@@ -131,6 +142,11 @@ export type AgentMessage =
       toolName: string;
       allowed: boolean;
       reason?: string;
+    }
+  | {
+      type: "tool_permission_mode_changed";
+      mode: ToolPermissionMode;
+      previousMode: ToolPermissionMode;
     }
   | { type: "agent_settled" }
   | { type: "agent_name_update"; name: string }

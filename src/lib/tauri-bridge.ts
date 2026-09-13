@@ -15,6 +15,7 @@ import type {
   ExtensionUIResponse,
   FileReference,
   ImageContent,
+  ToolPermissionMode,
 } from "./rpc-types";
 
 // ─── Tauri Commands (frontend → Rust) ───
@@ -309,6 +310,18 @@ export async function fetchModelsViaShell(): Promise<Record<string, unknown>[]> 
 
 export async function setModel(agentId: string, provider: string, modelId: string): Promise<void> {
   return invoke("set_model", { agentId, provider, modelId });
+}
+
+export async function setToolPermissionMode(agentId: string, mode: ToolPermissionMode): Promise<void> {
+  return invoke("set_tool_permission_mode", { agentId, mode });
+}
+
+export async function respondToolPermission(
+  agentId: string,
+  toolCallId: string,
+  allowed: boolean,
+): Promise<boolean> {
+  return invoke<boolean>("respond_tool_permission", { agentId, toolCallId, allowed });
 }
 
 export async function listProjectFiles(

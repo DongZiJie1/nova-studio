@@ -168,6 +168,20 @@ pub enum RpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         cancelled: Option<bool>,
     },
+    #[serde(rename = "get_tool_permission_mode")]
+    GetToolPermissionMode { id: Option<String> },
+    #[serde(rename = "set_tool_permission_mode")]
+    SetToolPermissionMode {
+        id: Option<String>,
+        mode: String,
+    },
+    #[serde(rename = "respond_tool_permission")]
+    RespondToolPermission {
+        id: Option<String>,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        allowed: bool,
+    },
 }
 
 /// Messages received from the agent process (stdout)

@@ -510,6 +510,7 @@ impl AgentManager {
             let _ = agent.send_command(&RpcCommand::GetState { id: None });
             let _ = agent.send_command(&RpcCommand::GetSessionStats { id: None });
             let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
+            let _ = agent.send_command(&RpcCommand::GetToolPermissionMode { id: None });
         }
 
         // Disposable side-question sessions are deliberately invisible to
@@ -853,6 +854,40 @@ impl AgentManager {
             provider,
             model_id,
         })
+    }
+
+    /// Switch the tool permission mode for an agent's session
+    pub async fn set_tool_permission_mode(&self, agent_id: &str, mode: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::SetToolPermissionMode { id: None, mode })
+    }
+
+    /// Answer a pending tool permission request for an agent
+    pub async fn respond_tool_permission(
+        &self,
+        agent_id: &str,
+        tool_call_id: String,
+        allowed: bool,
+    ) -> Result<bool, String> {
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let data = self
+            .request_agent_command(
+                agent,
+                RpcCommand::RespondToolPermission {
+                    id: Some(request_id.clone()),
+                    tool_call_id,
+                    allowed,
+                },
+                &request_id,
+                10,
+            )
+            .await?;
+        Ok(data
+            .get("handled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
     }
 
     /// List all available models from nova CLI
