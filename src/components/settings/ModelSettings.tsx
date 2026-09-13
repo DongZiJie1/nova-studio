@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Check, LayoutGrid, LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
+import { Check, LayoutGrid, LoaderCircle, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import {
   deleteModelConfiguration,
   deleteProviderConfiguration,
@@ -442,35 +442,42 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
             </div>
 
             {selectedModels.length > 0 && (
-              <div className="model-list-editor">
-                <div className="model-list-editor-header">
+              <div className="model-saved-list">
+                <div className="model-saved-header">
                   <div>
                     <strong>已配置模型</strong>
                     <small>与聊天模型选择器显示同一份数据</small>
                   </div>
                 </div>
                 {selectedModels.map((model) => (
-                  <div className="model-row-editor" key={model.id}>
-                    <div className="model-row-editor-title">
-                      <span>{model.name}</span>
-                      <span>
-                        <button type="button" className="model-icon-btn" onClick={() => startEditing(model)}>编辑</button>
-                        <button
-                          type="button"
-                          className="model-icon-btn model-icon-danger"
-                          title="删除模型"
-                          onClick={() => void removeModel(model.provider, model.id)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </span>
+                  <div className="model-saved-item" key={model.id}>
+                    <div className="model-saved-identity">
+                      <span className="model-saved-name">{model.name}</span>
+                      {model.name !== model.id && <span className="model-saved-id">{model.id}</span>}
                     </div>
-                    <div className="model-settings-options">
-                      <span>{model.id}</span>
-                      <span>{model.contextWindow.toLocaleString()} 上下文</span>
-                      <span>{model.maxTokens.toLocaleString()} 最大输出</span>
-                      {model.reasoning && <span>支持推理</span>}
-                      {model.images && <span>支持图片输入</span>}
+                    <div className="model-saved-tags">
+                      <span className="model-saved-tag">{model.contextWindow.toLocaleString()} 上下文</span>
+                      <span className="model-saved-tag">{model.maxTokens.toLocaleString()} 最大输出</span>
+                      {model.reasoning && <span className="model-saved-tag model-saved-tag-accent">推理</span>}
+                      {model.images && <span className="model-saved-tag model-saved-tag-accent">图片</span>}
+                    </div>
+                    <div className="model-saved-actions">
+                      <button
+                        type="button"
+                        className="model-icon-btn"
+                        title="编辑模型"
+                        onClick={() => startEditing(model)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="model-icon-btn model-icon-danger"
+                        title="删除模型"
+                        onClick={() => void removeModel(model.provider, model.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
                 ))}

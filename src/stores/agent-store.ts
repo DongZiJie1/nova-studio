@@ -116,8 +116,6 @@ export interface AvailableModel {
   id: string;
   name: string;
   provider: string;
-  /** Human-readable provider label from the catalog. */
-  providerName: string;
   api: string;
   baseUrl: string;
   contextWindow: number;
@@ -135,7 +133,6 @@ export function flattenModelCatalog(catalog: ModelCatalog): AvailableModel[] {
       id: model.id,
       name: model.name,
       provider: provider.provider,
-      providerName: provider.name,
       api: model.api,
       baseUrl: model.baseUrl,
       contextWindow: model.contextWindow,

@@ -4032,61 +4032,46 @@ export function AppShell() {
                               overflowY: "auto",
                             }}
                           >
-                            {(() => {
-                              const grouped = new Map<string, AvailableModel[]>();
-                              for (const m of availableModels) {
-                                const arr = grouped.get(m.provider) ?? [];
-                                arr.push(m);
-                                grouped.set(m.provider, arr);
-                              }
-                              return Array.from(grouped.entries()).map(([provider, models]) => (
-                                <div key={provider}>
-                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                                    {models[0]?.providerName || provider}
-                                  </div>
-                                  {models.map((m) => {
-                                    const isActive = activeModelId === m.id && activeModelProvider === m.provider;
-                                    return (
-                                      <button
-                                        key={m.id}
-                                        type="button"
-                                        className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
-                                        title={m.authConfigured ? undefined : "该 Provider 未配置 API Key"}
-                                        onClick={() => {
-                                          if (activeAgent) {
-                                            setModel(activeAgent.id, m.provider, m.id);
-                                            updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, provider: m.provider, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
-                                          } else {
-                                            // On homepage, save as default model for new agents
-                                            setDefaultModel(m.id);
-                                            setDefaultProvider(m.provider);
-                                          }
-                                          setModelPickerOpen(false);
-                                        }}
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "space-between",
-                                          width: "100%",
-                                          padding: "6px 10px",
-                                          borderRadius: 7,
-                                          fontSize: 12,
-                                          cursor: "pointer",
-                                          textAlign: "left",
-                                          transition: "all 0.12s ease",
-                                          opacity: m.authConfigured ? 1 : 0.5,
-                                        }}
-                                      >
-                                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                                        <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
-                                          {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ));
-                            })()}
+                            {availableModels.map((m) => {
+                              const isActive = activeModelId === m.id && activeModelProvider === m.provider;
+                              return (
+                                <button
+                                  key={`${m.provider}:${m.id}`}
+                                  type="button"
+                                  className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                  title={m.authConfigured ? undefined : "该 Provider 未配置 API Key"}
+                                  onClick={() => {
+                                    if (activeAgent) {
+                                      setModel(activeAgent.id, m.provider, m.id);
+                                      updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, provider: m.provider, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
+                                    } else {
+                                      // On homepage, save as default model for new agents
+                                      setDefaultModel(m.id);
+                                      setDefaultProvider(m.provider);
+                                    }
+                                    setModelPickerOpen(false);
+                                  }}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    width: "100%",
+                                    padding: "6px 10px",
+                                    borderRadius: 7,
+                                    fontSize: 12,
+                                    cursor: "pointer",
+                                    textAlign: "left",
+                                    transition: "all 0.12s ease",
+                                    opacity: m.authConfigured ? 1 : 0.5,
+                                  }}
+                                >
+                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                  <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
+                                    {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
