@@ -1007,6 +1007,15 @@ function loadHiddenAgents(): Set<string> {
   }
 }
 
+/** File path an edit/write tool call targeted, accepting either argument spelling. */
+function toolEditedPath(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const record = args as Record<string, unknown>;
+  if (typeof record.path === "string") return record.path;
+  if (typeof record.file_path === "string") return record.file_path;
+  return "";
+}
+
 function agentDisplayName(agent: AgentState, agentNames: Record<string, string> = {}): string {
   if (agentNames[agent.id]) return agentNames[agent.id];
   if (agent.name) return agent.name;
@@ -1192,6 +1201,8 @@ interface BatchTaskPanelProps {
   childAgents: AgentState[];
   agentNames: Record<string, string>;
   onSelectAgent: (agentId: string) => void;
+  /** Preformatted warning about files edited by more than one agent; empty when none. */
+  crossAgentWarning: string;
 }
 
 interface TemporaryChatEntry {
@@ -1217,6 +1228,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   childAgents,
   agentNames,
   onSelectAgent,
+  crossAgentWarning,
 }: BatchTaskPanelProps) {
   const [turnIndexes, setTurnIndexes] = useState<Record<string, number>>({});
   const [temporaryInput, setTemporaryInput] = useState("");
@@ -1274,6 +1286,15 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
       <div className="task-panel-body">
           {mode === "review" ? (
             <div className="agent-file-review">
+              {crossAgentWarning && (
+                <div className="agent-file-review-conflict" role="status">
+                  <strong>多个 Agent 改过同一批文件</strong>
+                  <span>
+                    这些文件的写入是后来者覆盖先前者。撤回某一方的改动前请先确认当前内容。
+                  </span>
+                  <pre>{crossAgentWarning}</pre>
+                </div>
+              )}
               {reviewFiles.length > 0 ? (
                 <section className="agent-file-review-turn">
                   <header className="agent-file-review-turn-header">
@@ -2090,6 +2111,45 @@ export function AppShell() {
     }
     return Array.from(byPath.values());
   }, [turnFileChangesByAssistantId]);
+
+  // Files touched by more than one agent in the same directory: writes are last-one-wins,
+  // so the user has to be told before trusting or reverting either side. Agents in their own
+  // worktree are skipped — separate checkouts cannot overwrite each other.
+  const crossAgentFileWarning = useMemo(() => {
+    const byCwd = new Map<string, AgentState[]>();
+    for (const agent of agents) {
+      if (agent.worktree) continue;
+      const group = byCwd.get(agent.cwd) ?? [];
+      group.push(agent);
+      byCwd.set(agent.cwd, group);
+    }
+    const ownersByPath = new Map<string, { path: string; agents: string[] }>();
+    for (const [cwd, group] of byCwd) {
+      if (group.length < 2) continue;
+      for (const agent of group) {
+        const files = new Set<string>();
+        for (const message of agent.messages) {
+          for (const tool of message.toolCalls ?? []) {
+            if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
+            const path = toolEditedPath(tool.args);
+            if (path) files.add(path);
+          }
+        }
+        for (const path of files) {
+          const key = `${cwd}\u001f${path}`;
+          const entry = ownersByPath.get(key) ?? { path, agents: [] };
+          if (!entry.agents.includes(agent.id)) entry.agents.push(agent.id);
+          ownersByPath.set(key, entry);
+        }
+      }
+    }
+    const contested = Array.from(ownersByPath.values()).filter((entry) => entry.agents.length > 1);
+    if (contested.length === 0) return "";
+    return contested
+      .map((entry) => `${entry.path}（${entry.agents.map((id) => agentNames[id] || id).join("、")}）`)
+      .join("\n");
+  }, [agents, agentNames]);
+
   const handleReviewFileChange = useCallback((_assistantId: string, path: string) => {
     setExpandedReviewFiles(new Set([path]));
     setAgentWorkbenchMode("review");
@@ -4376,6 +4436,7 @@ export function AppShell() {
                       childAgents={currentSubAgents}
                       agentNames={agentNames}
                       onSelectAgent={handleSelectAgent}
+                      crossAgentWarning={crossAgentFileWarning}
                     />
                   )}
                 </aside>

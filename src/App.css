@@ -9182,6 +9182,30 @@ body {
   font-size: 10px;
 }
 
+/* Warns that several agents wrote the same files, where the last write wins */
+.agent-file-review-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 12px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 168, 96, 0.35);
+  background: rgba(232, 168, 96, 0.12);
+  color: #e8c08a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-file-review-conflict pre {
+  margin: 0;
+  font-family: monospace;
+  font-size: 10.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #f0d3ab;
+}
+
 .agent-file-review-turn-header > span:first-child {
   color: var(--color-text-secondary);
   font-weight: 650;
