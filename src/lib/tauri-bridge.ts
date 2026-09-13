@@ -265,6 +265,11 @@ export interface ModelConfigurationInput {
   providerId: string;
   /** When empty, only the provider API key is saved (no models.json entry). */
   modelId?: string;
+  /**
+   * Model id the edit started from. When it differs from `modelId` the original
+   * entry is replaced rather than a second one being appended.
+   */
+  previousModelId?: string;
   displayName?: string;
   baseUrl: string;
   api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";

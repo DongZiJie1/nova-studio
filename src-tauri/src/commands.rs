@@ -13,6 +13,9 @@ pub struct ModelConfigurationInput {
     provider_id: String,
     /// When omitted, only the provider API key is saved (no models.json entry).
     model_id: Option<String>,
+    /// Model id the edit started from. When it differs from `model_id` the
+    /// original entry is removed, so renaming replaces instead of appending.
+    previous_model_id: Option<String>,
     display_name: Option<String>,
     base_url: String,
     api: String,
@@ -72,6 +75,11 @@ fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<(), Stri
 pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<(), String> {
     let provider_id = input.provider_id.trim();
     let model_id = input.model_id.as_deref().map(str::trim).filter(|model| !model.is_empty());
+    let previous_model_id = input
+        .previous_model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
     let base_url = input.base_url.trim().trim_end_matches('/');
     let api_key = input.api_key.as_deref().map(str::trim).filter(|key| !key.is_empty());
     if provider_id.is_empty() {
@@ -125,6 +133,14 @@ pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<
             .or_insert_with(|| serde_json::json!([]))
             .as_array_mut()
             .ok_or_else(|| format!("Provider {provider_id} models must be an array"))?;
+        // The user may have renamed the model in the edit form. Drop the entry
+        // they started from, otherwise the id no longer matches and the upsert
+        // below appends a duplicate.
+        if let Some(previous) = previous_model_id {
+            if previous != model_id {
+                models.retain(|model| model.get("id").and_then(|id| id.as_str()) != Some(previous));
+            }
+        }
         let mut model = serde_json::json!({
             "id": model_id,
             "reasoning": input.reasoning,
