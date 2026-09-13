@@ -167,7 +167,7 @@ impl AgentManager {
             .cloned()
             .map(|record| (record.session_id.clone(), record))
             .collect();
-        let records = match self.load_nova_sessions().await {
+        let records: HashMap<String, PersistedAgent> = match self.load_nova_sessions().await {
             Ok(catalog) => catalog
                 .sessions
                 .into_iter()
@@ -219,13 +219,7 @@ impl AgentManager {
         // Worktree metadata lives outside the agent records so session-catalog pruning
         // cannot drop it; reattach it here and flag checkouts that disappeared.
         self.worktrees.load().await?;
-        let mut records: HashMap<String, PersistedAgent> = records;
-        for (id, record) in records.iter_mut() {
-            if let Some(info) = self.worktrees.get(id).await {
-                record.project_cwd = Some(info.project_cwd.clone());
-                record.worktree = Some(info);
-            }
-        }
+        // Validate before reattaching, so records pick up the corrected state.
         for (id, info) in self.worktrees.list().await {
             if info.state != WorktreeState::Active {
                 continue;
@@ -241,6 +235,13 @@ impl AgentManager {
                     id,
                     info.path
                 );
+            }
+        }
+        let mut records = records;
+        for (id, record) in records.iter_mut() {
+            if let Some(info) = self.worktrees.get(id).await {
+                record.project_cwd = Some(info.project_cwd.clone());
+                record.worktree = Some(info);
             }
         }
         *self.records.write().await = records;
@@ -1959,5 +1960,75 @@ mod tests {
         );
 
         let _ = tokio::fs::remove_file(state_path).await;
+    }
+
+    #[tokio::test]
+    async fn restore_marks_a_worktree_whose_checkout_disappeared() {
+        // The worktree index lives next to agents.json, so this test needs its own
+        // directory — a unique file name alone would still share `/tmp/worktrees.json`.
+        let test_dir = std::env::temp_dir().join(format!("nova-studio-worktree-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&test_dir).await.unwrap();
+        let state_path = test_dir.join("agents.json");
+        let index_path = state_path.with_file_name("worktrees.json");
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec(&vec![PersistedAgent {
+                id: "agent-mock-parent".to_string(),
+                parent_agent_id: None,
+                created_by: Some("user".to_string()),
+                name: Some("Parent".to_string()),
+                cwd: "/tmp".to_string(),
+                model: None,
+                provider: None,
+                args: Vec::new(),
+                session_id: "mock-parent".to_string(),
+                session_file: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                message_count: 0,
+                depth: 0,
+                project_cwd: None,
+                worktree: None,
+            }])
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let vanished = std::env::temp_dir().join(format!("nova-gone-{}", Uuid::new_v4()));
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "agent-mock-parent".to_string(),
+            WorktreeInfo {
+                path: vanished.to_string_lossy().to_string(),
+                branch: "nova/agent-mock-parent".to_string(),
+                project_cwd: "/tmp".to_string(),
+                base_commit: "deadbeef".to_string(),
+                base_branch: Some("main".to_string()),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                state: WorktreeState::Active,
+            },
+        );
+        tokio::fs::write(&index_path, serde_json::to_vec(&index).unwrap())
+            .await
+            .unwrap();
+
+        let restored = AgentManager::new(mock_cli_path(), state_path.clone());
+        restored.restore().await.unwrap();
+
+        let info = restored
+            .list()
+            .await
+            .into_iter()
+            .find(|info| info.id == "agent-mock-parent")
+            .unwrap();
+        assert_eq!(
+            info.worktree.map(|worktree| worktree.state),
+            Some(WorktreeState::Missing),
+            "a worktree whose directory vanished must be flagged, not silently forgotten"
+        );
+        assert_eq!(info.project_cwd.as_deref(), Some("/tmp"));
+
+        let _ = tokio::fs::remove_file(state_path).await;
+        let _ = tokio::fs::remove_file(index_path).await;
+        let _ = tokio::fs::remove_dir_all(test_dir).await;
     }
 }
