@@ -9182,6 +9182,32 @@ body {
   font-size: 10px;
 }
 
+.agent-file-review-turn-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Files this turn could not revert because they changed after the agent's edit */
+.turn-file-change-bulk-error {
+  margin: 6px 10px 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 168, 96, 0.35);
+  background: rgba(232, 168, 96, 0.12);
+  color: #e8c08a;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.turn-file-change-bulk-error pre {
+  margin: 4px 0 0;
+  font-family: monospace;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* Warns that several agents wrote the same files, where the last write wins */
 .agent-file-review-conflict {
   display: flex;

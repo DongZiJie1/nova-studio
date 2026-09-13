@@ -18,18 +18,59 @@ export interface TurnFileChange {
 
 function FileChangesCard({ changes, onRevert, onReview }: { changes: TurnFileChange[]; onRevert?: (change: TurnFileChange) => Promise<void>; onReview?: (path: string) => void }) {
   const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [bulkFailures, setBulkFailures] = useState<string[]>([]);
   const additions = changes.reduce((total, change) => total + change.additions, 0);
   const deletions = changes.reduce((total, change) => total + change.deletions, 0);
   const patchableChanges = changes.filter((change) => (change.patches?.length ?? 0) > 0);
   const visibleChanges = changes.length > 4 ? changes.slice(0, 3) : changes;
   const hiddenChanges = changes.length > 4 ? changes.slice(3) : [];
+
+  // Undo every file this turn touched. A file whose content changed after the agent wrote
+  // it refuses to revert, so failures are collected and reported instead of stopping halfway.
+  const revertAll = async () => {
+    if (!onRevert) return;
+    setBulkPending(true);
+    setBulkFailures([]);
+    const failures: string[] = [];
+    for (const change of [...patchableChanges].reverse()) {
+      try {
+        await onRevert(change);
+      } catch (error) {
+        failures.push(`${change.path}：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    setBulkFailures(failures);
+    setBulkPending(false);
+    setConfirmBulk(false);
+  };
+
   return (
     <div className="turn-file-change">
       <div className="turn-file-change-summary">
         <span className="turn-file-change-icon"><FileCode size={18} /></span>
         <span className="turn-file-change-copy"><strong>{changes.length === 1 ? "已编辑 1 个文件" : `已编辑 ${changes.length} 个文件`}</strong><span className="turn-file-change-stats"><b>+{additions}</b><i>-{deletions}</i></span></span>
+        {patchableChanges.length > 1 && onRevert && (
+          <button
+            type="button"
+            className="turn-file-change-review"
+            disabled={bulkPending}
+            onClick={() => (confirmBulk ? void revertAll() : setConfirmBulk(true))}
+            onBlur={() => setConfirmBulk(false)}
+          >
+            <RotateCcw size={12} />
+            {bulkPending ? "撤回中…" : confirmBulk ? `确认撤回 ${patchableChanges.length} 个？` : "撤回本轮全部"}
+          </button>
+        )}
         {patchableChanges.length > 0 && <button type="button" className="turn-file-change-review" onClick={() => onReview?.(patchableChanges[0].path)}>审核<ChevronRight size={14} /></button>}
       </div>
+      {bulkFailures.length > 0 && (
+        <div className="turn-file-change-bulk-error">
+          有 {bulkFailures.length} 个文件没能撤回（文件在 Agent 编辑后又被改动过）：
+          <pre>{bulkFailures.join("\n")}</pre>
+        </div>
+      )}
       <div className="turn-file-change-list">
         {visibleChanges.map((change) => <div className="turn-file-change-row" key={change.path}><button type="button" className="turn-file-change-row-main" onClick={() => onReview?.(change.path)}><span title={change.path}>{change.path}</span><span className="turn-file-change-stats"><b>+{change.additions}</b><i>-{change.deletions}</i></span></button>{onRevert && change.revertible !== false && (change.patches?.length ?? 0) > 0 && <button type="button" className="turn-file-change-revert" disabled={pendingPath === change.path} onClick={() => { setPendingPath(change.path); void onRevert(change).catch(() => {}).finally(() => setPendingPath(null)); }}><RotateCcw size={12} />{pendingPath === change.path ? "撤回中" : "撤回"}</button>}</div>)}
         {hiddenChanges.length > 0 && (

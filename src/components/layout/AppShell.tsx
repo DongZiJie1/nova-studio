@@ -1203,6 +1203,9 @@ interface BatchTaskPanelProps {
   onSelectAgent: (agentId: string) => void;
   /** Preformatted warning about files edited by more than one agent; empty when none. */
   crossAgentWarning: string;
+  /** Reverts every change the agent made; absent when reverting is unavailable. */
+  onRevertAll?: () => Promise<void>;
+  revertAllBusy?: boolean;
 }
 
 interface TemporaryChatEntry {
@@ -1229,8 +1232,11 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   agentNames,
   onSelectAgent,
   crossAgentWarning,
+  onRevertAll,
+  revertAllBusy,
 }: BatchTaskPanelProps) {
   const [turnIndexes, setTurnIndexes] = useState<Record<string, number>>({});
+  const [confirmRevertAll, setConfirmRevertAll] = useState(false);
   const [temporaryInput, setTemporaryInput] = useState("");
   const [temporaryPending, setTemporaryPending] = useState(false);
   const [temporaryError, setTemporaryError] = useState<string | null>(null);
@@ -1299,7 +1305,21 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                 <section className="agent-file-review-turn">
                   <header className="agent-file-review-turn-header">
                     <span>会话累计 · {reviewFiles.length} 个文件</span>
-                    <span className="turn-file-change-stats"><b>+{reviewFiles.reduce((total, file) => total + file.additions, 0)}</b><i>-{reviewFiles.reduce((total, file) => total + file.deletions, 0)}</i></span>
+                    <span className="agent-file-review-turn-actions">
+                      <span className="turn-file-change-stats"><b>+{reviewFiles.reduce((total, file) => total + file.additions, 0)}</b><i>-{reviewFiles.reduce((total, file) => total + file.deletions, 0)}</i></span>
+                      {onRevertAll && (
+                        <button
+                          type="button"
+                          className="turn-file-change-revert"
+                          disabled={revertAllBusy}
+                          onClick={() => (confirmRevertAll ? void onRevertAll() : setConfirmRevertAll(true))}
+                          onBlur={() => setConfirmRevertAll(false)}
+                        >
+                          <RotateCcw size={12} />
+                          {revertAllBusy ? "撤回中…" : confirmRevertAll ? "确认撤回全部？" : "撤回该 Agent 全部改动"}
+                        </button>
+                      )}
+                    </span>
                   </header>
                   <div className="agent-file-review-entries">
                     {reviewFiles.map((file) => {
@@ -1727,6 +1747,7 @@ export function AppShell() {
   const [savedInput, setSavedInput] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [revertedFileChanges, setRevertedFileChanges] = useState<Set<string>>(() => new Set());
+  const [reviewRevertBusy, setReviewRevertBusy] = useState(false);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -2149,6 +2170,39 @@ export function AppShell() {
       .map((entry) => `${entry.path}（${entry.agents.map((id) => agentNames[id] || id).join("、")}）`)
       .join("\n");
   }, [agents, agentNames]);
+
+  // Undo everything one agent changed. Turns are reverted newest-first because each turn's
+  // patch only applies to the file state the previous turn left behind; a file that changed
+  // since is refused by nova and reported rather than silently overwritten.
+  const handleRevertAgentChanges = useCallback(async () => {
+    if (!activeAgent) return;
+    setReviewRevertBusy(true);
+    const revertedKeys = new Set<string>();
+    const failures: string[] = [];
+    const turns = [...turnFileChangesByAssistantId.entries()].reverse();
+    for (const [assistantId, changes] of turns) {
+      for (const change of changes) {
+        if (!change.patches?.length) {
+          failures.push(`${change.path}（没有可用的 patch）`);
+          continue;
+        }
+        try {
+          await revertFileChange(activeAgent.id, change.path, change.patches, change.created);
+          revertedKeys.add(`${assistantId}:${change.path}`);
+        } catch (error) {
+          failures.push(`${change.path}：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (revertedKeys.size > 0) {
+      setRevertedFileChanges((current) => new Set([...current, ...revertedKeys]));
+    }
+    setReviewRevertBusy(false);
+    if (failures.length > 0) {
+      setError(`有 ${failures.length} 个文件没能撤回：\n${failures.join("\n")}`);
+      window.setTimeout(() => setError(null), 12000);
+    }
+  }, [activeAgent, turnFileChangesByAssistantId]);
 
   const handleReviewFileChange = useCallback((_assistantId: string, path: string) => {
     setExpandedReviewFiles(new Set([path]));
@@ -4437,6 +4491,12 @@ export function AppShell() {
                       agentNames={agentNames}
                       onSelectAgent={handleSelectAgent}
                       crossAgentWarning={crossAgentFileWarning}
+                      onRevertAll={
+                        activeAgent && cumulativeReviewFiles.length > 0 && activeAgent.status !== "stopped"
+                          ? handleRevertAgentChanges
+                          : undefined
+                      }
+                      revertAllBusy={reviewRevertBusy}
                     />
                   )}
                 </aside>
