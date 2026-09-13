@@ -77,11 +77,38 @@ const LOGO_ALIASES: Record<string, string> = {
   "zai-coding-cn": "zhipu",
 };
 
+/**
+ * Output-token cap for a saved model. There is no user-facing field: a single
+ * response never reaches the cap, and nova already clamps `maxTokens` to the
+ * context actually left at request time, so the full context window is the
+ * "never triggers" choice. An existing model keeps the value already on disk
+ * unless the context window was lowered below it.
+ */
+function maxTokensForRow(row: ModelRow, existingModels: AvailableModel[]): number {
+  const existing = existingModels.find((model) => model.id === row.modelId?.trim());
+  return Math.min(existing?.maxTokens ?? row.contextWindow, row.contextWindow);
+}
+
+/** Compact context-window label: 1000000 -> "1M", 128000 -> "128K". */
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(0)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(0)}K`;
+  return tokens.toString();
+}
+
 function providerLogo(providerId: string): string | undefined {
   return PROVIDER_LOGOS[LOGO_ALIASES[providerId] ?? providerId];
 }
 
-const INITIAL_FORM: ModelConfigurationInput = {
+/**
+ * Connection fields. The output-token cap is deliberately absent: a single
+ * response never reaches it, and nova already clamps `maxTokens` to the
+ * remaining context at request time, so the saved value is always the full
+ * context window (see `maxTokensForRow`).
+ */
+type ModelForm = Omit<ModelConfigurationInput, "maxTokens">;
+
+const INITIAL_FORM: ModelForm = {
   providerId: "",
   modelId: "",
   displayName: "",
@@ -89,18 +116,16 @@ const INITIAL_FORM: ModelConfigurationInput = {
   api: "openai-completions",
   apiKey: "",
   contextWindow: 128000,
-  maxTokens: 8192,
   reasoning: false,
   images: false,
 };
 
-type ModelRow = Pick<ModelConfigurationInput, "modelId" | "displayName" | "contextWindow" | "maxTokens" | "reasoning" | "images">;
+type ModelRow = Pick<ModelForm, "modelId" | "displayName" | "contextWindow" | "reasoning" | "images">;
 
 const INITIAL_MODEL_ROW: ModelRow = {
   modelId: "",
   displayName: "",
   contextWindow: 128000,
-  maxTokens: 8192,
   reasoning: false,
   images: false,
 };
@@ -114,7 +139,7 @@ function avatarColor(id: string): string {
 }
 
 export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
-  const [form, setForm] = useState<ModelConfigurationInput>(INITIAL_FORM);
+  const [form, setForm] = useState<ModelForm>(INITIAL_FORM);
   const [modelRows, setModelRows] = useState<ModelRow[]>([INITIAL_MODEL_ROW]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -193,7 +218,6 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
         api: (savedConfig?.api as ModelConfigurationInput["api"] | undefined) ?? preset.api,
         apiKey: savedConfig?.apiKey ?? "",
         contextWindow: INITIAL_FORM.contextWindow,
-        maxTokens: INITIAL_FORM.maxTokens,
         reasoning: false,
         images: false,
       });
@@ -211,7 +235,6 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
         modelId: model.id,
         displayName: model.name !== model.id ? model.name : "",
         contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
         reasoning: model.reasoning,
         images: model.images,
       },
@@ -288,10 +311,15 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       const modelIds = rows.map((row) => row.modelId!.trim());
       if (new Set(modelIds).size !== modelIds.length) throw new Error("模型 ID 不能重复");
       if (rows.length === 0) {
-        await saveModelConfiguration({ ...form, modelId: "" });
+        await saveModelConfiguration({ ...form, modelId: "", maxTokens: form.contextWindow });
       } else {
         for (const [index, row] of rows.entries()) {
-          await saveModelConfiguration({ ...form, ...row, apiKey: index === 0 ? form.apiKey : "" });
+          await saveModelConfiguration({
+            ...form,
+            ...row,
+            maxTokens: maxTokensForRow(row, selectedModels),
+            apiKey: index === 0 ? form.apiKey : "",
+          });
         }
       }
       await onSaved();
@@ -456,8 +484,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                       {model.name !== model.id && <span className="model-saved-id">{model.id}</span>}
                     </div>
                     <div className="model-saved-tags">
-                      <span className="model-saved-tag">{model.contextWindow.toLocaleString()} 上下文</span>
-                      <span className="model-saved-tag">{model.maxTokens.toLocaleString()} 最大输出</span>
+                      <span className="model-saved-tag">{formatContextWindow(model.contextWindow)} 上下文</span>
                       {model.reasoning && <span className="model-saved-tag model-saved-tag-accent">推理</span>}
                       {model.images && <span className="model-saved-tag model-saved-tag-accent">图片</span>}
                     </div>
@@ -507,8 +534,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                   <div className="model-settings-grid">
                     <label><span>模型 ID</span><input required={modelRequired || modelRows.length > 1} value={row.modelId ?? ""} onChange={(event) => updateModelRow(index, "modelId", event.target.value)} placeholder="例如 gpt-5" /></label>
                     <label><span>显示名称 <small>可选</small></span><input value={row.displayName ?? ""} onChange={(event) => updateModelRow(index, "displayName", event.target.value)} placeholder="模型在选择器中的名称" /></label>
-                    <label><span>上下文窗口</span><input required={Boolean(row.modelId?.trim())} min={1} type="number" value={row.contextWindow} onChange={(event) => updateModelRow(index, "contextWindow", Number(event.target.value))} /></label>
-                    <label><span>最大输出 Token</span><input required={Boolean(row.modelId?.trim())} min={1} max={row.contextWindow} type="number" value={row.maxTokens} onChange={(event) => updateModelRow(index, "maxTokens", Number(event.target.value))} /></label>
+                    <label className="model-settings-wide"><span>上下文窗口</span><input required={Boolean(row.modelId?.trim())} min={1} type="number" value={row.contextWindow} onChange={(event) => updateModelRow(index, "contextWindow", Number(event.target.value))} /></label>
                   </div>
                   <div className="model-settings-options">
                     <label><input type="checkbox" checked={row.reasoning} onChange={(event) => updateModelRow(index, "reasoning", event.target.checked)} /><span>支持推理</span></label>
