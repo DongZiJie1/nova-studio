@@ -12,6 +12,7 @@ import type {
   SessionUsage,
   ToolPermissionMode,
   ToolPermissionRequest,
+  WorktreeInfo,
 } from "../lib/rpc-types";
 import {
   parseAgentEvent,
@@ -70,6 +71,10 @@ export interface AgentState {
   status: AgentStatus;
   lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
+  /** Repository root this agent belongs to when it runs in an isolated worktree. */
+  projectCwd: string | null;
+  /** Set only on the agent that owns the worktree. */
+  worktree: WorktreeInfo | null;
   model: string | null;
   messages: ChatMessage[];
   createdAt: string;
@@ -183,6 +188,8 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     status: info.status,
     lifecycle: info.lifecycle,
     cwd: info.cwd,
+    projectCwd: info.project_cwd ?? null,
+    worktree: info.worktree ?? null,
     model: info.model,
     messages: [],
     createdAt: info.created_at,
@@ -213,6 +220,8 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
     status: info.status,
     lifecycle: info.lifecycle,
     cwd: info.cwd,
+    projectCwd: info.project_cwd ?? null,
+    worktree: info.worktree ?? null,
     model: info.model,
     createdAt: info.created_at,
     messageCount: Math.max(agent.messageCount, info.message_count),

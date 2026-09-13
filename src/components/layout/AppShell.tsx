@@ -2,6 +2,7 @@ import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
+import { useNotificationStore } from "../../stores/notification-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useUiStore } from "../../stores/ui-store";
 import {
@@ -32,6 +33,11 @@ import {
   forkSession,
   requestMessages,
   revertFileChange,
+  checkWorktreeAvailable,
+  getWorktreeStatus,
+  getWorktreeDiff,
+  acceptWorktree,
+  rejectWorktree,
 } from "../../lib/tauri-bridge";
 import { common, createLowlight } from "lowlight";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -41,7 +47,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
-import type { ToolPermissionMode } from "../../lib/rpc-types";
+import type { ToolPermissionMode, WorktreeStatus } from "../../lib/rpc-types";
 
 const TOOL_PERMISSION_MODES: Array<{ value: ToolPermissionMode; label: string; description: string }> = [
   { value: "ask", label: "询问", description: "危险操作前弹窗确认" },
@@ -103,6 +109,9 @@ import {
   LoaderCircle,
   RotateCcw,
   Bot,
+  GitBranch,
+  GitMerge,
+  Trash2,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -1056,6 +1065,15 @@ const AgentTreeNode = memo(function AgentTreeNode({
               {agentSubtitle(agent)}
             </span>
           )}
+          {agent.worktree && (
+            <span
+              className={`agent-worktree-badge ${agent.worktree.state !== "active" ? "agent-worktree-badge-resolved" : ""}`}
+              title={`${agent.worktree.branch}\n${agent.worktree.path}`}
+            >
+              <GitBranch size={10} />
+              {agent.worktree.branch.replace(/^nova\//, "")}
+            </span>
+          )}
         </span>
         <span
           role="button"
@@ -1384,6 +1402,233 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   );
 });
 
+interface WorktreeReviewPanelProps {
+  agent: AgentState;
+  onCollapse: () => void;
+  /** Called after the worktree is merged or discarded so the shell can refresh. */
+  onResolved: (message: string) => void;
+}
+
+/**
+ * Reviews the agent's isolated checkout: what it changed, then accept (squash-merge into the
+ * project) or reject (discard). Conflicting merges are reported, never forced.
+ */
+const WorktreeReviewPanel = memo(function WorktreeReviewPanel({
+  agent,
+  onCollapse,
+  onResolved,
+}: WorktreeReviewPanelProps) {
+  const [status, setStatus] = useState<WorktreeStatus | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [diff, setDiff] = useState("");
+  const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
+  const [confirmingReject, setConfirmingReject] = useState(false);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  const worktree = agent.worktree;
+  const resolved = !worktree || worktree.state !== "active";
+
+  useEffect(() => {
+    if (!worktree || resolved) return;
+    let cancelled = false;
+    setError(null);
+    void getWorktreeStatus(agent.id)
+      .then((next) => {
+        if (cancelled) return;
+        setStatus(next);
+        setSelectedPath((current) =>
+          current && next.files.some((file) => file.path === current) ? current : (next.files[0]?.path ?? null),
+        );
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, refreshToken, resolved, worktree]);
+
+  useEffect(() => {
+    if (!selectedPath || resolved) {
+      setDiff("");
+      return;
+    }
+    let cancelled = false;
+    void getWorktreeDiff(agent.id, selectedPath)
+      .then((text) => {
+        if (!cancelled) setDiff(text);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, selectedPath, refreshToken, resolved]);
+
+  const handleAccept = async () => {
+    setBusy("accept");
+    setError(null);
+    setConflicts([]);
+    try {
+      const outcome = await acceptWorktree(agent.id);
+      if (outcome.merged) onResolved(outcome.message);
+      else {
+        setConflicts(outcome.conflicts);
+        setError(outcome.message);
+        setRefreshToken((token) => token + 1);
+      }
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleReject = async () => {
+    setBusy("reject");
+    setError(null);
+    try {
+      await rejectWorktree(agent.id);
+      onResolved("已丢弃该 Agent 的改动");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+      setConfirmingReject(false);
+    }
+  };
+
+  const totalAdditions = status?.files.reduce((total, file) => total + file.additions, 0) ?? 0;
+  const totalDeletions = status?.files.reduce((total, file) => total + file.deletions, 0) ?? 0;
+
+  return (
+    <section className="task-panel agent-workbench" aria-label="Worktree 审查">
+      <button type="button" className="task-panel-header" onClick={onCollapse} aria-label="收起 Worktree 审查">
+        <span className="task-panel-heading">
+          <GitBranch size={15} />
+          Worktree 审查
+        </span>
+        {status && status.files.length > 0 && <span className="task-panel-count">{status.files.length}</span>}
+        <ChevronRight size={13} />
+      </button>
+      <div className="task-panel-body">
+        <div className="agent-file-review">
+          <section className="agent-file-review-turn">
+            <header className="agent-file-review-turn-header">
+              <span>{worktree?.branch ?? "worktree"}</span>
+              {status && (
+                <span className="turn-file-change-stats">
+                  <b>+{totalAdditions}</b>
+                  <i>-{totalDeletions}</i>
+                </span>
+              )}
+            </header>
+            <div style={{ padding: "4px 10px 8px", fontSize: 10.5, opacity: 0.75, wordBreak: "break-all" }}>
+              {worktree ? `${worktree.path} · 基于 ${worktree.baseBranch ?? worktree.baseCommit.slice(0, 8)}` : ""}
+            </div>
+          </section>
+
+          {resolved && worktree && (
+            <p style={{ padding: "0 10px", fontSize: 11.5 }}>
+              {worktree.state === "merged"
+                ? "该 worktree 已合并进项目。"
+                : worktree.state === "missing"
+                  ? "该 worktree 的目录已不存在。"
+                  : "该 worktree 已被丢弃。"}
+            </p>
+          )}
+
+          {!resolved && status?.dirty && (
+            <p style={{ padding: "0 10px", fontSize: 11 }}>
+              该 Agent 还有未提交的改动，接受时会先自动提交。
+            </p>
+          )}
+
+          {!resolved && status && status.files.length === 0 && (
+            <p style={{ padding: "0 10px", fontSize: 11.5 }}>该 Agent 还没有改动任何文件。</p>
+          )}
+
+          {!resolved && (
+            <div className="agent-file-review-entries">
+              {status?.files.map((file) => {
+                const slashIndex = file.path.lastIndexOf("/");
+                const expanded = file.path === selectedPath;
+                return (
+                  <div key={file.path} className="agent-file-review-entry">
+                    <button
+                      type="button"
+                      className={`agent-file-review-file${expanded ? " agent-file-review-file-active" : ""}`}
+                      title={file.path}
+                      onClick={() => setSelectedPath(expanded ? null : file.path)}
+                      aria-expanded={expanded}
+                    >
+                      <ChevronRight
+                        size={11}
+                        className={`agent-file-review-chevron${expanded ? " agent-file-review-chevron-open" : ""}`}
+                      />
+                      <span className="agent-file-review-file-path">
+                        <span className="agent-file-review-file-dir">
+                          {slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : ""}
+                        </span>
+                        <strong>{slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path}</strong>
+                      </span>
+                      <span className="turn-file-change-stats">
+                        <b>+{file.additions}</b>
+                        <i>-{file.deletions}</i>
+                      </span>
+                    </button>
+                    {expanded && diff.trim().length > 0 && <FileDiff patches={[diff]} path={file.path} />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {error && (
+            <div style={{ margin: "8px 10px", padding: "8px 10px", borderRadius: 8, background: "var(--bg-tertiary, rgba(0,0,0,0.2))", fontSize: 11.5, whiteSpace: "pre-wrap" }}>
+              {error}
+              {conflicts.length > 0 && (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {conflicts.map((path) => (
+                    <li key={path} style={{ fontFamily: "monospace" }}>{path}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {!resolved && (
+            <div style={{ display: "flex", gap: 8, padding: "10px" }}>
+              <button
+                type="button"
+                className="project-open-button"
+                disabled={busy !== null}
+                onClick={() => (confirmingReject ? void handleReject() : setConfirmingReject(true))}
+                onBlur={() => setConfirmingReject(false)}
+              >
+                <Trash2 size={13} />
+                {busy === "reject" ? "丢弃中…" : confirmingReject ? "确认丢弃？" : "丢弃改动"}
+              </button>
+              <button
+                type="button"
+                className="agent-hide-confirm"
+                disabled={busy !== null}
+                onClick={() => void handleAccept()}
+              >
+                <GitMerge size={13} />
+                {busy === "accept" ? "合并中…" : "接受并合并"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+});
+
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
@@ -1400,6 +1645,8 @@ export function AppShell() {
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
   const setDefaultModel = useSettingsStore((s) => s.setDefaultModel);
   const setDefaultProvider = useSettingsStore((s) => s.setDefaultProvider);
+  const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
+  const setWorktreeEnabled = useSettingsStore((s) => s.setWorktreeEnabled);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
@@ -1416,13 +1663,13 @@ export function AppShell() {
   const [projectFilesLoading, setProjectFilesLoading] = useState(false);
   const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
   const [agentWorkbenchOpen, setAgentWorkbenchOpen] = useState(false);
-  const [agentWorkbenchMode, setAgentWorkbenchMode] = useState<"review" | "temporary" | "agents">("review");
+  const [agentWorkbenchMode, setAgentWorkbenchMode] = useState<"review" | "temporary" | "agents" | "worktree">("review");
   const [expandedReviewFiles, setExpandedReviewFiles] = useState<Set<string>>(() => new Set());
   const [reviewPanelWidth, setReviewPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-review", Math.round(window.innerWidth * 0.45)));
   const [temporaryPanelWidth, setTemporaryPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-temporary", Math.round(window.innerWidth * 0.32)));
   const [dockResizing, setDockResizing] = useState(false);
   const dockResizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
-  const workbenchPanelWidth = agentWorkbenchMode === "review" ? reviewPanelWidth : temporaryPanelWidth;
+  const workbenchPanelWidth = agentWorkbenchMode === "temporary" ? temporaryPanelWidth : reviewPanelWidth;
   const handleDockResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     dockResizeDrag.current = { startX: event.clientX, startWidth: workbenchPanelWidth };
@@ -1434,14 +1681,14 @@ export function AppShell() {
     if (!drag) return;
     const maxWidth = Math.max(420, window.innerWidth - 460);
     const nextWidth = Math.min(maxWidth, Math.max(320, drag.startWidth + (drag.startX - event.clientX)));
-    if (agentWorkbenchMode === "review") setReviewPanelWidth(nextWidth);
-    else setTemporaryPanelWidth(nextWidth);
+    if (agentWorkbenchMode === "temporary") setTemporaryPanelWidth(nextWidth);
+    else setReviewPanelWidth(nextWidth);
   };
   const handleDockResizeEnd = () => {
     if (!dockResizeDrag.current) return;
     dockResizeDrag.current = null;
     setDockResizing(false);
-    localStorage.setItem(agentWorkbenchMode === "review" ? "nova-workbench-width-review" : "nova-workbench-width-temporary", String(workbenchPanelWidth));
+    localStorage.setItem(agentWorkbenchMode === "temporary" ? "nova-workbench-width-temporary" : "nova-workbench-width-review", String(workbenchPanelWidth));
   };
   const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -1463,6 +1710,9 @@ export function AppShell() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [permissionPickerOpen, setPermissionPickerOpen] = useState(false);
+  const [worktreePickerOpen, setWorktreePickerOpen] = useState(false);
+  // Whether the project staged for the next agent is a git repo (worktrees need one).
+  const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -1486,6 +1736,7 @@ export function AppShell() {
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const permissionPickerRef = useRef<HTMLDivElement>(null);
+  const worktreePickerRef = useRef<HTMLDivElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1557,9 +1808,12 @@ export function AppShell() {
         siblings.push(agent);
         children.set(agent.parentAgentId, siblings);
       } else {
-        const projectAgents = roots.get(agent.cwd) ?? [];
+        // A worktree agent runs in its own checkout but belongs to the project it
+        // branched from, so it is grouped by projectCwd rather than cwd.
+        const projectKey = agent.projectCwd ?? agent.cwd;
+        const projectAgents = roots.get(projectKey) ?? [];
         projectAgents.push(agent);
-        roots.set(agent.cwd, projectAgents);
+        roots.set(projectKey, projectAgents);
       }
     }
     return {
@@ -1640,9 +1894,25 @@ export function AppShell() {
   const validDefaultCwd = defaultCwd && !isTemporaryRuntimeProject(defaultCwd) ? defaultCwd : "";
   const welcomeProjectCwd =
     validPendingProjectCwd || validDefaultCwd || visibleAgents[0]?.cwd || "~";
-  const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
+  const inputProjectCwd = activeAgent?.projectCwd ?? activeAgent?.cwd ?? welcomeProjectCwd;
   const inputProjectName =
     projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd;
+  // The worktree switch applies to the next agent, so it is only offered before one exists.
+  const worktreeToggleVisible = !activeAgent;
+  useEffect(() => {
+    if (!worktreeToggleVisible) return;
+    let cancelled = false;
+    void checkWorktreeAvailable(welcomeProjectCwd)
+      .then((available) => {
+        if (!cancelled) setWorktreeAvailable(available);
+      })
+      .catch(() => {
+        if (!cancelled) setWorktreeAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [worktreeToggleVisible, welcomeProjectCwd]);
   const agentSenderLabels = useMemo(
     () => Object.fromEntries(agents.map((agent) => [
       agent.id,
@@ -2019,6 +2289,17 @@ export function AppShell() {
     return () => document.removeEventListener("mousedown", closePicker);
   }, [permissionPickerOpen]);
 
+  useEffect(() => {
+    if (!worktreePickerOpen) return;
+    const closePicker = (event: MouseEvent) => {
+      if (!worktreePickerRef.current?.contains(event.target as Node)) {
+        setWorktreePickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [worktreePickerOpen]);
+
   const pendingPermission = activeAgent?.pendingPermission ?? null;
   const pendingPermissionAgentId = activeAgent?.id ?? null;
   useEffect(() => {
@@ -2266,6 +2547,7 @@ export function AppShell() {
           cwd,
           defaultModel || undefined,
           defaultProvider || undefined,
+          worktreeEnabled && worktreeAvailable ? true : undefined,
         );
 
         const newAgent: AgentState = {
@@ -2276,6 +2558,8 @@ export function AppShell() {
           avatarId: getOrAssignAgentAvatar(info.id),
           status: info.status,
           cwd: info.cwd,
+          projectCwd: info.project_cwd ?? null,
+          worktree: info.worktree ?? null,
           model: info.model,
           messages: [],
           createdAt: info.created_at,
@@ -3701,6 +3985,78 @@ export function AppShell() {
                         )}
                       </div>
                     )}
+                    {/* Worktree isolation - applies to the next agent in this project */}
+                    {worktreeToggleVisible && (
+                      <div style={{ position: "relative" }}>
+                        <button
+                          type="button"
+                          className={`input-toolbar-control model-picker-trigger ${worktreePickerOpen ? "model-picker-trigger-open" : ""}`}
+                          onClick={() => setWorktreePickerOpen((open) => !open)}
+                          title={
+                            worktreeAvailable
+                              ? "让下一个 Agent 在自己的 git worktree 里工作"
+                              : "当前项目不是 git 仓库，无法使用 worktree 隔离"
+                          }
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "5px 10px",
+                            borderRadius: 8,
+                            fontSize: 11.5,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            opacity: worktreeAvailable ? 1 : 0.5,
+                          }}
+                        >
+                          <GitBranch size={12} style={{ flexShrink: 0 }} />
+                          <span style={{ whiteSpace: "nowrap" }}>
+                            {worktreeEnabled && worktreeAvailable ? "独立 worktree" : "共用目录"}
+                          </span>
+                        </button>
+                        {worktreePickerOpen && (
+                          <div
+                            ref={worktreePickerRef}
+                            className="model-picker-popover"
+                            style={{ position: "absolute", right: 0, bottom: 36, width: 268 }}
+                          >
+                            <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                              新 Agent 的工作目录
+                            </div>
+                            <button
+                              type="button"
+                              className={`model-picker-option ${!worktreeEnabled || !worktreeAvailable ? "model-picker-option-active" : ""}`}
+                              onClick={() => {
+                                setWorktreeEnabled(false);
+                                setWorktreePickerOpen(false);
+                              }}
+                              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, width: "100%", padding: "6px 10px" }}
+                            >
+                              <span>共用项目目录</span>
+                              <span className="model-picker-context" style={{ fontSize: 10 }}>默认。改动直接写进项目</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!worktreeAvailable}
+                              className={`model-picker-option ${worktreeEnabled && worktreeAvailable ? "model-picker-option-active" : ""}`}
+                              onClick={() => {
+                                setWorktreeEnabled(true);
+                                setWorktreePickerOpen(false);
+                              }}
+                              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, width: "100%", padding: "6px 10px", opacity: worktreeAvailable ? 1 : 0.5 }}
+                            >
+                              <span>独立 git worktree</span>
+                              <span className="model-picker-context" style={{ fontSize: 10 }}>并行 Agent 互不覆盖，改完再决定接受或丢弃</span>
+                            </button>
+                            {!worktreeAvailable && (
+                              <div style={{ padding: "4px 10px 8px", fontSize: 10.5, opacity: 0.7 }}>
+                                当前项目不是 git 仓库，无法使用 worktree 隔离
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {/* Permission mode selector - per active agent session */}
                     {activeAgent && (
                       <div style={{ position: "relative" }}>
@@ -3966,6 +4322,17 @@ export function AppShell() {
                   {currentSubAgents.length > 0 && <span className="agent-workbench-trigger-count">{currentSubAgents.length}</span>}
                   <span className="agent-workbench-trigger-tip">子 Agent · {activeDelegatedAgents.length} 进行中</span>
                 </button>
+                {activeAgent?.worktree && (
+                  <button
+                    type="button"
+                    className={`agent-workbench-trigger ${agentWorkbenchOpen && agentWorkbenchMode === "worktree" ? "agent-workbench-trigger-active" : ""} ${activeAgent.worktree.state === "active" ? "agent-workbench-trigger-running" : ""}`}
+                    onClick={() => { setAgentWorkbenchMode("worktree"); setAgentWorkbenchOpen((open) => agentWorkbenchMode === "worktree" ? !open : true); }}
+                    aria-label="Worktree 审查"
+                  >
+                    <GitBranch size={17} />
+                    <span className="agent-workbench-trigger-tip">Worktree 审查</span>
+                  </button>
+                )}
               </div>
             )}
             {!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen && (
@@ -3981,18 +4348,36 @@ export function AppShell() {
                   onPointerCancel={handleDockResizeEnd}
                 />
                 <aside className="conversation-task-summary">
-                  <BatchTaskPanel
-                    sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
-                    onTemporaryAsk={handleTemporaryAsk}
-                    onCollapse={() => setAgentWorkbenchOpen(false)}
-                    mode={agentWorkbenchMode}
-                    reviewFiles={cumulativeReviewFiles}
-                    expandedReviewFiles={expandedReviewFiles}
-                    onToggleReviewFile={toggleReviewFile}
-                    childAgents={currentSubAgents}
-                    agentNames={agentNames}
-                    onSelectAgent={handleSelectAgent}
-                  />
+                  {agentWorkbenchMode === "worktree" && activeAgent?.worktree ? (
+                    <WorktreeReviewPanel
+                      agent={activeAgent}
+                      onCollapse={() => setAgentWorkbenchOpen(false)}
+                      onResolved={(message) => {
+                        void listAgents()
+                          .then((infos) => syncAgents(infos))
+                          .catch(() => undefined);
+                        useNotificationStore.getState().push({
+                          agentId: activeAgent.id,
+                          agentName: agentDisplayName(activeAgent, agentNames),
+                          status: "completed",
+                          detail: message,
+                        });
+                      }}
+                    />
+                  ) : (
+                    <BatchTaskPanel
+                      sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
+                      onTemporaryAsk={handleTemporaryAsk}
+                      onCollapse={() => setAgentWorkbenchOpen(false)}
+                      mode={agentWorkbenchMode === "worktree" ? "review" : agentWorkbenchMode}
+                      reviewFiles={cumulativeReviewFiles}
+                      expandedReviewFiles={expandedReviewFiles}
+                      onToggleReviewFile={toggleReviewFile}
+                      childAgents={currentSubAgents}
+                      agentNames={agentNames}
+                      onSelectAgent={handleSelectAgent}
+                    />
+                  )}
                 </aside>
               </>
             )}

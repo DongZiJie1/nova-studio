@@ -322,11 +322,53 @@ export interface AgentInfo {
   status: AgentStatus;
   lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
+  /** Repository root when this agent runs in an isolated worktree. */
+  project_cwd?: string | null;
+  /** Present only on the agent that owns the worktree; delegated children share it. */
+  worktree?: WorktreeInfo | null;
   model: string | null;
   session_id: string | null;
   created_at: string;
   message_count: number;
   last_error: string | null;
+}
+
+// ─── Worktree isolation ───
+
+export type WorktreeState = "active" | "merged" | "rejected" | "missing";
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  projectCwd: string;
+  baseCommit: string;
+  baseBranch?: string | null;
+  createdAt: string;
+  state: WorktreeState;
+}
+
+export interface WorktreeFileChange {
+  path: string;
+  /** "added" | "modified" | "deleted" */
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface WorktreeStatus {
+  path: string;
+  branch: string;
+  baseBranch?: string | null;
+  /** True when the worktree has uncommitted changes. */
+  dirty: boolean;
+  commits: number;
+  files: WorktreeFileChange[];
+}
+
+export interface WorktreeMergeOutcome {
+  merged: boolean;
+  conflicts: string[];
+  message: string;
 }
 
 export interface PersistedRpcContentBlock {

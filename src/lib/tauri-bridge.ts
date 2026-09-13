@@ -16,6 +16,8 @@ import type {
   FileReference,
   ImageContent,
   ToolPermissionMode,
+  WorktreeMergeOutcome,
+  WorktreeStatus,
 } from "./rpc-types";
 
 // ─── Tauri Commands (frontend → Rust) ───
@@ -24,8 +26,9 @@ export async function spawnAgent(
   cwd: string,
   model?: string,
   provider?: string,
+  worktreeEnabled?: boolean,
 ): Promise<AgentInfo> {
-  return invoke<AgentInfo>("spawn_agent", { cwd, model, provider });
+  return invoke<AgentInfo>("spawn_agent", { cwd, model, provider, worktreeEnabled });
 }
 
 export async function stopAgent(agentId: string): Promise<void> {
@@ -105,6 +108,30 @@ export async function revertFileChange(
   created?: boolean,
 ): Promise<void> {
   return invoke("revert_file_change", { agentId, path, patches, created });
+}
+
+// ─── Worktree isolation ───
+
+/** Whether a project directory can host worktree-isolated agents (i.e. is a git repo). */
+export async function checkWorktreeAvailable(cwd: string): Promise<boolean> {
+  return invoke<boolean>("check_worktree_available", { cwd });
+}
+
+export async function getWorktreeStatus(agentId: string): Promise<WorktreeStatus> {
+  return invoke<WorktreeStatus>("get_worktree_status", { agentId });
+}
+
+export async function getWorktreeDiff(agentId: string, path: string): Promise<string> {
+  return invoke<string>("get_worktree_diff", { agentId, path });
+}
+
+/** Squash-merge the agent's work into the project. Reports conflicts, never forces them. */
+export async function acceptWorktree(agentId: string): Promise<WorktreeMergeOutcome> {
+  return invoke<WorktreeMergeOutcome>("accept_worktree", { agentId });
+}
+
+export async function rejectWorktree(agentId: string): Promise<void> {
+  return invoke("reject_worktree", { agentId });
 }
 
 // ─── Delegated Task Registry (hub task panel) ───
