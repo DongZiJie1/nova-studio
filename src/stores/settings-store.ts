@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { ToolPermissionMode } from "../lib/rpc-types";
 
 interface SettingsState {
   apiKey: string;
@@ -7,6 +8,8 @@ interface SettingsState {
   defaultProvider: string;
   defaultCwd: string;
   thinkingLevel: string;
+  /** Tool policy to apply when the homepage creates a new agent session. */
+  defaultToolPermissionMode: ToolPermissionMode;
   /** Run new agents in their own git worktree. Off unless the user turns it on. */
   worktreeEnabled: boolean;
 
@@ -15,6 +18,7 @@ interface SettingsState {
   setDefaultProvider: (provider: string) => void;
   setDefaultCwd: (cwd: string) => void;
   setThinkingLevel: (level: string) => void;
+  setDefaultToolPermissionMode: (mode: ToolPermissionMode) => void;
   setWorktreeEnabled: (enabled: boolean) => void;
   resetSettings: () => void;
 }
@@ -25,6 +29,7 @@ const defaults = {
   defaultProvider: "",
   defaultCwd: "",
   thinkingLevel: "high",
+  defaultToolPermissionMode: "ask" as ToolPermissionMode,
   worktreeEnabled: false,
 };
 
@@ -38,6 +43,7 @@ export const useSettingsStore = create<SettingsState>()(
       setDefaultProvider: (provider) => set({ defaultProvider: provider }),
       setDefaultCwd: (cwd) => set({ defaultCwd: cwd }),
       setThinkingLevel: (level) => set({ thinkingLevel: level }),
+      setDefaultToolPermissionMode: (mode) => set({ defaultToolPermissionMode: mode }),
       setWorktreeEnabled: (enabled) => set({ worktreeEnabled: enabled }),
       resetSettings: () => set(defaults),
     }),

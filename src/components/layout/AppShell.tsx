@@ -1684,8 +1684,10 @@ export function AppShell() {
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
+  const defaultToolPermissionMode = useSettingsStore((s) => s.defaultToolPermissionMode);
   const setDefaultModel = useSettingsStore((s) => s.setDefaultModel);
   const setDefaultProvider = useSettingsStore((s) => s.setDefaultProvider);
+  const setDefaultToolPermissionMode = useSettingsStore((s) => s.setDefaultToolPermissionMode);
   const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
   const setWorktreeEnabled = useSettingsStore((s) => s.setWorktreeEnabled);
   const theme = useUiStore((s) => s.theme);
@@ -1924,6 +1926,7 @@ export function AppShell() {
   const activeModelProvider = activeAgent
     ? (activeAgent.modelMeta?.provider ?? defaultProvider)
     : defaultProvider;
+  const selectedToolPermissionMode = activeAgent?.toolPermissionMode ?? defaultToolPermissionMode;
   const activeModelName = useMemo(() => {
     const match = availableModels.find(
       (m) => m.id === activeModelId && (!activeModelProvider || m.provider === activeModelProvider),
@@ -2662,6 +2665,11 @@ export function AppShell() {
           worktreeEnabled && worktreeAvailable ? true : undefined,
         );
 
+        // The homepage policy belongs to the next session. Queue it before the
+        // first prompt so the Agent never starts work with a looser or stricter
+        // permission mode than the one the user selected.
+        await setToolPermissionMode(info.id, defaultToolPermissionMode);
+
         const newAgent: AgentState = {
           id: info.id,
           parentAgentId: info.parent_agent_id,
@@ -2686,7 +2694,7 @@ export function AppShell() {
           executionTraces: [],
           contextSnapshot: null,
           autoCompactionEnabled: true,
-          toolPermissionMode: "ask",
+          toolPermissionMode: defaultToolPermissionMode,
           pendingPermission: null,
           liveUsage: null,
           outputSinceLastUserInput: 0,
@@ -4148,82 +4156,84 @@ export function AppShell() {
                         )}
                       </div>
                     )}
-                    {/* Permission mode selector - per active agent session */}
-                    {activeAgent && (
-                      <div style={{ position: "relative" }}>
-                        <button
-                          type="button"
-                          className={`input-toolbar-control model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
-                          onClick={() => setPermissionPickerOpen((open) => !open)}
-                          title="工具权限模式"
+                    {/* Homepage selection configures the next session; an active agent updates its live policy. */}
+                    <div style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className={`input-toolbar-control model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
+                        onClick={() => setPermissionPickerOpen((open) => !open)}
+                        title={activeAgent ? "工具权限模式" : "设置新会话的工具权限模式"}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "5px 10px",
+                          borderRadius: 8,
+                          fontSize: 11.5,
+                          cursor: "pointer",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <rect x="3" y="11" width="18" height="11" rx="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        <span style={{ whiteSpace: "nowrap" }}>
+                          {TOOL_PERMISSION_MODES.find((m) => m.value === selectedToolPermissionMode)?.label ?? selectedToolPermissionMode}
+                        </span>
+                      </button>
+                      {permissionPickerOpen && (
+                        <div
+                          ref={permissionPickerRef}
+                          className="model-picker-popover"
                           style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "5px 10px",
-                            borderRadius: 8,
-                            fontSize: 11.5,
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
+                            position: "absolute",
+                            right: 0,
+                            bottom: 36,
+                            width: 240,
                           }}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                            <rect x="3" y="11" width="18" height="11" rx="2" />
-                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                          </svg>
-                          <span style={{ whiteSpace: "nowrap" }}>
-                            {TOOL_PERMISSION_MODES.find((m) => m.value === activeAgent.toolPermissionMode)?.label ?? activeAgent.toolPermissionMode}
-                          </span>
-                        </button>
-                        {permissionPickerOpen && (
-                          <div
-                            ref={permissionPickerRef}
-                            className="model-picker-popover"
-                            style={{
-                              position: "absolute",
-                              right: 0,
-                              bottom: 36,
-                              width: 240,
-                            }}
-                          >
-                            <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                              工具权限模式
-                            </div>
-                            {TOOL_PERMISSION_MODES.map((mode) => {
-                              const isActive = activeAgent.toolPermissionMode === mode.value;
-                              return (
-                                <button
-                                  key={mode.value}
-                                  type="button"
-                                  className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
-                                  onClick={() => {
-                                    setToolPermissionMode(activeAgent.id, mode.value);
-                                    updateAgent(activeAgent.id, { toolPermissionMode: mode.value });
-                                    setPermissionPickerOpen(false);
-                                  }}
-                                  style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    alignItems: "flex-start",
-                                    gap: 1,
-                                    width: "100%",
-                                    padding: "6px 10px",
-                                    borderRadius: 7,
-                                    fontSize: 12,
-                                    cursor: "pointer",
-                                    textAlign: "left",
-                                    transition: "all 0.12s ease",
-                                  }}
-                                >
-                                  <span>{mode.label}</span>
-                                  <span style={{ fontSize: 10.5, opacity: 0.65 }}>{mode.description}</span>
-                                </button>
-                              );
-                            })}
+                          <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            {activeAgent ? "工具权限模式" : "新会话权限模式"}
                           </div>
-                        )}
-                      </div>
-                    )}
+                          {TOOL_PERMISSION_MODES.map((mode) => {
+                            const isActive = selectedToolPermissionMode === mode.value;
+                            return (
+                              <button
+                                key={mode.value}
+                                type="button"
+                                className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                onClick={() => {
+                                  if (activeAgent) {
+                                    void setToolPermissionMode(activeAgent.id, mode.value);
+                                    updateAgent(activeAgent.id, { toolPermissionMode: mode.value });
+                                  } else {
+                                    setDefaultToolPermissionMode(mode.value);
+                                  }
+                                  setPermissionPickerOpen(false);
+                                }}
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-start",
+                                  gap: 1,
+                                  width: "100%",
+                                  padding: "6px 10px",
+                                  borderRadius: 7,
+                                  fontSize: 12,
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  transition: "all 0.12s ease",
+                                }}
+                              >
+                                <span>{mode.label}</span>
+                                <span style={{ fontSize: 10.5, opacity: 0.65 }}>{mode.description}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className={`input-toolbar-control project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
