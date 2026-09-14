@@ -88,11 +88,9 @@ fi
 # Copy resource files needed by the bun-compiled binary at runtime:
 # - theme/*.json (dark.json, light.json, theme-schema.json)
 # - export-html/ (HTML export templates)
-# - assets/ (interactive assets)
 RESOURCE_DIRS=(
   "dist/modes/interactive/theme"
   "dist/core/export-html"
-  "dist/modes/interactive/assets"
 )
 NOVA_PKG="$TMPDIR/node_modules/$PACKAGE_NAME"
 for dir in "${RESOURCE_DIRS[@]}"; do
@@ -108,7 +106,7 @@ for dir in "${RESOURCE_DIRS[@]}"; do
 done
 
 echo "Copied resource directories:"
-ls -ld "$BINARIES_DIR/theme" "$BINARIES_DIR/export-html" "$BINARIES_DIR/assets" 2>/dev/null
+ls -ld "$BINARIES_DIR/theme" "$BINARIES_DIR/export-html"
 
 # Show result
 ls -lh "$BINARIES_DIR/$BINARY_NAME-"*
