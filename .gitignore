@@ -28,3 +28,9 @@ src-tauri/binaries
 *.njsproj
 *.sln
 *.sw?
+
+# Local scratch
+/[1-9].md
+hello.md
+java-practice/
+todo.md
