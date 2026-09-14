@@ -4,6 +4,7 @@ mod agent_process;
 mod commands;
 mod nova_host_process;
 mod rpc_types;
+mod worktree;
 
 use agent_manager::AgentManager;
 use commands::AgentManagerState;
@@ -202,10 +203,16 @@ pub fn run() {
             commands::request_session_stats,
             commands::request_execution_traces,
             commands::request_context_snapshot,
-            commands::request_available_models,
             commands::revert_file_change,
-            commands::list_all_models,
+            commands::get_model_catalog,
             commands::set_model,
+            commands::set_tool_permission_mode,
+            commands::respond_tool_permission,
+            commands::check_worktree_available,
+            commands::get_worktree_status,
+            commands::get_worktree_diff,
+            commands::accept_worktree,
+            commands::reject_worktree,
             commands::save_model_configuration,
             commands::get_model_configurations,
             commands::delete_model_configuration,

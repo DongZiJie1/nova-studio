@@ -1,6 +1,7 @@
 use crate::agent_api::{TaskRegistry, TaskSnapshot};
 use crate::agent_manager::AgentManager;
 use crate::rpc_types::{AgentInfo, FileReference, ImageContent, SpawnRequest};
+use crate::worktree::{MergeOutcome, WorktreeStatus};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +13,9 @@ pub struct ModelConfigurationInput {
     provider_id: String,
     /// When omitted, only the provider API key is saved (no models.json entry).
     model_id: Option<String>,
+    /// Model id the edit started from. When it differs from `model_id` the
+    /// original entry is removed, so renaming replaces instead of appending.
+    previous_model_id: Option<String>,
     display_name: Option<String>,
     base_url: String,
     api: String,
@@ -71,6 +75,11 @@ fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<(), Stri
 pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<(), String> {
     let provider_id = input.provider_id.trim();
     let model_id = input.model_id.as_deref().map(str::trim).filter(|model| !model.is_empty());
+    let previous_model_id = input
+        .previous_model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
     let base_url = input.base_url.trim().trim_end_matches('/');
     let api_key = input.api_key.as_deref().map(str::trim).filter(|key| !key.is_empty());
     if provider_id.is_empty() {
@@ -124,6 +133,14 @@ pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<
             .or_insert_with(|| serde_json::json!([]))
             .as_array_mut()
             .ok_or_else(|| format!("Provider {provider_id} models must be an array"))?;
+        // The user may have renamed the model in the edit form. Drop the entry
+        // they started from, otherwise the id no longer matches and the upsert
+        // below appends a duplicate.
+        if let Some(previous) = previous_model_id {
+            if previous != model_id {
+                models.retain(|model| model.get("id").and_then(|id| id.as_str()) != Some(previous));
+            }
+        }
         let mut model = serde_json::json!({
             "id": model_id,
             "reasoning": input.reasoning,
@@ -172,17 +189,10 @@ pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderModelInfo {
-    id: String,
-    name: Option<String>,
-    reasoning: bool,
-    images: bool,
-    context_window: u64,
-    max_tokens: u64,
-}
-
+/// Connection-level provider info for the settings form (api key echo, base URL,
+/// protocol). Models are NOT duplicated here — the single model directory comes
+/// from `get_model_catalog` so both the settings page and the picker read one
+/// payload.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfiguration {
@@ -193,7 +203,6 @@ pub struct ProviderConfiguration {
     api_key: Option<String>,
     /// Where the key was found: "auth" (auth.json) or "models" (models.json).
     api_key_source: Option<String>,
-    models: Vec<ProviderModelInfo>,
 }
 
 fn read_auth_object(agent_dir: &Path) -> serde_json::Value {
@@ -203,26 +212,6 @@ fn read_auth_object(agent_dir: &Path) -> serde_json::Value {
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         .filter(serde_json::Value::is_object)
         .unwrap_or_else(|| serde_json::json!({}))
-}
-
-fn parse_provider_model(model: &serde_json::Value) -> Option<ProviderModelInfo> {
-    let object = model.as_object()?;
-    let id = object.get("id")?.as_str()?.trim().to_string();
-    if id.is_empty() {
-        return None;
-    }
-    let images = object
-        .get("input")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|input| input.iter().any(|item| item.as_str() == Some("image")));
-    Some(ProviderModelInfo {
-        id,
-        name: object.get("name").and_then(serde_json::Value::as_str).map(str::to_string),
-        reasoning: object.get("reasoning").and_then(serde_json::Value::as_bool).unwrap_or(false),
-        images,
-        context_window: object.get("contextWindow").and_then(serde_json::Value::as_u64).unwrap_or(0),
-        max_tokens: object.get("maxTokens").and_then(serde_json::Value::as_u64).unwrap_or(0),
-    })
 }
 
 #[tauri::command]
@@ -251,21 +240,16 @@ pub async fn get_model_configurations() -> Result<Vec<ProviderConfiguration>, St
                 None => (None, None),
             }
         };
-        let models = provider_object
-            .get("models")
-            .and_then(serde_json::Value::as_array)
-            .map(|models| models.iter().filter_map(parse_provider_model).collect())
-            .unwrap_or_default();
         configurations.push(ProviderConfiguration {
             provider_id: provider_id.clone(),
             base_url: provider_object.get("baseUrl").and_then(serde_json::Value::as_str).map(str::to_string),
             api: provider_object.get("api").and_then(serde_json::Value::as_str).map(str::to_string),
             api_key,
             api_key_source,
-            models,
         });
     }
-    // Built-in providers connected only through auth.json (no models.json entry).
+    // Providers connected only through auth.json (no models.json entry) still
+    // need to appear so the user can attach models to them.
     if let Some(auth_object) = auth.as_object() {
         for (provider_id, entry) in auth_object {
             if providers.contains_key(provider_id.as_str()) {
@@ -277,7 +261,6 @@ pub async fn get_model_configurations() -> Result<Vec<ProviderConfiguration>, St
                 api: None,
                 api_key: entry.get("key").and_then(serde_json::Value::as_str).map(str::to_string),
                 api_key_source: Some("auth".to_string()),
-                models: Vec::new(),
             });
         }
     }
@@ -324,13 +307,9 @@ pub async fn delete_model_configuration(provider_id: String, model_id: String) -
     if models.len() == before {
         return Err(format!("Model {model_id} not found for provider {provider_id}"));
     }
-    if models.is_empty() {
-        providers.remove(provider_id.as_str());
-        write_private_json(&models_path, &config)?;
-        remove_auth_entry(&agent_dir, &provider_id)?;
-    } else {
-        write_private_json(&models_path, &config)?;
-    }
+    // Removing a model never removes the provider or its credentials: the
+    // provider stays connected so the user can add models back.
+    write_private_json(&models_path, &config)?;
     Ok(())
 }
 
@@ -488,15 +467,18 @@ pub async fn spawn_agent(
     cwd: String,
     model: Option<String>,
     provider: Option<String>,
+    worktree_enabled: Option<bool>,
 ) -> Result<AgentInfo, String> {
     log::info!(
-        "[cmd] spawn_agent cwd={:?} model={:?} provider={:?}",
+        "[cmd] spawn_agent cwd={:?} model={:?} provider={:?} worktree={:?}",
         cwd,
         model,
-        provider
+        provider,
+        worktree_enabled
     );
     let request = SpawnRequest {
         cwd,
+        worktree_enabled: worktree_enabled.unwrap_or(false),
         parent_agent_id: None,
         model,
         provider,
@@ -522,6 +504,54 @@ pub async fn stop_agent(
 ) -> Result<(), String> {
     log::info!("[cmd] stop_agent id={}", agent_id);
     state.0.stop(&agent_id).await
+}
+
+/// Whether a project directory can host worktree-isolated agents.
+#[tauri::command]
+pub async fn check_worktree_available(
+    state: State<'_, AgentManagerState>,
+    cwd: String,
+) -> Result<bool, String> {
+    Ok(state.0.worktree_available(&cwd).await)
+}
+
+/// Files the agent changed inside its worktree, measured against the base commit.
+#[tauri::command]
+pub async fn get_worktree_status(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<WorktreeStatus, String> {
+    state.0.worktree_status(&agent_id).await
+}
+
+/// Unified diff of a single file in the agent's worktree, including uncommitted work.
+#[tauri::command]
+pub async fn get_worktree_diff(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    path: String,
+) -> Result<String, String> {
+    state.0.worktree_diff(&agent_id, &path).await
+}
+
+/// Squash-merge the agent's work into the project. Reports conflicts instead of forcing them.
+#[tauri::command]
+pub async fn accept_worktree(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<MergeOutcome, String> {
+    log::info!("[cmd] accept_worktree id={}", agent_id);
+    state.0.accept_worktree(&agent_id).await
+}
+
+/// Discard the agent's work and remove its worktree.
+#[tauri::command]
+pub async fn reject_worktree(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+) -> Result<(), String> {
+    log::info!("[cmd] reject_worktree id={}", agent_id);
+    state.0.reject_worktree(&agent_id).await
 }
 
 #[tauri::command]
@@ -781,14 +811,6 @@ pub async fn request_context_snapshot(
 }
 
 #[tauri::command]
-pub async fn request_available_models(
-    state: State<'_, AgentManagerState>,
-    agent_id: String,
-) -> Result<(), String> {
-    state.0.request_available_models(&agent_id).await
-}
-
-#[tauri::command]
 pub async fn revert_file_change(
     state: State<'_, AgentManagerState>,
     agent_id: String,
@@ -803,10 +825,8 @@ pub async fn revert_file_change(
 }
 
 #[tauri::command]
-pub async fn list_all_models(
-    state: State<'_, AgentManagerState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    state.0.list_all_models().await
+pub async fn get_model_catalog(state: State<'_, AgentManagerState>) -> Result<serde_json::Value, String> {
+    state.0.get_model_catalog().await
 }
 
 #[tauri::command]
@@ -817,4 +837,26 @@ pub async fn set_model(
     model_id: String,
 ) -> Result<(), String> {
     state.0.set_model(&agent_id, provider, model_id).await
+}
+
+#[tauri::command]
+pub async fn set_tool_permission_mode(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    mode: String,
+) -> Result<(), String> {
+    state.0.set_tool_permission_mode(&agent_id, mode).await
+}
+
+#[tauri::command]
+pub async fn respond_tool_permission(
+    state: State<'_, AgentManagerState>,
+    agent_id: String,
+    tool_call_id: String,
+    allowed: bool,
+) -> Result<bool, String> {
+    state
+        .0
+        .respond_tool_permission(&agent_id, tool_call_id, allowed)
+        .await
 }

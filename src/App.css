@@ -46,6 +46,8 @@
   --stats-tooltip-border: rgba(129, 140, 248, 0.26);
   --stats-tooltip-text: #e8eaff;
   --stats-tooltip-shadow: 0 10px 30px rgba(0, 0, 0, 0.42), 0 0 20px rgba(129, 140, 248, 0.1);
+  --danger-solid: #e5484d;
+  --danger-on-solid: #ffffff;
 }
 
 :root[data-theme="arctic-dawn"] {
@@ -75,6 +77,8 @@
   --stats-tooltip-border: rgba(79, 125, 243, 0.24);
   --stats-tooltip-text: #263b5d;
   --stats-tooltip-shadow: 0 10px 30px rgba(58, 91, 145, 0.16), 0 0 18px rgba(79, 125, 243, 0.08);
+  --danger-solid: #c2414b;
+  --danger-on-solid: #ffffff;
 }
 
 body,
@@ -810,6 +814,20 @@ body {
   margin-left: 54px;
   margin-bottom: 14px;
   animation: fadeInUp 0.2s ease-out;
+}
+
+/* System remarks such as a turn stopped by the runtime limit */
+.msg-notice {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(140, 148, 170, 0.28);
+  background: rgba(140, 148, 170, 0.1);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .message-response-actions {
@@ -1669,7 +1687,7 @@ body {
   background: color-mix(in srgb, var(--color-accent-start) 9%, transparent);
 }
 
-:root[data-theme="arctic-dawn"] .ask-user-detail {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .ask-user-detail {
   border-color: rgba(90, 121, 164, 0.18);
   background:
     linear-gradient(135deg, rgba(91, 140, 255, 0.08), transparent 48%),
@@ -2425,6 +2443,31 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Marks an agent that is working in its own git worktree */
+.agent-worktree-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid rgba(122, 162, 247, 0.35);
+  background: rgba(122, 162, 247, 0.12);
+  color: #9db2f5;
+  font-size: 9.5px;
+  line-height: 15px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-worktree-badge-resolved {
+  border-color: rgba(140, 148, 170, 0.3);
+  background: rgba(140, 148, 170, 0.12);
+  color: #8b93a7;
 }
 
 .agent-tree {
@@ -3986,8 +4029,8 @@ body {
   background: #527be1;
 }
 
-:root[data-theme="arctic-dawn"] .slash-command-menu,
-:root[data-theme="arctic-dawn"] .project-modal {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .slash-command-menu,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .project-modal {
   color: var(--color-text-primary);
   border-color: rgba(91, 127, 181, 0.24);
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(237, 245, 255, 0.94));
@@ -4080,10 +4123,10 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.24);
 }
 
-:root[data-theme="arctic-dawn"] .agent-tile,
-:root[data-theme="arctic-dawn"] .sidebar-project-count,
-:root[data-theme="arctic-dawn"] .project-action,
-:root[data-theme="arctic-dawn"] .project-open-button {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-tile,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .sidebar-project-count,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .project-action,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .project-open-button {
   color: var(--color-text-secondary);
   border-color: rgba(91, 127, 181, 0.18);
   background: rgba(255, 255, 255, 0.58);
@@ -4102,7 +4145,7 @@ body {
   color: var(--color-text-secondary);
 }
 
-:root[data-theme="arctic-dawn"] .project-modal-field input {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .project-modal-field input {
   color: var(--color-text-primary);
   border-color: rgba(91, 127, 181, 0.22);
   background: rgba(255, 255, 255, 0.72);
@@ -4147,7 +4190,7 @@ body {
   color: #27364d;
 }
 
-:root[data-theme="arctic-dawn"] .md-body code:not(.hljs) {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .md-body code:not(.hljs) {
   color: #315fb8;
   background: rgba(79, 125, 243, 0.1);
   border: 1px solid rgba(79, 125, 243, 0.12);
@@ -4158,65 +4201,67 @@ body {
   background: rgba(79, 125, 243, 0.07);
 }
 
-:root[data-theme="arctic-dawn"] .hljs-comment,
-:root[data-theme="arctic-dawn"] .hljs-quote {
+/* Light-theme syntax palette only on the light code surface. With a photo the
+   code block turns dark glass, so tokens fall back to the base palette. */
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-comment,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-quote {
   color: #718096;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-keyword,
-:root[data-theme="arctic-dawn"] .hljs-selector-tag,
-:root[data-theme="arctic-dawn"] .hljs-literal {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-keyword,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-selector-tag,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-literal {
   color: #7c3aed;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-string,
-:root[data-theme="arctic-dawn"] .hljs-regexp,
-:root[data-theme="arctic-dawn"] .hljs-addition {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-string,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-regexp,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-addition {
   color: #15803d;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-number,
-:root[data-theme="arctic-dawn"] .hljs-meta {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-number,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-meta {
   color: #b45309;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-title,
-:root[data-theme="arctic-dawn"] .hljs-section {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-title,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-section {
   color: #1d4ed8;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-variable,
-:root[data-theme="arctic-dawn"] .hljs-attribute,
-:root[data-theme="arctic-dawn"] .hljs-template-variable {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-variable,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-attribute,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-template-variable {
   color: #9a3412;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-type,
-:root[data-theme="arctic-dawn"] .hljs-built_in,
-:root[data-theme="arctic-dawn"] .hljs-class .hljs-title {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-type,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-built_in,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-class .hljs-title {
   color: #be185d;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-attr,
-:root[data-theme="arctic-dawn"] .hljs-params {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-attr,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-params {
   color: #4338ca;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-selector-id,
-:root[data-theme="arctic-dawn"] .hljs-selector-class,
-:root[data-theme="arctic-dawn"] .hljs-selector-attr,
-:root[data-theme="arctic-dawn"] .hljs-tag,
-:root[data-theme="arctic-dawn"] .hljs-name {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-selector-id,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-selector-class,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-selector-attr,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-tag,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-name {
   color: #0369a1;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-symbol,
-:root[data-theme="arctic-dawn"] .hljs-bullet,
-:root[data-theme="arctic-dawn"] .hljs-link {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-symbol,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-bullet,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-link {
   color: #a21caf;
 }
 
-:root[data-theme="arctic-dawn"] .hljs-deletion {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .hljs-deletion {
   color: #dc2626;
 }
 
@@ -4232,7 +4277,7 @@ body {
   border-bottom-color: rgba(76, 106, 150, 0.14);
 }
 
-:root[data-theme="arctic-dawn"] .bash-command span {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .bash-command span {
   color: #15803d;
 }
 
@@ -4986,6 +5031,20 @@ body {
   padding: 2px;
 }
 
+/* Brand marks inside the composer's model picker. Same white tile as the
+   settings preset chips: most bundled logos are Simple Icons SVGs with no
+   `fill` attribute, so they paint black and would vanish on the dark
+   popover without it. */
+.model-picker-logo {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border-glass);
+  border-radius: 4px;
+  object-fit: contain;
+  background: #fff;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
 .model-preset-avatar-sm {
   width: 20px;
   height: 20px;
@@ -5221,6 +5280,7 @@ body {
 }
 
 .model-list-editor-header,
+.model-saved-header,
 .model-row-editor-title {
   display: flex;
   align-items: center;
@@ -5228,7 +5288,8 @@ body {
   gap: 12px;
 }
 
-.model-list-editor-header > div {
+.model-list-editor-header > div,
+.model-saved-header > div {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -5236,10 +5297,110 @@ body {
   font-size: 12px;
 }
 
-.model-list-editor-header small {
+.model-list-editor-header small,
+.model-saved-header small {
   color: var(--color-text-tertiary);
   font-size: 10px;
   font-weight: 500;
+}
+
+/* Saved models: identity on the left, spec chips, actions revealed on hover. */
+.model-saved-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.model-saved-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 12px 11px 14px;
+  border: 1px solid var(--color-border-glass);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-control) 70%, transparent);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.model-saved-item:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 34%, var(--color-border-glass));
+  background: color-mix(in srgb, var(--surface-control) 92%, transparent);
+}
+
+.model-saved-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-saved-name {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-saved-id {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-saved-tags {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.model-saved-tag {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-glass);
+  border-radius: 999px;
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--surface-control) 55%, transparent);
+  font-size: 10.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.model-saved-tag-accent {
+  border-color: color-mix(in srgb, var(--color-accent-start) 28%, var(--color-border-glass));
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 11%, transparent);
+}
+
+.model-saved-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+
+.model-saved-item:hover .model-saved-actions,
+.model-saved-item:focus-within .model-saved-actions {
+  opacity: 1;
+}
+
+.model-saved-actions .model-icon-btn {
+  height: 26px;
+  padding: 0 6px;
 }
 
 .model-add-row {
@@ -5296,6 +5457,18 @@ body {
 
 .model-settings-options input {
   accent-color: var(--color-accent-start);
+}
+
+.model-settings-options small {
+  display: inline-block;
+  /* Fixed width so toggling "当前 1M" / "当前 200K" cannot shift the
+     neighbouring checkboxes. */
+  min-width: 52px;
+  margin-left: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .model-settings-actions {
@@ -5494,10 +5667,10 @@ body {
   pointer-events: none;
 }
 
-.activity-level-1 { background: color-mix(in srgb, #49d89b 35%, transparent); }
-.activity-level-2 { background: #3cc985; }
-.activity-level-3 { background: #22a866; }
-.activity-level-4 { background: #137a48; }
+.activity-level-1 { background: #c4b5fd; }
+.activity-level-2 { background: #a78bfa; }
+.activity-level-3 { background: #8b5cf6; }
+.activity-level-4 { background: #6d28d9; }
 
 .activity-legend {
   display: flex;
@@ -5601,13 +5774,32 @@ body {
   background: var(--color-accent-start);
 }
 
-:root[data-theme="arctic-dawn"] .activity-summary-row > div,
-:root[data-theme="arctic-dawn"] .activity-heatmap-card {
+/* Light panels only when Arctic Dawn has no photo background. With a photo the
+   app switches to the dark Liquid Glass material, and text variables turn
+   light — white panels would leave white-on-white labels. */
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .activity-summary-row > div,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .activity-heatmap-card {
   border-color: rgba(76, 106, 150, 0.18);
   background: rgba(255, 255, 255, 0.66);
   box-shadow: 0 14px 38px rgba(48, 72, 108, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.88);
 }
 
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .activity-summary-row > div,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .activity-heatmap-card {
+  border-color: rgba(232, 238, 255, 0.15);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.075), transparent 42%),
+    rgba(25, 32, 45, 0.4);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.17);
+  backdrop-filter: blur(32px) saturate(148%);
+  -webkit-backdrop-filter: blur(32px) saturate(148%);
+}
+
+/* The tooltip is portaled to <body>, outside the custom-background subtree, so
+   it keeps the root theme palette and needs no custom-background variant. */
 :root[data-theme="arctic-dawn"] .activity-tooltip {
   border-color: rgba(76, 106, 150, 0.2);
   background: rgba(250, 253, 255, 0.95);
@@ -6088,6 +6280,14 @@ body {
   box-shadow: 0 6px 16px var(--accent-shadow);
 }
 
+/* Confirm actions that destroy something (variant: "danger" on the dialog request). */
+.nova-question-button-primary.nova-question-button-danger {
+  border-color: color-mix(in srgb, var(--danger-solid) 62%, transparent);
+  color: var(--danger-on-solid);
+  background: var(--danger-solid);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--danger-solid) 32%, transparent);
+}
+
 @keyframes nova-question-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes nova-question-card-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
@@ -6095,7 +6295,7 @@ body {
   background: rgba(32, 48, 72, 0.18);
 }
 
-:root[data-theme="arctic-dawn"] .nova-question-card {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-question-card {
   border-color: rgba(92, 122, 164, 0.2);
   background: rgba(244, 249, 255, 0.78);
   box-shadow: 0 28px 80px rgba(43, 67, 102, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.78);
@@ -9157,6 +9357,56 @@ body {
   font-size: 10px;
 }
 
+.agent-file-review-turn-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Files this turn could not revert because they changed after the agent's edit */
+.turn-file-change-bulk-error {
+  margin: 6px 10px 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 168, 96, 0.35);
+  background: rgba(232, 168, 96, 0.12);
+  color: #e8c08a;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.turn-file-change-bulk-error pre {
+  margin: 4px 0 0;
+  font-family: monospace;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Warns that several agents wrote the same files, where the last write wins */
+.agent-file-review-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 12px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 168, 96, 0.35);
+  background: rgba(232, 168, 96, 0.12);
+  color: #e8c08a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-file-review-conflict pre {
+  margin: 0;
+  font-family: monospace;
+  font-size: 10.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #f0d3ab;
+}
+
 .agent-file-review-turn-header > span:first-child {
   color: var(--color-text-secondary);
   font-weight: 650;
@@ -9401,30 +9651,32 @@ body {
   text-align: center;
 }
 
-:root[data-theme="arctic-dawn"] .split-diff {
+/* Same rule as code blocks: a diff is a system surface, so over a photo it
+   keeps the dark base material instead of becoming a bright card. */
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .split-diff {
   border-top-color: rgba(80, 108, 151, 0.16);
   background: rgba(250, 252, 255, 0.92);
 }
 
-:root[data-theme="arctic-dawn"] .split-diff-table {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .split-diff-table {
   color: rgba(51, 62, 84, 0.88);
 }
 
-:root[data-theme="arctic-dawn"] .split-diff-code.is-add {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .split-diff-code.is-add {
   color: #1a7f4b;
   background: rgba(52, 199, 123, 0.16);
 }
 
-:root[data-theme="arctic-dawn"] .split-diff-code.is-del {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .split-diff-code.is-del {
   color: #b3454f;
   background: rgba(228, 82, 96, 0.13);
 }
 
-:root[data-theme="arctic-dawn"] .split-diff-code.is-empty {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .split-diff-code.is-empty {
   background-image: repeating-linear-gradient(135deg, rgba(43, 74, 118, 0.07) 0 1px, transparent 1px 7px);
 }
 
-:root[data-theme="arctic-dawn"] .split-diff-gap td {
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .split-diff-gap td {
   border-top-color: rgba(80, 108, 151, 0.12);
   border-bottom-color: rgba(80, 108, 151, 0.12);
   background: rgba(88, 118, 190, 0.08);
@@ -10199,11 +10451,11 @@ body {
   background: rgba(43, 74, 118, 0.06);
 }
 
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-ts { color: #1d4ed8; background: rgba(37, 99, 235, 0.12); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-style { color: #7c3aed; background: rgba(124, 58, 237, 0.11); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-web { color: #c2410c; background: rgba(194, 65, 12, 0.11); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-doc { color: #0f766e; background: rgba(15, 118, 110, 0.11); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-data { color: #a16207; background: rgba(161, 98, 7, 0.11); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-py { color: #15803d; background: rgba(21, 128, 61, 0.11); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-sys { color: #b91c1c; background: rgba(185, 28, 28, 0.1); }
-:root[data-theme="arctic-dawn"] .agent-file-review-badge-sh { color: #4d7c0f; background: rgba(77, 124, 15, 0.11); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-ts { color: #1d4ed8; background: rgba(37, 99, 235, 0.12); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-style { color: #7c3aed; background: rgba(124, 58, 237, 0.11); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-web { color: #c2410c; background: rgba(194, 65, 12, 0.11); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-doc { color: #0f766e; background: rgba(15, 118, 110, 0.11); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-data { color: #a16207; background: rgba(161, 98, 7, 0.11); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-py { color: #15803d; background: rgba(21, 128, 61, 0.11); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-sys { color: #b91c1c; background: rgba(185, 28, 28, 0.1); }
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-sh { color: #4d7c0f; background: rgba(77, 124, 15, 0.11); }

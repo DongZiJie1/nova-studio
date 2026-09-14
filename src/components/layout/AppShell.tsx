@@ -2,6 +2,7 @@ import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
+import { useNotificationStore } from "../../stores/notification-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useUiStore } from "../../stores/ui-store";
 import {
@@ -15,14 +16,14 @@ import {
   spawnAgent,
   sendPrompt,
   setModel,
-  requestAvailableModels,
+  setToolPermissionMode,
+  respondToolPermission,
   requestSessionStats,
   requestExecutionTraces,
   requestContextSnapshot,
   askTemporary,
   onTemporaryAnswerChunk,
-  listAllModels,
-  fetchModelsViaShell,
+  getModelCatalog,
   startNewSession,
   compactSession,
   setSessionName,
@@ -30,6 +31,11 @@ import {
   forkSession,
   requestMessages,
   revertFileChange,
+  checkWorktreeAvailable,
+  getWorktreeStatus,
+  getWorktreeDiff,
+  acceptWorktree,
+  rejectWorktree,
 } from "../../lib/tauri-bridge";
 import { common, createLowlight } from "lowlight";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -39,6 +45,13 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { ImageContent } from "../../lib/rpc-types";
 import type { ExecutionTrace } from "../../lib/rpc-types";
+import type { ToolPermissionMode, WorktreeStatus } from "../../lib/rpc-types";
+
+const TOOL_PERMISSION_MODES: Array<{ value: ToolPermissionMode; label: string; description: string }> = [
+  { value: "ask", label: "每次询问", description: "危险操作前弹窗确认" },
+  { value: "edits", label: "自动编辑", description: "文件编辑自动批准，其余仍询问" },
+  { value: "allow", label: "全部放行", description: "跳过所有权限检查" },
+];
 
 const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 
@@ -61,6 +74,7 @@ import {
   type SlashCommand,
 } from "../../lib/slash-commands";
 import { findFileMention, insertFileMention } from "../../lib/file-mentions";
+import { providerLogo } from "../../lib/provider-logos";
 import {
   Paperclip,
   ArrowUp,
@@ -94,6 +108,9 @@ import {
   LoaderCircle,
   RotateCcw,
   Bot,
+  GitBranch,
+  GitMerge,
+  Trash2,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -518,6 +535,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
             ? "子 Agent 回传"
             : role === "agent_batch"
               ? "子任务批次完成指令"
+              : role === "notice"
+                ? "系统提示"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
@@ -989,6 +1008,15 @@ function loadHiddenAgents(): Set<string> {
   }
 }
 
+/** File path an edit/write tool call targeted, accepting either argument spelling. */
+function toolEditedPath(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const record = args as Record<string, unknown>;
+  if (typeof record.path === "string") return record.path;
+  if (typeof record.file_path === "string") return record.file_path;
+  return "";
+}
+
 function agentDisplayName(agent: AgentState, agentNames: Record<string, string> = {}): string {
   if (agentNames[agent.id]) return agentNames[agent.id];
   if (agent.name) return agent.name;
@@ -1045,6 +1073,15 @@ const AgentTreeNode = memo(function AgentTreeNode({
           {!isChild && (
             <span className="agent-sub" title={agent.cwd}>
               {agentSubtitle(agent)}
+            </span>
+          )}
+          {agent.worktree && (
+            <span
+              className={`agent-worktree-badge ${agent.worktree.state !== "active" ? "agent-worktree-badge-resolved" : ""}`}
+              title={`${agent.worktree.branch}\n${agent.worktree.path}`}
+            >
+              <GitBranch size={10} />
+              {agent.worktree.branch.replace(/^nova\//, "")}
             </span>
           )}
         </span>
@@ -1165,6 +1202,11 @@ interface BatchTaskPanelProps {
   childAgents: AgentState[];
   agentNames: Record<string, string>;
   onSelectAgent: (agentId: string) => void;
+  /** Preformatted warning about files edited by more than one agent; empty when none. */
+  crossAgentWarning: string;
+  /** Reverts every change the agent made; absent when reverting is unavailable. */
+  onRevertAll?: () => Promise<void>;
+  revertAllBusy?: boolean;
 }
 
 interface TemporaryChatEntry {
@@ -1190,8 +1232,12 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   childAgents,
   agentNames,
   onSelectAgent,
+  crossAgentWarning,
+  onRevertAll,
+  revertAllBusy,
 }: BatchTaskPanelProps) {
   const [turnIndexes, setTurnIndexes] = useState<Record<string, number>>({});
+  const [confirmRevertAll, setConfirmRevertAll] = useState(false);
   const [temporaryInput, setTemporaryInput] = useState("");
   const [temporaryPending, setTemporaryPending] = useState(false);
   const [temporaryError, setTemporaryError] = useState<string | null>(null);
@@ -1247,11 +1293,34 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
       <div className="task-panel-body">
           {mode === "review" ? (
             <div className="agent-file-review">
+              {crossAgentWarning && (
+                <div className="agent-file-review-conflict" role="status">
+                  <strong>多个 Agent 改过同一批文件</strong>
+                  <span>
+                    这些文件的写入是后来者覆盖先前者。撤回某一方的改动前请先确认当前内容。
+                  </span>
+                  <pre>{crossAgentWarning}</pre>
+                </div>
+              )}
               {reviewFiles.length > 0 ? (
                 <section className="agent-file-review-turn">
                   <header className="agent-file-review-turn-header">
                     <span>会话累计 · {reviewFiles.length} 个文件</span>
-                    <span className="turn-file-change-stats"><b>+{reviewFiles.reduce((total, file) => total + file.additions, 0)}</b><i>-{reviewFiles.reduce((total, file) => total + file.deletions, 0)}</i></span>
+                    <span className="agent-file-review-turn-actions">
+                      <span className="turn-file-change-stats"><b>+{reviewFiles.reduce((total, file) => total + file.additions, 0)}</b><i>-{reviewFiles.reduce((total, file) => total + file.deletions, 0)}</i></span>
+                      {onRevertAll && (
+                        <button
+                          type="button"
+                          className="turn-file-change-revert"
+                          disabled={revertAllBusy}
+                          onClick={() => (confirmRevertAll ? void onRevertAll() : setConfirmRevertAll(true))}
+                          onBlur={() => setConfirmRevertAll(false)}
+                        >
+                          <RotateCcw size={12} />
+                          {revertAllBusy ? "撤回中…" : confirmRevertAll ? "确认撤回全部？" : "撤回该 Agent 全部改动"}
+                        </button>
+                      )}
+                    </span>
                   </header>
                   <div className="agent-file-review-entries">
                     {reviewFiles.map((file) => {
@@ -1375,6 +1444,248 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
   );
 });
 
+interface WorktreeReviewPanelProps {
+  agent: AgentState;
+  onCollapse: () => void;
+  /** Called after the worktree is merged or discarded so the shell can refresh. */
+  onResolved: (message: string) => void;
+}
+
+/**
+ * Reviews the agent's isolated checkout: what it changed, then accept (squash-merge into the
+ * project) or reject (discard). Conflicting merges are reported, never forced.
+ */
+const WorktreeReviewPanel = memo(function WorktreeReviewPanel({
+  agent,
+  onCollapse,
+  onResolved,
+}: WorktreeReviewPanelProps) {
+  const [status, setStatus] = useState<WorktreeStatus | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [diff, setDiff] = useState("");
+  const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
+  const [confirmingReject, setConfirmingReject] = useState(false);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  const worktree = agent.worktree;
+  const resolved = !worktree || worktree.state !== "active";
+
+  useEffect(() => {
+    if (!worktree || resolved) return;
+    let cancelled = false;
+    setError(null);
+    void getWorktreeStatus(agent.id)
+      .then((next) => {
+        if (cancelled) return;
+        setStatus(next);
+        setSelectedPath((current) =>
+          current && next.files.some((file) => file.path === current) ? current : (next.files[0]?.path ?? null),
+        );
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, refreshToken, resolved, worktree]);
+
+  useEffect(() => {
+    if (!selectedPath || resolved) {
+      setDiff("");
+      return;
+    }
+    let cancelled = false;
+    void getWorktreeDiff(agent.id, selectedPath)
+      .then((text) => {
+        if (!cancelled) setDiff(text);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, selectedPath, refreshToken, resolved]);
+
+  const handleAccept = async () => {
+    setBusy("accept");
+    setError(null);
+    setConflicts([]);
+    try {
+      const outcome = await acceptWorktree(agent.id);
+      if (outcome.merged) onResolved(outcome.message);
+      else {
+        setConflicts(outcome.conflicts);
+        setError(outcome.message);
+        setRefreshToken((token) => token + 1);
+      }
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleReject = async () => {
+    setBusy("reject");
+    setError(null);
+    try {
+      await rejectWorktree(agent.id);
+      onResolved("已丢弃该 Agent 的改动");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+      setConfirmingReject(false);
+    }
+  };
+
+  const totalAdditions = status?.files.reduce((total, file) => total + file.additions, 0) ?? 0;
+  const totalDeletions = status?.files.reduce((total, file) => total + file.deletions, 0) ?? 0;
+
+  return (
+    <section className="task-panel agent-workbench" aria-label="Worktree 审查">
+      <button type="button" className="task-panel-header" onClick={onCollapse} aria-label="收起 Worktree 审查">
+        <span className="task-panel-heading">
+          <GitBranch size={15} />
+          Worktree 审查
+        </span>
+        {status && status.files.length > 0 && <span className="task-panel-count">{status.files.length}</span>}
+        <ChevronRight size={13} />
+      </button>
+      <div className="task-panel-body">
+        <div className="agent-file-review">
+          <section className="agent-file-review-turn">
+            <header className="agent-file-review-turn-header">
+              <span>{worktree?.branch ?? "worktree"}</span>
+              {status && (
+                <span className="turn-file-change-stats">
+                  <b>+{totalAdditions}</b>
+                  <i>-{totalDeletions}</i>
+                </span>
+              )}
+            </header>
+            <div style={{ padding: "4px 10px 8px", fontSize: 10.5, opacity: 0.75, wordBreak: "break-all" }}>
+              {worktree ? `${worktree.path} · 基于 ${worktree.baseBranch ?? worktree.baseCommit.slice(0, 8)}` : ""}
+            </div>
+          </section>
+
+          {resolved && worktree && (
+            <p style={{ padding: "0 10px", fontSize: 11.5 }}>
+              {worktree.state === "merged"
+                ? "该 worktree 已合并进项目。"
+                : worktree.state === "missing"
+                  ? "该 worktree 的目录已不存在。"
+                  : "该 worktree 已被丢弃。"}
+            </p>
+          )}
+
+          {!resolved && status?.dirty && (
+            <p style={{ padding: "0 10px", fontSize: 11 }}>
+              该 Agent 还有未提交的改动，接受时会先自动提交。
+            </p>
+          )}
+
+          {!resolved && status && status.files.length === 0 && (
+            <p style={{ padding: "0 10px", fontSize: 11.5 }}>该 Agent 还没有改动任何文件。</p>
+          )}
+
+          {!resolved && (
+            <div className="agent-file-review-entries">
+              {status?.files.map((file) => {
+                const slashIndex = file.path.lastIndexOf("/");
+                const expanded = file.path === selectedPath;
+                return (
+                  <div key={file.path} className="agent-file-review-entry">
+                    <button
+                      type="button"
+                      className={`agent-file-review-file${expanded ? " agent-file-review-file-active" : ""}`}
+                      title={file.path}
+                      onClick={() => setSelectedPath(expanded ? null : file.path)}
+                      aria-expanded={expanded}
+                    >
+                      <ChevronRight
+                        size={11}
+                        className={`agent-file-review-chevron${expanded ? " agent-file-review-chevron-open" : ""}`}
+                      />
+                      <span className="agent-file-review-file-path">
+                        <span className="agent-file-review-file-dir">
+                          {slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : ""}
+                        </span>
+                        <strong>{slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path}</strong>
+                      </span>
+                      <span className="turn-file-change-stats">
+                        <b>+{file.additions}</b>
+                        <i>-{file.deletions}</i>
+                      </span>
+                    </button>
+                    {expanded && diff.trim().length > 0 && <FileDiff patches={[diff]} path={file.path} />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {error && (
+            <div style={{ margin: "8px 10px", padding: "8px 10px", borderRadius: 8, background: "var(--bg-tertiary, rgba(0,0,0,0.2))", fontSize: 11.5, whiteSpace: "pre-wrap" }}>
+              {error}
+              {conflicts.length > 0 && (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {conflicts.map((path) => (
+                    <li key={path} style={{ fontFamily: "monospace" }}>{path}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {!resolved && (
+            <div style={{ display: "flex", gap: 8, padding: "10px" }}>
+              <button
+                type="button"
+                className="project-open-button"
+                disabled={busy !== null}
+                onClick={() => (confirmingReject ? void handleReject() : setConfirmingReject(true))}
+                onBlur={() => setConfirmingReject(false)}
+              >
+                <Trash2 size={13} />
+                {busy === "reject" ? "丢弃中…" : confirmingReject ? "确认丢弃？" : "丢弃改动"}
+              </button>
+              <button
+                type="button"
+                className="agent-hide-confirm"
+                disabled={busy !== null}
+                onClick={() => void handleAccept()}
+              >
+                <GitMerge size={13} />
+                {busy === "accept" ? "合并中…" : "接受并合并"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+});
+
+/** Provider brand mark; falls back to a globe when no logo asset is bundled. */
+function ProviderLogoMark({ provider, size = 16 }: { provider?: string; size?: number }) {
+  const logo = provider ? providerLogo(provider) : undefined;
+  if (logo) {
+    return <img className="model-picker-logo" src={logo} alt="" style={{ width: size, height: size }} />;
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </svg>
+  );
+}
+
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
@@ -1389,8 +1700,12 @@ export function AppShell() {
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
+  const defaultToolPermissionMode = useSettingsStore((s) => s.defaultToolPermissionMode);
   const setDefaultModel = useSettingsStore((s) => s.setDefaultModel);
   const setDefaultProvider = useSettingsStore((s) => s.setDefaultProvider);
+  const setDefaultToolPermissionMode = useSettingsStore((s) => s.setDefaultToolPermissionMode);
+  const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
+  const setWorktreeEnabled = useSettingsStore((s) => s.setWorktreeEnabled);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
@@ -1407,13 +1722,13 @@ export function AppShell() {
   const [projectFilesLoading, setProjectFilesLoading] = useState(false);
   const [selectedProjectFileIndex, setSelectedProjectFileIndex] = useState(0);
   const [agentWorkbenchOpen, setAgentWorkbenchOpen] = useState(false);
-  const [agentWorkbenchMode, setAgentWorkbenchMode] = useState<"review" | "temporary" | "agents">("review");
+  const [agentWorkbenchMode, setAgentWorkbenchMode] = useState<"review" | "temporary" | "agents" | "worktree">("review");
   const [expandedReviewFiles, setExpandedReviewFiles] = useState<Set<string>>(() => new Set());
   const [reviewPanelWidth, setReviewPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-review", Math.round(window.innerWidth * 0.45)));
   const [temporaryPanelWidth, setTemporaryPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-temporary", Math.round(window.innerWidth * 0.32)));
   const [dockResizing, setDockResizing] = useState(false);
   const dockResizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
-  const workbenchPanelWidth = agentWorkbenchMode === "review" ? reviewPanelWidth : temporaryPanelWidth;
+  const workbenchPanelWidth = agentWorkbenchMode === "temporary" ? temporaryPanelWidth : reviewPanelWidth;
   const handleDockResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     dockResizeDrag.current = { startX: event.clientX, startWidth: workbenchPanelWidth };
@@ -1425,14 +1740,14 @@ export function AppShell() {
     if (!drag) return;
     const maxWidth = Math.max(420, window.innerWidth - 460);
     const nextWidth = Math.min(maxWidth, Math.max(320, drag.startWidth + (drag.startX - event.clientX)));
-    if (agentWorkbenchMode === "review") setReviewPanelWidth(nextWidth);
-    else setTemporaryPanelWidth(nextWidth);
+    if (agentWorkbenchMode === "temporary") setTemporaryPanelWidth(nextWidth);
+    else setReviewPanelWidth(nextWidth);
   };
   const handleDockResizeEnd = () => {
     if (!dockResizeDrag.current) return;
     dockResizeDrag.current = null;
     setDockResizing(false);
-    localStorage.setItem(agentWorkbenchMode === "review" ? "nova-workbench-width-review" : "nova-workbench-width-temporary", String(workbenchPanelWidth));
+    localStorage.setItem(agentWorkbenchMode === "temporary" ? "nova-workbench-width-temporary" : "nova-workbench-width-review", String(workbenchPanelWidth));
   };
   const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -1450,9 +1765,14 @@ export function AppShell() {
   const [savedInput, setSavedInput] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [revertedFileChanges, setRevertedFileChanges] = useState<Set<string>>(() => new Set());
+  const [reviewRevertBusy, setReviewRevertBusy] = useState(false);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [permissionPickerOpen, setPermissionPickerOpen] = useState(false);
+  const [worktreePickerOpen, setWorktreePickerOpen] = useState(false);
+  // Whether the project staged for the next agent is a git repo (worktrees need one).
+  const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -1475,6 +1795,8 @@ export function AppShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const permissionPickerRef = useRef<HTMLDivElement>(null);
+  const worktreePickerRef = useRef<HTMLDivElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1546,9 +1868,12 @@ export function AppShell() {
         siblings.push(agent);
         children.set(agent.parentAgentId, siblings);
       } else {
-        const projectAgents = roots.get(agent.cwd) ?? [];
+        // A worktree agent runs in its own checkout but belongs to the project it
+        // branched from, so it is grouped by projectCwd rather than cwd.
+        const projectKey = agent.projectCwd ?? agent.cwd;
+        const projectAgents = roots.get(projectKey) ?? [];
         projectAgents.push(agent);
-        roots.set(agent.cwd, projectAgents);
+        roots.set(projectKey, projectAgents);
       }
     }
     return {
@@ -1614,10 +1939,16 @@ export function AppShell() {
   const activeModelId = activeAgent
     ? (activeAgent.modelMeta?.id ?? activeAgent.model)
     : defaultModel;
-  const activeModelName = useMemo(
-    () => availableModels.find((m) => m.id === activeModelId)?.name ?? activeModelId ?? "Model",
-    [availableModels, activeModelId],
-  );
+  const activeModelProvider = activeAgent
+    ? (activeAgent.modelMeta?.provider ?? defaultProvider)
+    : defaultProvider;
+  const selectedToolPermissionMode = activeAgent?.toolPermissionMode ?? defaultToolPermissionMode;
+  const activeModelName = useMemo(() => {
+    const match = availableModels.find(
+      (m) => m.id === activeModelId && (!activeModelProvider || m.provider === activeModelProvider),
+    );
+    return match?.name ?? activeModelId ?? "Model";
+  }, [availableModels, activeModelId, activeModelProvider]);
   const hasMessages =
     (activeAgent?.messages.length ?? 0) > 0 ||
     (activeAgent?.messageCount ?? 0) > 0;
@@ -1629,9 +1960,25 @@ export function AppShell() {
   const validDefaultCwd = defaultCwd && !isTemporaryRuntimeProject(defaultCwd) ? defaultCwd : "";
   const welcomeProjectCwd =
     validPendingProjectCwd || validDefaultCwd || visibleAgents[0]?.cwd || "~";
-  const inputProjectCwd = activeAgent?.cwd ?? welcomeProjectCwd;
+  const inputProjectCwd = activeAgent?.projectCwd ?? activeAgent?.cwd ?? welcomeProjectCwd;
   const inputProjectName =
     projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd;
+  // The worktree switch applies to the next agent, so it is only offered before one exists.
+  const worktreeToggleVisible = !activeAgent;
+  useEffect(() => {
+    if (!worktreeToggleVisible) return;
+    let cancelled = false;
+    void checkWorktreeAvailable(welcomeProjectCwd)
+      .then((available) => {
+        if (!cancelled) setWorktreeAvailable(available);
+      })
+      .catch(() => {
+        if (!cancelled) setWorktreeAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [worktreeToggleVisible, welcomeProjectCwd]);
   const agentSenderLabels = useMemo(
     () => Object.fromEntries(agents.map((agent) => [
       agent.id,
@@ -1809,6 +2156,78 @@ export function AppShell() {
     }
     return Array.from(byPath.values());
   }, [turnFileChangesByAssistantId]);
+
+  // Files touched by more than one agent in the same directory: writes are last-one-wins,
+  // so the user has to be told before trusting or reverting either side. Agents in their own
+  // worktree are skipped — separate checkouts cannot overwrite each other.
+  const crossAgentFileWarning = useMemo(() => {
+    const byCwd = new Map<string, AgentState[]>();
+    for (const agent of agents) {
+      if (agent.worktree) continue;
+      const group = byCwd.get(agent.cwd) ?? [];
+      group.push(agent);
+      byCwd.set(agent.cwd, group);
+    }
+    const ownersByPath = new Map<string, { path: string; agents: string[] }>();
+    for (const [cwd, group] of byCwd) {
+      if (group.length < 2) continue;
+      for (const agent of group) {
+        const files = new Set<string>();
+        for (const message of agent.messages) {
+          for (const tool of message.toolCalls ?? []) {
+            if (tool.status !== "done" || (tool.name !== "edit" && tool.name !== "write")) continue;
+            const path = toolEditedPath(tool.args);
+            if (path) files.add(path);
+          }
+        }
+        for (const path of files) {
+          const key = `${cwd}\u001f${path}`;
+          const entry = ownersByPath.get(key) ?? { path, agents: [] };
+          if (!entry.agents.includes(agent.id)) entry.agents.push(agent.id);
+          ownersByPath.set(key, entry);
+        }
+      }
+    }
+    const contested = Array.from(ownersByPath.values()).filter((entry) => entry.agents.length > 1);
+    if (contested.length === 0) return "";
+    return contested
+      .map((entry) => `${entry.path}（${entry.agents.map((id) => agentNames[id] || id).join("、")}）`)
+      .join("\n");
+  }, [agents, agentNames]);
+
+  // Undo everything one agent changed. Turns are reverted newest-first because each turn's
+  // patch only applies to the file state the previous turn left behind; a file that changed
+  // since is refused by nova and reported rather than silently overwritten.
+  const handleRevertAgentChanges = useCallback(async () => {
+    if (!activeAgent) return;
+    setReviewRevertBusy(true);
+    const revertedKeys = new Set<string>();
+    const failures: string[] = [];
+    const turns = [...turnFileChangesByAssistantId.entries()].reverse();
+    for (const [assistantId, changes] of turns) {
+      for (const change of changes) {
+        if (!change.patches?.length) {
+          failures.push(`${change.path}（没有可用的 patch）`);
+          continue;
+        }
+        try {
+          await revertFileChange(activeAgent.id, change.path, change.patches, change.created);
+          revertedKeys.add(`${assistantId}:${change.path}`);
+        } catch (error) {
+          failures.push(`${change.path}：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (revertedKeys.size > 0) {
+      setRevertedFileChanges((current) => new Set([...current, ...revertedKeys]));
+    }
+    setReviewRevertBusy(false);
+    if (failures.length > 0) {
+      setError(`有 ${failures.length} 个文件没能撤回：\n${failures.join("\n")}`);
+      window.setTimeout(() => setError(null), 12000);
+    }
+  }, [activeAgent, turnFileChangesByAssistantId]);
+
   const handleReviewFileChange = useCallback((_assistantId: string, path: string) => {
     setExpandedReviewFiles(new Set([path]));
     setAgentWorkbenchMode("review");
@@ -1998,6 +2417,62 @@ export function AppShell() {
   }, [modelPickerOpen]);
 
   useEffect(() => {
+    if (!permissionPickerOpen) return;
+    const closePicker = (event: MouseEvent) => {
+      if (!permissionPickerRef.current?.contains(event.target as Node)) {
+        setPermissionPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [permissionPickerOpen]);
+
+  useEffect(() => {
+    if (!worktreePickerOpen) return;
+    const closePicker = (event: MouseEvent) => {
+      if (!worktreePickerRef.current?.contains(event.target as Node)) {
+        setWorktreePickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [worktreePickerOpen]);
+
+  const pendingPermission = activeAgent?.pendingPermission ?? null;
+  const pendingPermissionAgentId = activeAgent?.id ?? null;
+  useEffect(() => {
+    if (!pendingPermission || !pendingPermissionAgentId) return;
+    // Capture phase so the dialog consumes Enter/Esc before the composer
+    // (or any other global shortcut) behind it can react.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        void respondToolPermission(pendingPermissionAgentId, pendingPermission.toolCallId, false);
+        useAgentStore.getState().updateAgent(pendingPermissionAgentId, { pendingPermission: null });
+      } else if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        event.stopPropagation();
+        void respondToolPermission(pendingPermissionAgentId, pendingPermission.toolCallId, true);
+        useAgentStore.getState().updateAgent(pendingPermissionAgentId, { pendingPermission: null });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [pendingPermission, pendingPermissionAgentId]);
+
+  // nova denies the request once its deadline passes and emits tool_permission_resolved.
+  // If that event never arrives (agent crash, dropped RPC) the dialog would stay up
+  // forever, so close it locally instead. The request is denied either way.
+  useEffect(() => {
+    if (!pendingPermission || !pendingPermissionAgentId) return;
+    const timer = setTimeout(() => {
+      useAgentStore.getState().updateAgent(pendingPermissionAgentId, { pendingPermission: null });
+    }, pendingPermission.timeoutMs ?? 120_000);
+    return () => clearTimeout(timer);
+  }, [pendingPermission, pendingPermissionAgentId]);
+
+  useEffect(() => {
     if (slashCommands.length === 0 && !fileMention) return;
     const dismissSlashCommands = (event: MouseEvent) => {
       if (!composerShellRef.current?.contains(event.target as Node)) {
@@ -2012,7 +2487,12 @@ export function AppShell() {
   // Auto-select a default model when models are loaded and none is configured yet
   useEffect(() => {
     if (availableModels.length === 0) return;
-    if (defaultModel) return;
+    // Re-pick when the stored default no longer exists in the directory (for
+    // example after the model it pointed at was removed in settings).
+    const defaultStillValid = availableModels.some(
+      (m) => m.id === defaultModel && (!defaultProvider || m.provider === defaultProvider),
+    );
+    if (defaultModel && defaultStillValid) return;
 
     const pick = (pool: AvailableModel[]): AvailableModel | undefined => {
       // Prefer non-dated flagship ids (no -YYYYMMDD suffix)
@@ -2034,30 +2514,11 @@ export function AppShell() {
     }
   }, [availableModels, defaultModel, defaultProvider, setDefaultModel, setDefaultProvider]);
 
+  // The model directory lives in models.json; this is the only reader, so the
+  // settings page and the picker always render the same set.
   const refreshModelCatalog = useCallback(async () => {
-    const results = await Promise.allSettled([listAllModels(), fetchModelsViaShell()]);
-    const merged = new Map<string, AvailableModel>();
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error("[AppShell] model catalog source failed:", result.reason);
-        continue;
-      }
-      for (const model of result.value ?? []) {
-        const mapped: AvailableModel = {
-          id: String(model.id ?? ""),
-          name: String(model.name ?? model.id ?? ""),
-          provider: String(model.provider ?? ""),
-          contextWindow: Number(model.contextWindow ?? 0),
-          maxTokens: Number(model.maxTokens ?? 0),
-          reasoning: Boolean(model.reasoning),
-          images: Boolean(model.images),
-        };
-        if (!mapped.id || !mapped.provider) continue;
-        merged.set(`${mapped.provider}:${mapped.id}`, mapped);
-      }
-    }
-    if (merged.size === 0) throw new Error("模型已保存，但刷新模型列表失败");
-    useAgentStore.setState({ availableModels: Array.from(merged.values()) });
+    const catalog = await getModelCatalog();
+    useAgentStore.getState().setModelCatalog(catalog);
   }, []);
 
   // Load agents on mount
@@ -2066,17 +2527,24 @@ export function AppShell() {
       .then((infos) => {
         syncAgents(infos);
         setAgentsLoaded(true);
-        // If there's a running agent, get models from it
-        if (infos.length > 0) {
-          void requestAvailableModels(infos[0].id).catch(() => {});
-        }
       })
       .catch(() => setAgentsLoaded(true));
 
-    // Merge the bundled/absolute CLI catalog with the user's shell Nova.
-    // The latter includes newly-added models.json providers such as Ollama,
-    // while packaged Studio builds may point at an older bundled CLI.
     void refreshModelCatalog().catch((reason) => console.error("[AppShell] initial model refresh failed:", reason));
+  }, [refreshModelCatalog]);
+
+  // models.json can also be edited outside the app (hand edits, `nova` CLI), so
+  // re-read the directory whenever the window regains focus.
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshModelCatalog().catch((reason) => console.error("[AppShell] model refresh failed:", reason));
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [refreshModelCatalog]);
 
   // Cleanup blob URLs on unmount
@@ -2210,7 +2678,13 @@ export function AppShell() {
           cwd,
           defaultModel || undefined,
           defaultProvider || undefined,
+          worktreeEnabled && worktreeAvailable ? true : undefined,
         );
+
+        // The homepage policy belongs to the next session. Queue it before the
+        // first prompt so the Agent never starts work with a looser or stricter
+        // permission mode than the one the user selected.
+        await setToolPermissionMode(info.id, defaultToolPermissionMode);
 
         const newAgent: AgentState = {
           id: info.id,
@@ -2220,6 +2694,8 @@ export function AppShell() {
           avatarId: getOrAssignAgentAvatar(info.id),
           status: info.status,
           cwd: info.cwd,
+          projectCwd: info.project_cwd ?? null,
+          worktree: info.worktree ?? null,
           model: info.model,
           messages: [],
           createdAt: info.created_at,
@@ -2234,16 +2710,14 @@ export function AppShell() {
           executionTraces: [],
           contextSnapshot: null,
           autoCompactionEnabled: true,
+          toolPermissionMode: defaultToolPermissionMode,
+          pendingPermission: null,
           liveUsage: null,
           outputSinceLastUserInput: 0,
         };
         addAgent(newAgent);
         agentId = info.id;
         setPendingProjectCwd(null);
-        // Request available models for the new agent
-        void requestAvailableModels(info.id).catch((err) =>
-          console.error("Failed to request available models:", err)
-        );
       }
 
       // Add user message to UI immediately
@@ -2383,10 +2857,6 @@ export function AppShell() {
           model: info.model,
           messageCount: Math.max(info.message_count, agentsById.get(agentId)?.messageCount ?? 0),
         });
-        // Request available models for the activated agent
-        void requestAvailableModels(agentId).catch((err) =>
-          console.error("Failed to request available models:", err)
-        );
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -3564,11 +4034,7 @@ export function AppShell() {
                             overflow: "hidden",
                           }}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
-                            <circle cx="12" cy="12" r="10" />
-                            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                            <path d="M2 12h20" />
-                          </svg>
+                          <ProviderLogoMark provider={activeModelProvider} size={15} />
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {activeModelName}
                           </span>
@@ -3586,63 +4052,208 @@ export function AppShell() {
                               overflowY: "auto",
                             }}
                           >
-                            {(() => {
-                              const grouped = new Map<string, AvailableModel[]>();
-                              for (const m of availableModels) {
-                                const arr = grouped.get(m.provider) ?? [];
-                                arr.push(m);
-                                grouped.set(m.provider, arr);
-                              }
-                              return Array.from(grouped.entries()).map(([provider, models]) => (
-                                <div key={provider}>
-                                  <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                                    {provider}
-                                  </div>
-                                  {models.map((m) => {
-                                    const isActive = activeModelId === m.id;
-                                    return (
-                                      <button
-                                        key={m.id}
-                                        type="button"
-                                        className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
-                                        onClick={() => {
-                                          if (activeAgent) {
-                                            setModel(activeAgent.id, m.provider, m.id);
-                                            updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
-                                          } else {
-                                            // On homepage, save as default model for new agents
-                                            setDefaultModel(m.id);
-                                            setDefaultProvider(m.provider);
-                                          }
-                                          setModelPickerOpen(false);
-                                        }}
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "space-between",
-                                          width: "100%",
-                                          padding: "6px 10px",
-                                          borderRadius: 7,
-                                          fontSize: 12,
-                                          cursor: "pointer",
-                                          textAlign: "left",
-                                          transition: "all 0.12s ease",
-                                        }}
-                                      >
-                                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                                        <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
-                                          {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ));
-                            })()}
+                            {availableModels.map((m) => {
+                              const isActive = activeModelId === m.id && activeModelProvider === m.provider;
+                              return (
+                                <button
+                                  key={`${m.provider}:${m.id}`}
+                                  type="button"
+                                  className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                  title={m.authConfigured ? undefined : "该 Provider 未配置 API Key"}
+                                  onClick={() => {
+                                    if (activeAgent) {
+                                      setModel(activeAgent.id, m.provider, m.id);
+                                      updateAgent(activeAgent.id, { model: m.id, modelMeta: { id: m.id, provider: m.provider, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, reasoning: m.reasoning, images: m.images } });
+                                    } else {
+                                      // On homepage, save as default model for new agents
+                                      setDefaultModel(m.id);
+                                      setDefaultProvider(m.provider);
+                                    }
+                                    setModelPickerOpen(false);
+                                  }}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    width: "100%",
+                                    padding: "6px 10px",
+                                    borderRadius: 7,
+                                    fontSize: 12,
+                                    cursor: "pointer",
+                                    textAlign: "left",
+                                    transition: "all 0.12s ease",
+                                    opacity: m.authConfigured ? 1 : 0.5,
+                                  }}
+                                >
+                                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
+                                    <ProviderLogoMark provider={m.provider} />
+                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                  </span>
+                                  <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
+                                    {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
                     )}
+                    {/* Worktree isolation - applies to the next agent in this project */}
+                    {worktreeToggleVisible && (
+                      <div style={{ position: "relative" }}>
+                        <button
+                          type="button"
+                          className={`input-toolbar-control model-picker-trigger ${worktreePickerOpen ? "model-picker-trigger-open" : ""}`}
+                          onClick={() => setWorktreePickerOpen((open) => !open)}
+                          title={
+                            worktreeAvailable
+                              ? "让下一个 Agent 在自己的 git worktree 里工作"
+                              : "当前项目不是 git 仓库，无法使用 worktree 隔离"
+                          }
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "5px 10px",
+                            borderRadius: 8,
+                            fontSize: 11.5,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            opacity: worktreeAvailable ? 1 : 0.5,
+                          }}
+                        >
+                          <GitBranch size={12} style={{ flexShrink: 0 }} />
+                          {/* Both labels are four characters wide, so toggling the mode does not
+                              resize the chip and shift the chips to its left. */}
+                          <span style={{ whiteSpace: "nowrap" }}>
+                            {worktreeEnabled && worktreeAvailable ? "独立目录" : "共用目录"}
+                          </span>
+                        </button>
+                        {worktreePickerOpen && (
+                          <div
+                            ref={worktreePickerRef}
+                            className="model-picker-popover"
+                            style={{ position: "absolute", right: 0, bottom: 36, width: 268 }}
+                          >
+                            <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                              新 Agent 的工作目录
+                            </div>
+                            <button
+                              type="button"
+                              className={`model-picker-option ${!worktreeEnabled || !worktreeAvailable ? "model-picker-option-active" : ""}`}
+                              onClick={() => {
+                                setWorktreeEnabled(false);
+                                setWorktreePickerOpen(false);
+                              }}
+                              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, width: "100%", padding: "6px 10px" }}
+                            >
+                              <span>共用项目目录</span>
+                              <span className="model-picker-context" style={{ fontSize: 10 }}>默认。改动直接写进项目</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!worktreeAvailable}
+                              className={`model-picker-option ${worktreeEnabled && worktreeAvailable ? "model-picker-option-active" : ""}`}
+                              onClick={() => {
+                                setWorktreeEnabled(true);
+                                setWorktreePickerOpen(false);
+                              }}
+                              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, width: "100%", padding: "6px 10px", opacity: worktreeAvailable ? 1 : 0.5 }}
+                            >
+                              <span>独立 git worktree</span>
+                              <span className="model-picker-context" style={{ fontSize: 10 }}>并行 Agent 互不覆盖，改完再决定接受或丢弃</span>
+                            </button>
+                            {!worktreeAvailable && (
+                              <div style={{ padding: "4px 10px 8px", fontSize: 10.5, opacity: 0.7 }}>
+                                当前项目不是 git 仓库，无法使用 worktree 隔离
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* Homepage selection configures the next session; an active agent updates its live policy. */}
+                    <div style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className={`input-toolbar-control model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
+                        onClick={() => setPermissionPickerOpen((open) => !open)}
+                        title={activeAgent ? "工具权限模式" : "设置新会话的工具权限模式"}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "5px 10px",
+                          borderRadius: 8,
+                          fontSize: 11.5,
+                          cursor: "pointer",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <rect x="3" y="11" width="18" height="11" rx="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        {/* Every label in TOOL_PERMISSION_MODES is four characters wide, so a
+                            shrink-to-fit chip keeps a constant size across modes and never shoves
+                            the model picker sideways. */}
+                        <span style={{ whiteSpace: "nowrap" }}>
+                          {TOOL_PERMISSION_MODES.find((m) => m.value === selectedToolPermissionMode)?.label ?? selectedToolPermissionMode}
+                        </span>
+                      </button>
+                      {permissionPickerOpen && (
+                        <div
+                          ref={permissionPickerRef}
+                          className="model-picker-popover"
+                          style={{
+                            position: "absolute",
+                            right: 0,
+                            bottom: 36,
+                            width: 240,
+                          }}
+                        >
+                          <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            {activeAgent ? "工具权限模式" : "新会话权限模式"}
+                          </div>
+                          {TOOL_PERMISSION_MODES.map((mode) => {
+                            const isActive = selectedToolPermissionMode === mode.value;
+                            return (
+                              <button
+                                key={mode.value}
+                                type="button"
+                                className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                onClick={() => {
+                                  if (activeAgent) {
+                                    void setToolPermissionMode(activeAgent.id, mode.value);
+                                    updateAgent(activeAgent.id, { toolPermissionMode: mode.value });
+                                  } else {
+                                    setDefaultToolPermissionMode(mode.value);
+                                  }
+                                  setPermissionPickerOpen(false);
+                                }}
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-start",
+                                  gap: 1,
+                                  width: "100%",
+                                  padding: "6px 10px",
+                                  borderRadius: 7,
+                                  fontSize: 12,
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  transition: "all 0.12s ease",
+                                }}
+                              >
+                                <span>{mode.label}</span>
+                                <span style={{ fontSize: 10.5, opacity: 0.65 }}>{mode.description}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className={`input-toolbar-control project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
@@ -3677,11 +4288,16 @@ export function AppShell() {
                           minWidth: 240,
                           width: "max-content",
                           maxWidth: 500,
+                          display: "flex",
+                          flexDirection: "column",
+                          maxHeight: "min(56vh, 420px)",
+                          overflow: "hidden",
                         }}
                       >
                         <div
                           className="project-picker-title"
                           style={{
+                            flexShrink: 0,
                             padding: "4px 8px 5px",
                             fontSize: 10,
                             fontWeight: 600,
@@ -3690,37 +4306,43 @@ export function AppShell() {
                         >
                           选择项目
                         </div>
-                        {availableProjectCwds.map((cwd) => {
-                          const selected = cwd === inputProjectCwd;
-                          return (
-                            <button
-                              key={cwd}
-                              type="button"
-                              onClick={() => {
-                                setPendingProjectCwd(cwd);
-                                setActiveAgent(null);
-                                setProjectPickerOpen(false);
-                              }}
-                              title={cwd}
-                              className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
-                            >
-                              <FolderOpen
-                                size={12}
-                                style={{ flexShrink: 0 }}
-                              />
-                              <span
-                                style={{
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  fontSize: 12,
+                        <div
+                          style={{
+                            flex: 1,
+                            minHeight: 0,
+                            overflowY: "auto",
+                            overscrollBehavior: "contain",
+                          }}
+                        >
+                          {availableProjectCwds.map((cwd) => {
+                            const selected = cwd === inputProjectCwd;
+                            return (
+                              <button
+                                key={cwd}
+                                type="button"
+                                onClick={() => {
+                                  setPendingProjectCwd(cwd);
+                                  setActiveAgent(null);
+                                  setProjectPickerOpen(false);
                                 }}
+                                title={cwd}
+                                className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
                               >
-                                {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
-                              </span>
-                            </button>
-                          );
-                        })}
+                                <FolderOpen size={12} style={{ flexShrink: 0 }} />
+                                <span
+                                  style={{
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                         <button
                           type="button"
                           onClick={async () => {
@@ -3737,6 +4359,7 @@ export function AppShell() {
                           }}
                           className="project-picker-option"
                           style={{
+                            flexShrink: 0,
                             borderTop: "1px solid rgba(255, 255, 255, 0.06)",
                             marginTop: 4,
                             paddingTop: 8,
@@ -3832,6 +4455,17 @@ export function AppShell() {
                   {currentSubAgents.length > 0 && <span className="agent-workbench-trigger-count">{currentSubAgents.length}</span>}
                   <span className="agent-workbench-trigger-tip">子 Agent · {activeDelegatedAgents.length} 进行中</span>
                 </button>
+                {activeAgent?.worktree && (
+                  <button
+                    type="button"
+                    className={`agent-workbench-trigger ${agentWorkbenchOpen && agentWorkbenchMode === "worktree" ? "agent-workbench-trigger-active" : ""} ${activeAgent.worktree.state === "active" ? "agent-workbench-trigger-running" : ""}`}
+                    onClick={() => { setAgentWorkbenchMode("worktree"); setAgentWorkbenchOpen((open) => agentWorkbenchMode === "worktree" ? !open : true); }}
+                    aria-label="Worktree 审查"
+                  >
+                    <GitBranch size={17} />
+                    <span className="agent-workbench-trigger-tip">Worktree 审查</span>
+                  </button>
+                )}
               </div>
             )}
             {!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen && (
@@ -3847,18 +4481,43 @@ export function AppShell() {
                   onPointerCancel={handleDockResizeEnd}
                 />
                 <aside className="conversation-task-summary">
-                  <BatchTaskPanel
-                    sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
-                    onTemporaryAsk={handleTemporaryAsk}
-                    onCollapse={() => setAgentWorkbenchOpen(false)}
-                    mode={agentWorkbenchMode}
-                    reviewFiles={cumulativeReviewFiles}
-                    expandedReviewFiles={expandedReviewFiles}
-                    onToggleReviewFile={toggleReviewFile}
-                    childAgents={currentSubAgents}
-                    agentNames={agentNames}
-                    onSelectAgent={handleSelectAgent}
-                  />
+                  {agentWorkbenchMode === "worktree" && activeAgent?.worktree ? (
+                    <WorktreeReviewPanel
+                      agent={activeAgent}
+                      onCollapse={() => setAgentWorkbenchOpen(false)}
+                      onResolved={(message) => {
+                        void listAgents()
+                          .then((infos) => syncAgents(infos))
+                          .catch(() => undefined);
+                        useNotificationStore.getState().push({
+                          agentId: activeAgent.id,
+                          agentName: agentDisplayName(activeAgent, agentNames),
+                          status: "completed",
+                          detail: message,
+                        });
+                      }}
+                    />
+                  ) : (
+                    <BatchTaskPanel
+                      sessionId={activeAgent?.id.replace(/^agent-/, "") ?? "unknown"}
+                      onTemporaryAsk={handleTemporaryAsk}
+                      onCollapse={() => setAgentWorkbenchOpen(false)}
+                      mode={agentWorkbenchMode === "worktree" ? "review" : agentWorkbenchMode}
+                      reviewFiles={cumulativeReviewFiles}
+                      expandedReviewFiles={expandedReviewFiles}
+                      onToggleReviewFile={toggleReviewFile}
+                      childAgents={currentSubAgents}
+                      agentNames={agentNames}
+                      onSelectAgent={handleSelectAgent}
+                      crossAgentWarning={crossAgentFileWarning}
+                      onRevertAll={
+                        activeAgent && cumulativeReviewFiles.length > 0 && activeAgent.status !== "stopped"
+                          ? handleRevertAgentChanges
+                          : undefined
+                      }
+                      revertAllBusy={reviewRevertBusy}
+                    />
+                  )}
                 </aside>
               </>
             )}
@@ -3958,6 +4617,55 @@ export function AppShell() {
           </div>
         </div>
       )}
+      {activeAgent?.pendingPermission && (
+        <div className="project-modal-backdrop">
+          <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="project-modal-header">
+              <div>
+                <h3>允许执行工具？</h3>
+                <p style={{ fontFamily: "monospace", fontSize: 13 }}>{activeAgent.pendingPermission.toolName}</p>
+              </div>
+            </div>
+            <div
+              style={{
+                maxHeight: 260,
+                overflowY: "auto",
+                margin: "8px 0 12px",
+                padding: 10,
+                borderRadius: 8,
+                background: "var(--bg-tertiary, rgba(0,0,0,0.2))",
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                fontFamily: "monospace",
+              }}
+            >
+              {safePermissionArgsText(activeAgent.pendingPermission.args)}
+            </div>
+            <div className="project-modal-actions">
+              <button
+                className="project-open-button"
+                onClick={() => {
+                  void respondToolPermission(activeAgent.id, activeAgent.pendingPermission!.toolCallId, false);
+                  updateAgent(activeAgent.id, { pendingPermission: null });
+                }}
+              >
+                拒绝 (Esc)
+              </button>
+              <button
+                className="agent-hide-confirm"
+                onClick={() => {
+                  void respondToolPermission(activeAgent.id, activeAgent.pendingPermission!.toolCallId, true);
+                  updateAgent(activeAgent.id, { pendingPermission: null });
+                }}
+              >
+                允许 (Enter)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {hidingAgent && (
         <div className="project-modal-backdrop" onMouseDown={() => setHidingAgent(null)}>
           <div className="project-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -4002,4 +4710,13 @@ export function AppShell() {
       )}
     </div>
   );
+}
+
+function safePermissionArgsText(args: unknown): string {
+  if (args == null) return "(无参数)";
+  try {
+    return JSON.stringify(args, null, 2) ?? String(args);
+  } catch {
+    return String(args);
+  }
 }

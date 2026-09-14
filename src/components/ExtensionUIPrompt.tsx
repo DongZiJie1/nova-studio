@@ -50,12 +50,25 @@ export function ExtensionUIPrompt() {
     }
   }, [current]);
 
+  // nova resolves its own timeout and emits extension_ui_cancel. If that event is lost
+  // (dropped RPC, agent crash) the sheet would sit there forever, so expire it locally
+  // too. No response is sent — nova has already moved on.
+  useEffect(() => {
+    if (!current?.request.timeout) return;
+    const { agentId, request } = current;
+    const timer = setTimeout(() => {
+      setQueue((q) => q.filter((item) => !(item.agentId === agentId && item.request.id === request.id)));
+    }, request.timeout);
+    return () => clearTimeout(timer);
+  }, [current]);
+
   if (!current) return null;
 
   const { agentId, request } = current;
   const title = request.title || "Nova";
   const message = request.message || "";
   const isToolPermission = request.method === "confirm" && title === "允许执行工具？";
+  const isDanger = request.variant === "danger";
 
   const respond = (
     resp: { value?: string; confirmed?: boolean; cancelled?: boolean },
@@ -103,7 +116,7 @@ export function ExtensionUIPrompt() {
         {request.method === "confirm" && (
           <div className="nova-question-actions">
             <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>{isToolPermission ? "拒绝" : "取消"}</button>
-            <button type="button" className="nova-question-button-primary" onClick={() => respond({ confirmed: true })}><Check size={15} />{isToolPermission ? "允许执行" : "确认"}</button>
+            <button type="button" className={`nova-question-button-primary${isDanger ? " nova-question-button-danger" : ""}`} onClick={() => respond({ confirmed: true })}><Check size={15} />{isToolPermission ? "允许执行" : "确认"}</button>
           </div>
         )}
 

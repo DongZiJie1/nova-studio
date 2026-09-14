@@ -8,13 +8,15 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Command } from "@tauri-apps/plugin-shell";
 import type {
   AgentEventPayload,
   AgentInfo,
   ExtensionUIResponse,
   FileReference,
   ImageContent,
+  ToolPermissionMode,
+  WorktreeMergeOutcome,
+  WorktreeStatus,
 } from "./rpc-types";
 
 // ─── Tauri Commands (frontend → Rust) ───
@@ -23,8 +25,9 @@ export async function spawnAgent(
   cwd: string,
   model?: string,
   provider?: string,
+  worktreeEnabled?: boolean,
 ): Promise<AgentInfo> {
-  return invoke<AgentInfo>("spawn_agent", { cwd, model, provider });
+  return invoke<AgentInfo>("spawn_agent", { cwd, model, provider, worktreeEnabled });
 }
 
 export async function stopAgent(agentId: string): Promise<void> {
@@ -104,6 +107,30 @@ export async function revertFileChange(
   created?: boolean,
 ): Promise<void> {
   return invoke("revert_file_change", { agentId, path, patches, created });
+}
+
+// ─── Worktree isolation ───
+
+/** Whether a project directory can host worktree-isolated agents (i.e. is a git repo). */
+export async function checkWorktreeAvailable(cwd: string): Promise<boolean> {
+  return invoke<boolean>("check_worktree_available", { cwd });
+}
+
+export async function getWorktreeStatus(agentId: string): Promise<WorktreeStatus> {
+  return invoke<WorktreeStatus>("get_worktree_status", { agentId });
+}
+
+export async function getWorktreeDiff(agentId: string, path: string): Promise<string> {
+  return invoke<string>("get_worktree_diff", { agentId, path });
+}
+
+/** Squash-merge the agent's work into the project. Reports conflicts, never forces them. */
+export async function acceptWorktree(agentId: string): Promise<WorktreeMergeOutcome> {
+  return invoke<WorktreeMergeOutcome>("accept_worktree", { agentId });
+}
+
+export async function rejectWorktree(agentId: string): Promise<void> {
+  return invoke("reject_worktree", { agentId });
 }
 
 // ─── Delegated Task Registry (hub task panel) ───
@@ -205,18 +232,44 @@ export async function requestContextSnapshot(agentId: string): Promise<void> {
   return invoke("request_context_snapshot", { agentId });
 }
 
-export async function requestAvailableModels(agentId: string): Promise<void> {
-  return invoke("request_available_models", { agentId });
+export interface ModelCatalogModel {
+  id: string;
+  name: string;
+  api: string;
+  baseUrl: string;
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  input: ("text" | "image")[];
 }
 
-export async function listAllModels(): Promise<Record<string, unknown>[]> {
-  return invoke<Record<string, unknown>[]>("list_all_models");
+export interface ModelCatalogProvider {
+  provider: string;
+  name: string;
+  api?: string;
+  baseUrl?: string;
+  auth: { configured: boolean; source?: string };
+  models: ModelCatalogModel[];
+}
+
+/** Provider/model directory from models.json — the single source of truth. */
+export interface ModelCatalog {
+  providers: ModelCatalogProvider[];
+}
+
+export async function getModelCatalog(): Promise<ModelCatalog> {
+  return invoke<ModelCatalog>("get_model_catalog");
 }
 
 export interface ModelConfigurationInput {
   providerId: string;
   /** When empty, only the provider API key is saved (no models.json entry). */
   modelId?: string;
+  /**
+   * Model id the edit started from. When it differs from `modelId` the original
+   * entry is replaced rather than a second one being appended.
+   */
+  previousModelId?: string;
   displayName?: string;
   baseUrl: string;
   api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
@@ -231,15 +284,6 @@ export async function saveModelConfiguration(input: ModelConfigurationInput): Pr
   return invoke("save_model_configuration", { input });
 }
 
-export interface ProviderModelInfo {
-  id: string;
-  name?: string;
-  reasoning: boolean;
-  images: boolean;
-  contextWindow: number;
-  maxTokens: number;
-}
-
 export interface ProviderConfiguration {
   providerId: string;
   baseUrl?: string;
@@ -248,7 +292,6 @@ export interface ProviderConfiguration {
   apiKey?: string;
   /** Where the key was found: "auth" (auth.json) or "models" (models.json). */
   apiKeySource?: "auth" | "models";
-  models: ProviderModelInfo[];
 }
 
 export async function getModelConfigurations(): Promise<ProviderConfiguration[]> {
@@ -263,52 +306,20 @@ export async function deleteProviderConfiguration(providerId: string): Promise<v
   return invoke("delete_provider_configuration", { providerId });
 }
 
-/**
- * Fetch available models by running `nova --list-models` via the shell plugin.
- * Uses `sh -c` to ensure the user's shell environment (PATH, etc.) is available.
- */
-export async function fetchModelsViaShell(): Promise<Record<string, unknown>[]> {
-  const cmd = Command.create("sh", ["-c", "nova --list-models"]);
-  const output = await cmd.execute();
-  if (output.code !== 0) {
-    throw new Error(`nova --list-models failed (exit ${output.code}): ${output.stderr}`);
-  }
-  const lines = output.stdout.split("\n").filter((l) => l.trim());
-  // Skip header line
-  const models: Record<string, unknown>[] = [];
-  for (const line of lines.slice(1)) {
-    const parts = line.split(/\s+/);
-    if (parts.length >= 4) {
-      const provider = parts[0];
-      const modelId = parts[1];
-      const ctxRaw = parts[2];
-      const maxRaw = parts[3];
-      const thinking = parts[4] === "yes";
-      const images = parts[5] === "yes";
-      const ctxNum = ctxRaw.endsWith("M")
-        ? parseFloat(ctxRaw) * 1_000_000
-        : ctxRaw.endsWith("K")
-          ? parseFloat(ctxRaw) * 1_000
-          : parseFloat(ctxRaw) || 0;
-      const maxNum = maxRaw.endsWith("K")
-        ? parseFloat(maxRaw) * 1_000
-        : parseFloat(maxRaw) || 0;
-      models.push({
-        id: modelId,
-        name: modelId,
-        provider,
-        contextWindow: Math.round(ctxNum),
-        maxTokens: Math.round(maxNum),
-        reasoning: thinking,
-        images,
-      });
-    }
-  }
-  return models;
-}
-
 export async function setModel(agentId: string, provider: string, modelId: string): Promise<void> {
   return invoke("set_model", { agentId, provider, modelId });
+}
+
+export async function setToolPermissionMode(agentId: string, mode: ToolPermissionMode): Promise<void> {
+  return invoke("set_tool_permission_mode", { agentId, mode });
+}
+
+export async function respondToolPermission(
+  agentId: string,
+  toolCallId: string,
+  allowed: boolean,
+): Promise<boolean> {
+  return invoke<boolean>("respond_tool_permission", { agentId, toolCallId, allowed });
 }
 
 export async function listProjectFiles(

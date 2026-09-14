@@ -34,7 +34,20 @@ export type RpcCommand =
   | { type: "get_execution_traces"; id?: string }
   | { type: "new_session"; id?: string }
   | { type: "set_thinking_level"; id?: string; level: string }
-  | { type: "compact"; id?: string; customInstructions?: string };
+  | { type: "compact"; id?: string; customInstructions?: string }
+  | { type: "get_tool_permission_mode"; id?: string }
+  | { type: "set_tool_permission_mode"; id?: string; mode: ToolPermissionMode }
+  | { type: "respond_tool_permission"; id?: string; toolCallId: string; allowed: boolean };
+
+export type ToolPermissionMode = "ask" | "edits" | "allow";
+
+export interface ToolPermissionRequest {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  /** Deadline enforced by nova; the dialog closes when it elapses without an answer. */
+  timeoutMs?: number;
+}
 
 // ─── Spawn / Prompt requests (Tauri command args) ───
 
@@ -124,6 +137,8 @@ export type AgentMessage =
       toolCallId: string;
       toolName: string;
       args: unknown;
+      /** Deadline enforced by nova; once it passes the request is denied server-side. */
+      timeoutMs?: number;
     }
   | {
       type: "tool_permission_resolved";
@@ -131,6 +146,11 @@ export type AgentMessage =
       toolName: string;
       allowed: boolean;
       reason?: string;
+    }
+  | {
+      type: "tool_permission_mode_changed";
+      mode: ToolPermissionMode;
+      previousMode: ToolPermissionMode;
     }
   | { type: "agent_settled" }
   | { type: "agent_name_update"; name: string }
@@ -145,6 +165,8 @@ export type AgentMessage =
       options?: string[];
       placeholder?: string;
       timeout?: number;
+      /** "danger" marks a confirm whose affirmative action destroys data. */
+      variant?: "default" | "danger";
       [key: string]: unknown;
     }
   | { type: "extension_ui_cancel"; id: string }
@@ -178,6 +200,8 @@ export interface ExtensionUIRequest {
   options?: string[];
   placeholder?: string;
   timeout?: number;
+  /** "danger" marks a confirm whose affirmative action destroys data. */
+  variant?: "default" | "danger";
 }
 
 /** One of value / confirmed / cancelled — mirrors nova's RpcExtensionUIResponse */
@@ -192,6 +216,8 @@ export interface ExtensionUIResponse {
 
 export interface ModelMeta {
   id: string;
+  /** Provider the model belongs to. Model ids are only unique per provider. */
+  provider?: string;
   name: string;
   contextWindow: number;
   maxTokens: number;
@@ -302,11 +328,53 @@ export interface AgentInfo {
   status: AgentStatus;
   lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
+  /** Repository root when this agent runs in an isolated worktree. */
+  project_cwd?: string | null;
+  /** Present only on the agent that owns the worktree; delegated children share it. */
+  worktree?: WorktreeInfo | null;
   model: string | null;
   session_id: string | null;
   created_at: string;
   message_count: number;
   last_error: string | null;
+}
+
+// ─── Worktree isolation ───
+
+export type WorktreeState = "active" | "merged" | "rejected" | "missing";
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  projectCwd: string;
+  baseCommit: string;
+  baseBranch?: string | null;
+  createdAt: string;
+  state: WorktreeState;
+}
+
+export interface WorktreeFileChange {
+  path: string;
+  /** "added" | "modified" | "deleted" */
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface WorktreeStatus {
+  path: string;
+  branch: string;
+  baseBranch?: string | null;
+  /** True when the worktree has uncommitted changes. */
+  dirty: boolean;
+  commits: number;
+  files: WorktreeFileChange[];
+}
+
+export interface WorktreeMergeOutcome {
+  merged: boolean;
+  conflicts: string[];
+  message: string;
 }
 
 export interface PersistedRpcContentBlock {

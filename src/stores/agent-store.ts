@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ModelCatalog } from "../lib/tauri-bridge";
 import type {
   AgentStatus,
   AgentLifecycleSnapshot,
@@ -10,6 +11,9 @@ import type {
   ModelMeta,
   PersistedRpcMessage,
   SessionUsage,
+  ToolPermissionMode,
+  ToolPermissionRequest,
+  WorktreeInfo,
 } from "../lib/rpc-types";
 import {
   parseAgentEvent,
@@ -50,7 +54,7 @@ export interface ChatMessage {
   id: string;
   entryId?: string;
   feedback?: "up" | "down";
-  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch";
+  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch" | "notice";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
@@ -68,6 +72,10 @@ export interface AgentState {
   status: AgentStatus;
   lifecycle?: AgentLifecycleSnapshot;
   cwd: string;
+  /** Repository root this agent belongs to when it runs in an isolated worktree. */
+  projectCwd: string | null;
+  /** Set only on the agent that owns the worktree. */
+  worktree: WorktreeInfo | null;
   model: string | null;
   messages: ChatMessage[];
   createdAt: string;
@@ -92,6 +100,10 @@ export interface AgentState {
   contextSnapshot: ContextSnapshot | null;
   /** Auto-compaction enabled (from get_state) */
   autoCompactionEnabled: boolean;
+  /** Tool permission mode for the agent's session (from get_tool_permission_mode / events) */
+  toolPermissionMode: ToolPermissionMode;
+  /** Tool call awaiting user approval (ask mode), if any */
+  pendingPermission: ToolPermissionRequest | null;
   /** Live usage of the in-flight turn, streamed from message_update events */
   liveUsage: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
   /** Accumulated output tokens since the last user message */
@@ -104,10 +116,32 @@ export interface AvailableModel {
   id: string;
   name: string;
   provider: string;
+  api: string;
+  baseUrl: string;
   contextWindow: number;
   maxTokens: number;
   reasoning: boolean;
   images: boolean;
+  /** Whether the provider has usable credentials. */
+  authConfigured: boolean;
+}
+
+/** Flatten the provider/model directory into the picker's row shape. */
+export function flattenModelCatalog(catalog: ModelCatalog): AvailableModel[] {
+  return catalog.providers.flatMap((provider) =>
+    provider.models.map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: provider.provider,
+      api: model.api,
+      baseUrl: model.baseUrl,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      reasoning: model.reasoning,
+      images: model.input.includes("image"),
+      authConfigured: provider.auth.configured,
+    })),
+  );
 }
 
 interface AgentStoreState {
@@ -126,7 +160,8 @@ interface AgentStoreState {
   setActiveAgent: (id: string | null) => void;
   updateAgent: (id: string, update: Partial<AgentState>) => void;
   getAgent: (id: string) => AgentState | undefined;
-  setAvailableModels: (models: AvailableModel[]) => void;
+  /** Replace the model directory with the payload read from models.json. */
+  setModelCatalog: (catalog: ModelCatalog) => void;
   /** Pull the latest task/batch snapshot from the Rust registry. */
   refreshAgentTasks: () => Promise<void>;
 
@@ -177,6 +212,8 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     status: info.status,
     lifecycle: info.lifecycle,
     cwd: info.cwd,
+    projectCwd: info.project_cwd ?? null,
+    worktree: info.worktree ?? null,
     model: info.model,
     messages: [],
     createdAt: info.created_at,
@@ -191,6 +228,8 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     executionTraces: [],
     contextSnapshot: null,
     autoCompactionEnabled: true,
+    toolPermissionMode: "ask",
+    pendingPermission: null,
     liveUsage: null,
     outputSinceLastUserInput: 0,
   };
@@ -205,6 +244,8 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
     status: info.status,
     lifecycle: info.lifecycle,
     cwd: info.cwd,
+    projectCwd: info.project_cwd ?? null,
+    worktree: info.worktree ?? null,
     model: info.model,
     createdAt: info.created_at,
     messageCount: Math.max(agent.messageCount, info.message_count),
@@ -304,6 +345,18 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
       hydrated.push({
         id: nextId(),
         role: "agent_batch",
+        content: messageText(message),
+        timestamp,
+      });
+      continue;
+    }
+
+    // Runtime remarks such as a turn stopped by the turn timeout belong in the transcript,
+    // otherwise the abort looks like a crash.
+    if (message.role === "custom" && message.customType === "turn_timeout") {
+      hydrated.push({
+        id: nextId(),
+        role: "notice",
         content: messageText(message),
         timestamp,
       });
@@ -456,7 +509,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
 
   setActiveAgent: (id) => set({ activeAgentId: id }),
 
-  setAvailableModels: (models) => set({ availableModels: models }),
+  setModelCatalog: (catalog) => set({ availableModels: flattenModelCatalog(catalog) }),
 
   updateAgent: (id, update) =>
     set((s) => ({
@@ -557,6 +610,45 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       set((s) => ({
         agents: s.agents.map((agent) =>
           agent.id === agentId ? { ...agent, name: event.name } : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (event.type === "tool_permission_requested") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId
+            ? {
+                ...agent,
+                pendingPermission: {
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  args: event.args,
+                  timeoutMs: event.timeoutMs,
+                },
+              }
+            : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (event.type === "tool_permission_resolved") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId && agent.pendingPermission?.toolCallId === event.toolCallId
+            ? { ...agent, pendingPermission: null }
+            : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (event.type === "tool_permission_mode_changed") {
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, toolPermissionMode: event.mode } : agent,
         ),
       }));
       return;
@@ -707,6 +799,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       const m = event.data.model as Record<string, unknown>;
       const meta: ModelMeta = {
         id: String(m.id ?? ""),
+        provider: m.provider === undefined ? undefined : String(m.provider),
         name: String(m.name ?? ""),
         contextWindow: Number(m.contextWindow ?? 0),
         maxTokens: Number(m.maxTokens ?? 0),
@@ -714,9 +807,35 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
         images: Array.isArray(m.input) ? (m.input as string[]).includes("image") : Boolean(m.images),
       };
       const autoCompactionEnabled = Boolean(event.data.autoCompactionEnabled ?? true);
+      const toolPermissionMode = event.data.toolPermissionMode;
       set((s) => ({
         agents: s.agents.map((agent) =>
-          agent.id === agentId ? { ...agent, modelMeta: meta, autoCompactionEnabled } : agent,
+          agent.id === agentId
+            ? {
+                ...agent,
+                modelMeta: meta,
+                autoCompactionEnabled,
+                ...(toolPermissionMode === "ask" || toolPermissionMode === "edits" || toolPermissionMode === "allow"
+                  ? { toolPermissionMode }
+                  : {}),
+              }
+            : agent,
+        ),
+      }));
+      return;
+    }
+
+    if (
+      event.type === "response" &&
+      event.command === "get_tool_permission_mode" &&
+      event.success &&
+      event.data
+    ) {
+      const mode = event.data.mode;
+      if (mode !== "ask" && mode !== "edits" && mode !== "allow") return;
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, toolPermissionMode: mode } : agent,
         ),
       }));
       return;
@@ -775,32 +894,10 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       return;
     }
 
-    if (
-      event.type === "response" &&
-      event.command === "get_available_models" &&
-      event.success &&
-      Array.isArray(event.data?.models)
-    ) {
-      const models: AvailableModel[] = (event.data.models as Record<string, unknown>[]).map((m) => ({
-        id: String(m.id ?? ""),
-        name: String(m.name ?? ""),
-        provider: String(m.provider ?? ""),
-        contextWindow: Number(m.contextWindow ?? 0),
-        maxTokens: Number(m.maxTokens ?? 0),
-        reasoning: Boolean(m.reasoning),
-        images: Boolean(m.images),
-      }));
-      set((state) => {
-        const merged = new Map(
-          state.availableModels.map((model) => [`${model.provider}:${model.id}`, model]),
-        );
-        for (const model of models) {
-          merged.set(`${model.provider}:${model.id}`, model);
-        }
-        return { availableModels: Array.from(merged.values()) };
-      });
-      return;
-    }
+    // `get_available_models` responses are intentionally ignored: that RPC
+    // reports the agent's full resolvable set (including built-in catalog
+    // entries), while the app's model directory is defined solely by the
+    // providers/models the user configured. The catalog is refreshed instead.
 
     const parsed = parseAgentEvent(event);
     if (parsed.kind === "turn_lifecycle" && parsed.phase === "end" && parsed.usage) {
@@ -911,6 +1008,22 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
             messages: [...agent.messages, {
               id: nextId(),
               role: "agent_batch",
+              content,
+              timestamp: Date.now(),
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
+        if (lifecycleMessage?.role === "custom" && lifecycleMessage.customType === "turn_timeout") {
+          const content = messageText(lifecycleMessage as PersistedRpcMessage);
+          if (agent.messages.some((message) => message.role === "notice" && message.content === content)) {
+            return agent;
+          }
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "notice" as const,
               content,
               timestamp: Date.now(),
             }],

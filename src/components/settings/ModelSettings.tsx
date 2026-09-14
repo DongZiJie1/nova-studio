@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Check, LayoutGrid, LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
+import { Check, LayoutGrid, LoaderCircle, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import {
+  deleteModelConfiguration,
   deleteProviderConfiguration,
   getModelConfigurations,
   saveModelConfiguration,
   type ModelConfigurationInput,
   type ProviderConfiguration,
 } from "../../lib/tauri-bridge";
+import { providerLogo } from "../../lib/provider-logos";
 import type { AvailableModel } from "../../stores/agent-store";
 
 interface ModelSettingsProps {
@@ -49,59 +51,71 @@ const PRESET_PROVIDERS: { id: string; name: string; baseUrl: string; api: ModelC
 
 const CUSTOM_PROVIDER = "__custom__";
 
-/** Provider logos bundled at build time (Simple Icons SVGs + vendor favicons). */
-const LOGO_MODULES = import.meta.glob<string>("../../assets/provider-logos/*.{svg,png,ico}", {
-  eager: true,
-  query: "?url",
-  import: "default",
-});
-const PROVIDER_LOGOS: Record<string, string> = {};
-for (const [path, url] of Object.entries(LOGO_MODULES)) {
-  PROVIDER_LOGOS[path.split("/").pop()!.replace(/\.(svg|png|ico)$/, "")] = url;
-}
-/** Preset ids whose logo lives under a shared brand file. */
-const LOGO_ALIASES: Record<string, string> = {
-  google: "googlegemini",
-  "moonshotai-cn": "kimi",
-  moonshotai: "kimi",
-  "kimi-coding": "kimi",
-  "xiaomi-token-plan-cn": "xiaomi",
-  "xiaomi-token-plan-ams": "xiaomi",
-  "xiaomi-token-plan-sgp": "xiaomi",
-  "qwen-token-plan-cn": "qwen",
-  "qwen-token-plan": "qwen",
-  "minimax-cn": "minimax",
-  "vercel-ai-gateway": "vercel",
-  zai: "zhipu",
-  "zai-coding-cn": "zhipu",
-};
-
-function providerLogo(providerId: string): string | undefined {
-  return PROVIDER_LOGOS[LOGO_ALIASES[providerId] ?? providerId];
+/**
+ * Output-token cap for a saved model. There is no user-facing field: a single
+ * response never reaches the cap, and nova already clamps `maxTokens` to the
+ * context actually left at request time, so the full context window is the
+ * "never triggers" choice. An existing model keeps the value already on disk
+ * unless the context window was lowered below it.
+ */
+function maxTokensForRow(row: ModelRow, existingModels: AvailableModel[]): number {
+  const existing = existingModels.find((model) => model.id === row.modelId?.trim());
+  return Math.min(existing?.maxTokens ?? row.contextWindow, row.contextWindow);
 }
 
-const INITIAL_FORM: ModelConfigurationInput = {
+/** Compact context-window label: 1000000 -> "1M", 128000 -> "128K". */
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(0)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(0)}K`;
+  return tokens.toString();
+}
+
+/**
+ * Connection fields. The output-token cap is deliberately absent: a single
+ * response never reaches it, and nova already clamps `maxTokens` to the
+ * remaining context at request time, so the saved value is always the full
+ * context window (see `maxTokensForRow`).
+ */
+type ModelForm = Omit<ModelConfigurationInput, "maxTokens">;
+
+/**
+ * The context window is a binary choice rather than a free number: models are
+ * either long-context (1M) or conventional (200K).
+ */
+const LONG_CONTEXT_WINDOW = 1_000_000;
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+function isLongContext(contextWindow: number): boolean {
+  return contextWindow >= LONG_CONTEXT_WINDOW;
+}
+
+/**
+ * Prefilled capability defaults for a newly added model. Current models broadly
+ * support long context, reasoning and image input, so these start checked and
+ * the user only unticks the exceptions.
+ */
+const DEFAULT_CAPABILITIES = {
+  contextWindow: LONG_CONTEXT_WINDOW,
+  reasoning: true,
+  images: true,
+} as const;
+
+const INITIAL_FORM: ModelForm = {
   providerId: "",
   modelId: "",
   displayName: "",
   baseUrl: "",
   api: "openai-completions",
   apiKey: "",
-  contextWindow: 128000,
-  maxTokens: 8192,
-  reasoning: false,
-  images: false,
+  ...DEFAULT_CAPABILITIES,
 };
 
-type ModelRow = Pick<ModelConfigurationInput, "modelId" | "displayName" | "contextWindow" | "maxTokens" | "reasoning" | "images">;
+type ModelRow = Pick<ModelForm, "modelId" | "displayName" | "contextWindow" | "reasoning" | "images">;
 
 const INITIAL_MODEL_ROW: ModelRow = {
   modelId: "",
   displayName: "",
-  contextWindow: 128000,
-  maxTokens: 8192,
-  reasoning: false,
-  images: false,
+  ...DEFAULT_CAPABILITIES,
 };
 
 const AVATAR_COLORS = ["#4f6ef7", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#64748b"];
@@ -113,7 +127,7 @@ function avatarColor(id: string): string {
 }
 
 export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
-  const [form, setForm] = useState<ModelConfigurationInput>(INITIAL_FORM);
+  const [form, setForm] = useState<ModelForm>(INITIAL_FORM);
   const [modelRows, setModelRows] = useState<ModelRow[]>([INITIAL_MODEL_ROW]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,53 +159,104 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
     return ids;
   }, [configMap, models]);
 
+  // The model rows shown here are the very same records the chat picker
+  // renders — both read the directory published from models.json.
+  const modelsByProvider = useMemo(() => {
+    const grouped = new Map<string, AvailableModel[]>();
+    for (const model of models) {
+      const list = grouped.get(model.provider) ?? [];
+      list.push(model);
+      grouped.set(model.provider, list);
+    }
+    return grouped;
+  }, [models]);
+
+  // Providers that exist in models.json / auth but have no preset entry (for
+  // example ollama) still need a chip, otherwise their configuration is
+  // unreachable from this page.
+  const providerChips = useMemo(() => {
+    const known = new Set(PRESET_PROVIDERS.map((preset) => preset.id));
+    const extras = new Set<string>();
+    for (const providerId of configMap.keys()) if (!known.has(providerId)) extras.add(providerId);
+    for (const model of models) if (!known.has(model.provider)) extras.add(model.provider);
+    return [
+      ...PRESET_PROVIDERS.map((preset) => ({ id: preset.id, name: preset.name, preset: true })),
+      ...[...extras].sort().map((id) => ({ id, name: id, preset: false })),
+    ];
+  }, [configMap, models]);
+
   const normalizedPresetQuery = presetQuery.trim().toLowerCase();
   const presetChips = useMemo(() => {
-    const matched = PRESET_PROVIDERS.filter(
-      (preset) => !normalizedPresetQuery || `${preset.id} ${preset.name}`.toLowerCase().includes(normalizedPresetQuery),
+    const matched = providerChips.filter(
+      (chip) => !normalizedPresetQuery || `${chip.id} ${chip.name}`.toLowerCase().includes(normalizedPresetQuery),
     );
     return matched.sort((left, right) => {
       const leftConnected = connectedIds.has(left.id) ? 0 : 1;
       const rightConnected = connectedIds.has(right.id) ? 0 : 1;
       return leftConnected - rightConnected || left.name.localeCompare(right.name);
     });
-  }, [normalizedPresetQuery, connectedIds]);
+  }, [normalizedPresetQuery, connectedIds, providerChips]);
 
-  const selectedPreset = selected && selected !== CUSTOM_PROVIDER ? PRESET_PROVIDERS.find((preset) => preset.id === selected) : undefined;
+  const selectedPreset = selected && selected !== CUSTOM_PROVIDER ? providerChips.find((chip) => chip.id === selected) : undefined;
   const selectedConfig = selected && selected !== CUSTOM_PROVIDER ? configMap.get(selected) : undefined;
   const selectedConnected = selected ? connectedIds.has(selected) : false;
   const isBuiltinSelection = Boolean(selectedPreset);
-  const modelRequired = selected === CUSTOM_PROVIDER || editing !== null;
+  const selectedModels = selected && selected !== CUSTOM_PROVIDER ? (modelsByProvider.get(selected) ?? []) : [];
+  // Every model the picker can show must exist in models.json, so a provider
+  // with no models yet has to get one before it can be connected. Providers
+  // that already have models only need the connection fields re-saved.
+  const modelRequired = selected === CUSTOM_PROVIDER || editing !== null || (Boolean(selected) && selectedModels.length === 0);
 
   const applyPresetPrefill = useCallback(
     (providerId: string) => {
+      // Presets carry default connection details; providers that only exist in
+      // models.json (ollama, a self-hosted proxy, …) fall back to what is saved.
       const preset = PRESET_PROVIDERS.find((entry) => entry.id === providerId);
-      if (!preset) return;
       const savedConfig = configMap.get(providerId);
-      const catalogModel = models.find((model) => model.provider === providerId);
       setForm({
-        providerId: preset.id,
-        modelId: catalogModel?.id ?? "",
-        displayName: catalogModel && catalogModel.name !== catalogModel.id ? catalogModel.name : "",
-        baseUrl: preset.baseUrl,
-        api: preset.api,
+        providerId,
+        modelId: "",
+        displayName: "",
+        baseUrl: savedConfig?.baseUrl ?? preset?.baseUrl ?? "",
+        api: (savedConfig?.api as ModelConfigurationInput["api"] | undefined) ?? preset?.api ?? "openai-completions",
         apiKey: savedConfig?.apiKey ?? "",
-        contextWindow: catalogModel?.contextWindow || INITIAL_FORM.contextWindow,
-        maxTokens: catalogModel?.maxTokens || INITIAL_FORM.maxTokens,
-        reasoning: catalogModel?.reasoning ?? false,
-        images: catalogModel?.images ?? false,
+        ...DEFAULT_CAPABILITIES,
       });
-      setModelRows([catalogModel ? {
-        modelId: catalogModel.id,
-        displayName: catalogModel.name !== catalogModel.id ? catalogModel.name : "",
-        contextWindow: catalogModel.contextWindow || INITIAL_MODEL_ROW.contextWindow,
-        maxTokens: catalogModel.maxTokens || INITIAL_MODEL_ROW.maxTokens,
-        reasoning: catalogModel.reasoning,
-        images: catalogModel.images,
-      } : INITIAL_MODEL_ROW]);
+      setModelRows([{ ...INITIAL_MODEL_ROW }]);
     },
-    [configMap, models],
+    [configMap],
   );
+
+  const startEditing = (model: AvailableModel) => {
+    setEditing({ providerId: model.provider, modelId: model.id });
+    setError(null);
+    setSaved(false);
+    setModelRows([
+      {
+        modelId: model.id,
+        displayName: model.name !== model.id ? model.name : "",
+        contextWindow: model.contextWindow,
+        reasoning: model.reasoning,
+        images: model.images,
+      },
+    ]);
+  };
+
+  const removeModel = async (providerId: string, modelId: string) => {
+    const confirmed = await ask(`确定删除模型「${modelId}」？删除后它不会再出现在模型选择器中。`, {
+      title: "删除模型",
+      kind: "warning",
+    });
+    if (!confirmed) return;
+    try {
+      await deleteModelConfiguration(providerId, modelId);
+      if (editing?.modelId === modelId) cancelEdit();
+      await onSaved();
+      await refreshConfigs();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
 
   const selectPreset = (providerId: string) => {
     setSelected(providerId);
@@ -247,10 +312,17 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       const modelIds = rows.map((row) => row.modelId!.trim());
       if (new Set(modelIds).size !== modelIds.length) throw new Error("模型 ID 不能重复");
       if (rows.length === 0) {
-        await saveModelConfiguration({ ...form, modelId: "" });
+        await saveModelConfiguration({ ...form, modelId: "", maxTokens: form.contextWindow });
       } else {
         for (const [index, row] of rows.entries()) {
-          await saveModelConfiguration({ ...form, ...row, apiKey: index === 0 ? form.apiKey : "" });
+          await saveModelConfiguration({
+            ...form,
+            ...row,
+            // Renaming in the edit form must replace the row it started from.
+            previousModelId: editing && index === 0 ? editing.modelId : undefined,
+            maxTokens: maxTokensForRow(row, selectedModels),
+            apiKey: index === 0 ? form.apiKey : "",
+          });
         }
       }
       await onSaved();
@@ -259,8 +331,9 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       if (editing) setEditing(null);
       if (!selected || selected === CUSTOM_PROVIDER) {
         setForm(INITIAL_FORM);
-        setModelRows([INITIAL_MODEL_ROW]);
       }
+      // The saved model now lives in the list above, so clear the editor.
+      setModelRows([{ ...INITIAL_MODEL_ROW }]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -294,8 +367,8 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       <section className="settings-card model-catalog-card">
         <div className="model-catalog-header">
           <div className="settings-card-copy">
-            <h2><LayoutGrid size={15} />预设供应商 <span className="model-count">{PRESET_PROVIDERS.length}</span></h2>
-            <p>选中一个供应商，在下方填入接入信息。已接入的供应商会高亮显示。</p>
+            <h2><LayoutGrid size={15} />供应商 <span className="model-count">{providerChips.length}</span></h2>
+            <p>选中一个供应商，在下方管理接入信息和模型。已接入的会高亮显示。</p>
           </div>
           <label className="model-search">
             <Search size={14} />
@@ -367,16 +440,16 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                   ? "手动填写所有必要字段，相同 Provider ID 和模型 ID 会更新已有配置。"
                   : selectedConnected
                     ? "管理接入信息和模型。"
-                    : "填入 API Key 即可接入；模型 ID 留空则使用内置模型目录。"}
+                    : "填入 API Key 并至少添加一个模型，才会出现在模型选择器中。"}
               </p>
             </div>
             {selectedConfig && selected !== CUSTOM_PROVIDER && (
               <button
                 type="button"
                 className="model-icon-btn model-icon-danger"
-                onClick={() => void removeProvider(selected, selectedConfig.models.length > 0)}
+                onClick={() => void removeProvider(selected, selectedModels.length > 0)}
               >
-                <Trash2 size={12} />{selectedConfig.models.length > 0 ? "删除 Provider" : "移除 API Key"}
+                <Trash2 size={12} />{selectedModels.length > 0 ? "删除 Provider" : "移除 API Key"}
               </button>
             )}
           </div>
@@ -399,11 +472,59 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
               <label className="model-settings-wide"><span>API Key <small>{selectedConnected ? "已回填，可直接修改" : "请输入访问密钥"}</small></span><input type="text" autoComplete="off" value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder="sk-..." /></label>
             </div>
 
+            {selectedModels.length > 0 && (
+              <div className="model-saved-list">
+                <div className="model-saved-header">
+                  <div>
+                    <strong>已配置模型</strong>
+                    <small>与聊天模型选择器显示同一份数据</small>
+                  </div>
+                </div>
+                {selectedModels.map((model) => (
+                  <div className="model-saved-item" key={model.id}>
+                    <div className="model-saved-identity">
+                      <span className="model-saved-name">{model.name}</span>
+                      {model.name !== model.id && <span className="model-saved-id">{model.id}</span>}
+                    </div>
+                    <div className="model-saved-tags">
+                      <span className="model-saved-tag">{formatContextWindow(model.contextWindow)} 上下文</span>
+                      {model.reasoning && <span className="model-saved-tag model-saved-tag-accent">推理</span>}
+                      {model.images && <span className="model-saved-tag model-saved-tag-accent">图片</span>}
+                    </div>
+                    <div className="model-saved-actions">
+                      <button
+                        type="button"
+                        className="model-icon-btn"
+                        title="编辑模型"
+                        onClick={() => startEditing(model)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="model-icon-btn model-icon-danger"
+                        title="删除模型"
+                        onClick={() => void removeModel(model.provider, model.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="model-list-editor">
               <div className="model-list-editor-header">
                 <div>
-                  <strong>模型</strong>
-                  {!modelRequired && <small>可选；不填写则使用内置模型目录</small>}
+                  <strong>{editing ? "编辑模型" : "添加模型"}</strong>
+                  <small>
+                    {editing
+                      ? `正在编辑 ${editing.modelId}`
+                      : selectedModels.length > 0
+                        ? "可选；留空则只更新接入信息"
+                        : "必须至少填写一个模型，否则该 Provider 不会出现在模型选择器中"}
+                  </small>
                 </div>
                 {!editing && <button type="button" className="model-add-row" onClick={addModelRow}><Plus size={13} />添加模型</button>}
               </div>
@@ -416,10 +537,21 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                   <div className="model-settings-grid">
                     <label><span>模型 ID</span><input required={modelRequired || modelRows.length > 1} value={row.modelId ?? ""} onChange={(event) => updateModelRow(index, "modelId", event.target.value)} placeholder="例如 gpt-5" /></label>
                     <label><span>显示名称 <small>可选</small></span><input value={row.displayName ?? ""} onChange={(event) => updateModelRow(index, "displayName", event.target.value)} placeholder="模型在选择器中的名称" /></label>
-                    <label><span>上下文窗口</span><input required={Boolean(row.modelId?.trim())} min={1} type="number" value={row.contextWindow} onChange={(event) => updateModelRow(index, "contextWindow", Number(event.target.value))} /></label>
-                    <label><span>最大输出 Token</span><input required={Boolean(row.modelId?.trim())} min={1} max={row.contextWindow} type="number" value={row.maxTokens} onChange={(event) => updateModelRow(index, "maxTokens", Number(event.target.value))} /></label>
                   </div>
                   <div className="model-settings-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={isLongContext(row.contextWindow)}
+                        onChange={(event) =>
+                          updateModelRow(index, "contextWindow", event.target.checked ? LONG_CONTEXT_WINDOW : DEFAULT_CONTEXT_WINDOW)
+                        }
+                      />
+                      <span>
+                        支持 1M 上下文
+                        <small>当前 {formatContextWindow(row.contextWindow)}</small>
+                      </span>
+                    </label>
                     <label><input type="checkbox" checked={row.reasoning} onChange={(event) => updateModelRow(index, "reasoning", event.target.checked)} /><span>支持推理</span></label>
                     <label><input type="checkbox" checked={row.images} onChange={(event) => updateModelRow(index, "images", event.target.checked)} /><span>支持图片输入</span></label>
                   </div>

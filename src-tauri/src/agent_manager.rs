@@ -3,6 +3,9 @@ use crate::nova_host_process::NovaHostProcess;
 use crate::rpc_types::{
     AgentInfo, CollaborationContext, FileReference, ImageContent, RpcCommand, SpawnRequest,
 };
+use crate::worktree::{
+    self, MergeOutcome, WorktreeInfo, WorktreeState, WorktreeStatus, WorktreeStore,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -27,6 +30,7 @@ pub struct AgentManager {
     records: Arc<RwLock<HashMap<String, PersistedAgent>>>,
     persistence_lock: Arc<Mutex<()>>,
     host: Mutex<Option<Arc<NovaHostProcess>>>,
+    worktrees: WorktreeStore,
 }
 
 struct AskCancellationGuard {
@@ -71,6 +75,12 @@ struct PersistedAgent {
     #[serde(default)]
     message_count: usize,
     depth: u64,
+    /// Repository root when this agent (or its owner) runs in a worktree.
+    #[serde(default)]
+    project_cwd: Option<String>,
+    /// Set only on the agent that owns the worktree; delegated children share the checkout.
+    #[serde(default)]
+    worktree: Option<WorktreeInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +104,7 @@ struct NovaSessionSummary {
 impl AgentManager {
     pub fn new(cli_path: String, state_path: PathBuf) -> Self {
         let (global_event_tx, _) = broadcast::channel(512);
+        let worktrees = WorktreeStore::new(state_path.with_file_name("worktrees.json"));
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             global_event_tx,
@@ -104,6 +115,7 @@ impl AgentManager {
             records: Arc::new(RwLock::new(HashMap::new())),
             persistence_lock: Arc::new(Mutex::new(())),
             host: Mutex::new(None),
+            worktrees,
         }
     }
 
@@ -155,7 +167,7 @@ impl AgentManager {
             .cloned()
             .map(|record| (record.session_id.clone(), record))
             .collect();
-        let records = match self.load_nova_sessions().await {
+        let records: HashMap<String, PersistedAgent> = match self.load_nova_sessions().await {
             Ok(catalog) => catalog
                 .sessions
                 .into_iter()
@@ -186,6 +198,8 @@ impl AgentManager {
                             created_at: session.created_at,
                             message_count: session.message_count,
                             depth: legacy.map_or(0, |item| item.depth),
+                            project_cwd: legacy.and_then(|item| item.project_cwd.clone()),
+                            worktree: legacy.and_then(|item| item.worktree.clone()),
                         },
                     )
                 })
@@ -202,6 +216,34 @@ impl AgentManager {
             }
             Err(error) => return Err(error),
         };
+        // Worktree metadata lives outside the agent records so session-catalog pruning
+        // cannot drop it; reattach it here and flag checkouts that disappeared.
+        self.worktrees.load().await?;
+        // Validate before reattaching, so records pick up the corrected state.
+        for (id, info) in self.worktrees.list().await {
+            if info.state != WorktreeState::Active {
+                continue;
+            }
+            if !worktree::verify_existing(&info).await {
+                log::warn!("Worktree for {} is gone from disk: {}", id, info.path);
+                let mut missing = info.clone();
+                missing.state = WorktreeState::Missing;
+                self.worktrees.put(&id, missing).await?;
+            } else if !records.contains_key(&id) {
+                log::warn!(
+                    "Worktree {} has no matching agent record; left in place at {}",
+                    id,
+                    info.path
+                );
+            }
+        }
+        let mut records = records;
+        for (id, record) in records.iter_mut() {
+            if let Some(info) = self.worktrees.get(id).await {
+                record.project_cwd = Some(info.project_cwd.clone());
+                record.worktree = Some(info);
+            }
+        }
         *self.records.write().await = records;
         self.persist_records().await?;
         Ok(())
@@ -283,6 +325,8 @@ impl AgentManager {
                         created_at: session.created_at,
                         message_count: session.message_count,
                         depth: 0,
+                        project_cwd: None,
+                        worktree: None,
                     },
                 );
             }
@@ -329,8 +373,35 @@ impl AgentManager {
             }
         }
 
-        let cwd = normalize_project_cwd(&request.cwd)?;
+        let project_cwd = normalize_project_cwd(&request.cwd)?;
         let short_id = Uuid::new_v4().to_string()[..8].to_string();
+        let agent_id = format!("agent-{short_id}");
+
+        // A delegated child inherits its parent's checkout rather than creating a nested
+        // worktree, so one root agent owns one worktree for the whole task group.
+        let inherited_project_cwd = match request.parent_agent_id.as_deref() {
+            Some(parent_id) => self
+                .worktrees
+                .get(parent_id)
+                .await
+                .map(|parent| parent.project_cwd),
+            None => None,
+        };
+        let parent_id = request.parent_agent_id.clone();
+        let worktree = if request.worktree_enabled {
+            Some(self.worktrees.create(&project_cwd, &agent_id).await?)
+        } else {
+            None
+        };
+        let cwd = match worktree.as_ref() {
+            Some(info) => normalize_project_cwd(&info.path)?,
+            None => project_cwd,
+        };
+        let project_cwd = worktree
+            .as_ref()
+            .map(|info| info.project_cwd.clone())
+            .or(inherited_project_cwd);
+
         let mut args = request.args.unwrap_or_default();
         if let Some(parent_id) = request.parent_agent_id.as_ref() {
             let mut parent_file = self
@@ -355,7 +426,7 @@ impl AgentManager {
             }
         }
         let record = PersistedAgent {
-            id: format!("agent-{short_id}"),
+            id: agent_id.clone(),
             created_by: Some(request.parent_agent_id.clone().unwrap_or_else(|| "user".to_string())),
             parent_agent_id: request.parent_agent_id,
             name: Some("Nova".to_string()),
@@ -368,8 +439,42 @@ impl AgentManager {
             created_at: chrono::Utc::now().to_rfc3339(),
             message_count: 0,
             depth: request.depth,
+            project_cwd,
+            worktree: worktree.clone(),
         };
-        self.spawn_record(record, true).await
+        match self.spawn_record(record, true).await {
+            Ok(info) => {
+                // A delegated child must not be able to escape the policy its parent runs
+                // under, so it starts with the parent's mode instead of the host default.
+                if let Some(parent_id) = parent_id.as_deref() {
+                    match self.inherit_permission_mode(&agent_id, parent_id).await {
+                        Ok(mode) => log::info!(
+                            "[spawn] {} inherited tool permission mode {:?} from {}",
+                            agent_id,
+                            mode,
+                            parent_id
+                        ),
+                        Err(error) => log::warn!(
+                            "[spawn] couldn't align {} with {}'s permission mode: {}",
+                            agent_id,
+                            parent_id,
+                            error
+                        ),
+                    }
+                }
+                Ok(info)
+            }
+            Err(error) => {
+                // Never leak a checkout for an agent that failed to start.
+                if let Some(info) = worktree.as_ref() {
+                    if let Err(cleanup) = worktree::remove_worktree(info).await {
+                        log::warn!("Failed to clean up worktree {}: {}", info.path, cleanup);
+                    }
+                    let _ = self.worktrees.remove(&agent_id).await;
+                }
+                Err(error)
+            }
+        }
     }
 
     async fn spawn_record(
@@ -463,7 +568,7 @@ impl AgentManager {
             })?;
         }
 
-        let info = self.build_info(&agent_id, &record.cwd, &process).await;
+        let info = self.build_info(&agent_id, &record.cwd, &process, Some(&record)).await;
 
         // Disposable side questions are consumed directly by `ask`; keeping
         // them off the global bus prevents them appearing in the Studio console.
@@ -510,6 +615,7 @@ impl AgentManager {
             let _ = agent.send_command(&RpcCommand::GetState { id: None });
             let _ = agent.send_command(&RpcCommand::GetSessionStats { id: None });
             let _ = agent.send_command(&RpcCommand::GetAvailableModels { id: None });
+            let _ = agent.send_command(&RpcCommand::GetToolPermissionMode { id: None });
         }
 
         // Disposable side-question sessions are deliberately invisible to
@@ -619,6 +725,10 @@ impl AgentManager {
             created_at: chrono::Utc::now().to_rfc3339(),
             message_count: 0,
             depth: parent.depth.saturating_add(1),
+            // A temporary side question runs in the parent's directory but never owns
+            // its worktree, so resolving that worktree stays a single action.
+            project_cwd: parent.project_cwd.clone(),
+            worktree: None,
         };
 
         self.spawn_record(transient, false).await?;
@@ -744,13 +854,6 @@ impl AgentManager {
         agent.send_command(&RpcCommand::GetContextSnapshot { id: None })
     }
 
-    /// Request available models from an agent
-    pub async fn request_available_models(&self, agent_id: &str) -> Result<(), String> {
-        let agents = self.agents.read().await;
-        let agent = agents.get(agent_id).ok_or("Agent not found")?;
-        agent.send_command(&RpcCommand::GetAvailableModels { id: None })
-    }
-
     pub async fn revert_file_change(
         &self,
         agent_id: &str,
@@ -855,8 +958,193 @@ impl AgentManager {
         })
     }
 
-    /// List all available models from nova CLI
-    pub async fn list_all_models(&self) -> Result<Vec<serde_json::Value>, String> {
+    /// Switch the tool permission mode for an agent's session
+    pub async fn set_tool_permission_mode(&self, agent_id: &str, mode: String) -> Result<(), String> {
+        let agents = self.agents.read().await;
+        let agent = agents.get(agent_id).ok_or("Agent not found")?;
+        agent.send_command(&RpcCommand::SetToolPermissionMode { id: None, mode })
+    }
+
+    // =========================================================================
+    // Worktree isolation
+    // =========================================================================
+
+    /// Whether the given directory can host worktree-isolated agents.
+    pub async fn worktree_available(&self, cwd: &str) -> bool {
+        match normalize_project_cwd(cwd) {
+            Ok(project) => worktree::is_git_repo(&project).await,
+            Err(_) => false,
+        }
+    }
+
+    /// The worktree owned by this agent, if any.
+    pub async fn worktree_for(&self, agent_id: &str) -> Option<WorktreeInfo> {
+        self.worktrees.get(agent_id).await
+    }
+
+    /// Tool permission policy of a running agent, used to inherit onto its children.
+    ///
+    /// Fails closed: an agent whose policy cannot be read is treated as `ask`, so a
+    /// delegated child can never end up looser than the agent that spawned it.
+    pub async fn permission_mode(&self, agent_id: &str) -> String {
+        let Some(agent) = self.get_process(agent_id).await else {
+            log::warn!("Agent {} is not running; reporting permission mode as ask", agent_id);
+            return "ask".to_string();
+        };
+        let request_id = Uuid::new_v4().to_string();
+        match self
+            .request_agent_command(
+                agent,
+                RpcCommand::GetToolPermissionMode {
+                    id: Some(request_id.clone()),
+                },
+                &request_id,
+                3,
+            )
+            .await
+        {
+            Ok(data) => data
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("ask")
+                .to_string(),
+            Err(error) => {
+                log::warn!(
+                    "Could not read the permission mode of {}: {}; reporting ask",
+                    agent_id,
+                    error
+                );
+                "ask".to_string()
+            }
+        }
+    }
+
+    /// Apply the spawning agent's policy to a freshly created child.
+    async fn inherit_permission_mode(&self, child_id: &str, parent_id: &str) -> Result<String, String> {
+        let inherited = self.permission_mode(parent_id).await;
+        let child = self
+            .get_process(child_id)
+            .await
+            .ok_or_else(|| format!("Child agent not found: {child_id}"))?;
+        child.send_command(&RpcCommand::SetToolPermissionMode {
+            id: None,
+            mode: inherited.clone(),
+        })?;
+        Ok(inherited)
+    }
+
+    pub async fn worktree_status(&self, agent_id: &str) -> Result<WorktreeStatus, String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        worktree::status(&info).await
+    }
+
+    pub async fn worktree_diff(&self, agent_id: &str, path: &str) -> Result<String, String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        worktree::file_diff(&info, path).await
+    }
+
+    /// Squash-merge the agent's work into the project and retire the worktree.
+    /// Nothing is written when the project is dirty or the merge would conflict.
+    pub async fn accept_worktree(&self, agent_id: &str) -> Result<MergeOutcome, String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        let label = self.worktree_label(agent_id).await;
+        let outcome = worktree::merge_back(&info, &label).await?;
+        if outcome.merged {
+            worktree::remove_worktree(&info).await?;
+            self.finish_worktree(agent_id, &info, WorktreeState::Merged).await?;
+        }
+        Ok(outcome)
+    }
+
+    /// Discard the agent's work and remove the worktree.
+    pub async fn reject_worktree(&self, agent_id: &str) -> Result<(), String> {
+        let info = self.require_active_worktree(agent_id).await?;
+        worktree::remove_worktree(&info).await?;
+        self.finish_worktree(agent_id, &info, WorktreeState::Rejected).await
+    }
+
+    async fn require_active_worktree(&self, agent_id: &str) -> Result<WorktreeInfo, String> {
+        let info = self
+            .worktrees
+            .get(agent_id)
+            .await
+            .ok_or_else(|| format!("Agent {agent_id} has no worktree"))?;
+        if info.state != WorktreeState::Active {
+            return Err(format!(
+                "This agent's worktree was already resolved ({:?})",
+                info.state
+            ));
+        }
+        Ok(info)
+    }
+
+    /// Record the final state, move the agent back to the project directory, and stop it —
+    /// its sandbox is gone, so continuing to run it would only produce broken tool calls.
+    async fn finish_worktree(
+        &self,
+        agent_id: &str,
+        info: &WorktreeInfo,
+        state: WorktreeState,
+    ) -> Result<(), String> {
+        let mut updated = info.clone();
+        updated.state = state;
+        self.worktrees.put(agent_id, updated.clone()).await?;
+        if let Some(record) = self.records.write().await.get_mut(agent_id) {
+            record.worktree = Some(updated);
+            if let Some(project) = record.project_cwd.clone() {
+                record.cwd = project;
+            }
+        }
+        self.persist_records().await?;
+        if self.get_process(agent_id).await.is_some() {
+            self.stop(agent_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn worktree_label(&self, agent_id: &str) -> String {
+        self.records
+            .read()
+            .await
+            .get(agent_id)
+            .and_then(|record| record.name.clone())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| agent_id.to_string())
+    }
+
+    /// Answer a pending tool permission request for an agent
+    pub async fn respond_tool_permission(
+        &self,
+        agent_id: &str,
+        tool_call_id: String,
+        allowed: bool,
+    ) -> Result<bool, String> {
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let data = self
+            .request_agent_command(
+                agent,
+                RpcCommand::RespondToolPermission {
+                    id: Some(request_id.clone()),
+                    tool_call_id,
+                    allowed,
+                },
+                &request_id,
+                10,
+            )
+            .await?;
+        Ok(data
+            .get("handled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+
+    /// Read the provider/model directory from the nova CLI as structured JSON.
+    ///
+    /// The payload is the single source of truth shared by the settings page and
+    /// the model picker, so it is consumed verbatim — no unit re-parsing, which
+    /// used to round 1048576 to "1M" and drop display names.
+    pub async fn get_model_catalog(&self) -> Result<serde_json::Value, String> {
         let is_js_file = self.cli_path.ends_with(".js");
         let mut command = if is_js_file {
             let mut command = tokio::process::Command::new("node");
@@ -866,7 +1154,7 @@ impl AgentManager {
             tokio::process::Command::new(&self.cli_path)
         };
         let output = command
-            .arg("--list-models")
+            .args(["--list-models", "--json"])
             .output()
             .await
             .map_err(|error| format!("Failed to list models: {error}"))?;
@@ -876,57 +1164,8 @@ impl AgentManager {
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = stdout.lines().collect();
-        // Skip header line, parse remaining lines
-        let mut models = Vec::new();
-        for line in lines.iter().skip(1) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                let provider = parts[0];
-                let model_id = parts[1];
-                let context_window = parts[2];
-                let max_tokens = parts[3];
-                let thinking = parts.get(4).map(|s| *s == "yes").unwrap_or(false);
-                let images = parts.get(5).map(|s| *s == "yes").unwrap_or(false);
-                // Parse context window (e.g., "1M" -> 1000000, "200K" -> 200000)
-                let context_window_num = if context_window.ends_with('M') {
-                    context_window
-                        .trim_end_matches('M')
-                        .parse::<f64>()
-                        .unwrap_or(0.0)
-                        * 1_000_000.0
-                } else if context_window.ends_with('K') {
-                    context_window
-                        .trim_end_matches('K')
-                        .parse::<f64>()
-                        .unwrap_or(0.0)
-                        * 1_000.0
-                } else {
-                    context_window.parse::<f64>().unwrap_or(0.0)
-                };
-                // Parse max tokens
-                let max_tokens_num = if max_tokens.ends_with('K') {
-                    max_tokens
-                        .trim_end_matches('K')
-                        .parse::<f64>()
-                        .unwrap_or(0.0)
-                        * 1_000.0
-                } else {
-                    max_tokens.parse::<f64>().unwrap_or(0.0)
-                };
-                models.push(serde_json::json!({
-                    "id": model_id,
-                    "name": model_id,
-                    "provider": provider,
-                    "contextWindow": context_window_num as i64,
-                    "maxTokens": max_tokens_num as i64,
-                    "reasoning": thinking,
-                    "images": images,
-                }));
-            }
-        }
-        Ok(models)
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Nova list-models returned invalid JSON: {error}"))
     }
 
     /// Ask an agent a question and wait for its full reply.
@@ -1202,7 +1441,7 @@ impl AgentManager {
         let mut infos = Vec::new();
         for (id, record) in records.iter() {
             if let Some(agent) = agents.get(id) {
-                let mut info = self.build_info(id, &record.cwd, agent).await;
+                let mut info = self.build_info(id, &record.cwd, agent, Some(record)).await;
                 info.lifecycle = lifecycles.remove(id);
                 infos.push(info);
             } else {
@@ -1225,7 +1464,7 @@ impl AgentManager {
     /// Get info about a specific agent
     pub async fn get_info(&self, agent_id: &str) -> Result<AgentInfo, String> {
         if let Some(agent) = self.agents.read().await.get(agent_id).cloned() {
-            let mut info = self.build_info(agent_id, &agent.cwd, &agent).await;
+            let mut info = self.build_info(agent_id, &agent.cwd, &agent, None).await;
             info.lifecycle = agent.request_lifecycle().await;
             return Ok(info);
         }
@@ -1268,7 +1507,21 @@ impl AgentManager {
         self.agents.read().await.len()
     }
 
-    async fn build_info(&self, id: &str, cwd: &str, process: &AgentProcess) -> AgentInfo {
+    async fn build_info(
+        &self,
+        id: &str,
+        cwd: &str,
+        process: &AgentProcess,
+        record: Option<&PersistedAgent>,
+    ) -> AgentInfo {
+        let stored = match record {
+            Some(record) => Some(record.clone()),
+            None => self.records.read().await.get(id).cloned(),
+        };
+        let (project_cwd, worktree) = match stored {
+            Some(record) => (record.project_cwd, record.worktree),
+            None => (None, None),
+        };
         AgentInfo {
             id: id.to_string(),
             parent_agent_id: process.parent_agent_id.clone(),
@@ -1277,6 +1530,8 @@ impl AgentManager {
             status: process.get_status().await,
             lifecycle: None,
             cwd: cwd.to_string(),
+            project_cwd,
+            worktree,
             model: process.model.clone(),
             session_id: Some(process.session_id.clone()),
             created_at: process.created_at.clone(),
@@ -1317,6 +1572,8 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
         status: crate::rpc_types::AgentStatus::Stopped,
         lifecycle: None,
         cwd: record.cwd.clone(),
+        project_cwd: record.project_cwd.clone(),
+        worktree: record.worktree.clone(),
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),
         created_at: record.created_at.clone(),
@@ -1456,6 +1713,7 @@ mod tests {
 
         let info = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: Some("test-model".to_string()),
@@ -1555,6 +1813,7 @@ mod tests {
         let manager = AgentManager::new(mock_cli_path(), state_path.clone());
         let parent = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: None,
                 model: None,
@@ -1567,6 +1826,7 @@ mod tests {
 
         let child = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some(parent.id.clone()),
                 model: None,
@@ -1618,6 +1878,8 @@ mod tests {
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 message_count: 0,
                 depth: 0,
+                project_cwd: None,
+                worktree: None,
             },
             PersistedAgent {
                 id: "agent-mock-child".to_string(),
@@ -1633,6 +1895,8 @@ mod tests {
                 created_at: "2026-01-01T00:00:01Z".to_string(),
                 message_count: 0,
                 depth: 1,
+                project_cwd: None,
+                worktree: None,
             },
         ];
         tokio::fs::write(&state_path, serde_json::to_vec(&records).unwrap())
@@ -1648,6 +1912,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn child_agents_inherit_the_parent_permission_mode() {
+        let manager = AgentManager::new(
+            mock_cli_path(),
+            std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4())),
+        );
+        let mut events = manager.subscribe_global();
+        let parent = manager
+            .spawn(SpawnRequest {
+                worktree_enabled: false,
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        // The mock reports "edits" for the parent; the child must be switched to it.
+        let child = manager
+            .spawn(SpawnRequest {
+                worktree_enabled: false,
+                cwd: "/tmp".to_string(),
+                parent_agent_id: Some(parent.id.clone()),
+                model: None,
+                provider: None,
+                args: None,
+                depth: 1,
+            })
+            .await
+            .unwrap();
+
+        let (agent_id, event) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            recv_lifecycle_event(&mut events, "tool_permission_mode_changed"),
+        )
+        .await
+        .expect("the child never had its permission mode aligned with the parent");
+        assert_eq!(agent_id, child.id);
+        assert_eq!(event.get("mode").and_then(|value| value.as_str()), Some("edits"));
+    }
+
+    #[tokio::test]
+    async fn permission_mode_fails_closed_to_ask_when_the_agent_is_not_running() {
+        let state_path = std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4()));
+        let manager = AgentManager::new(mock_cli_path(), state_path.clone());
+        let parent = manager
+            .spawn(SpawnRequest {
+                worktree_enabled: false,
+                cwd: "/tmp".to_string(),
+                parent_agent_id: None,
+                model: None,
+                provider: None,
+                args: None,
+                depth: 0,
+            })
+            .await
+            .unwrap();
+        manager.stop(&parent.id).await.unwrap();
+
+        // With no readable parent policy the child must land on the strictest mode.
+        assert_eq!(manager.permission_mode(&parent.id).await, "ask");
+
+        let _ = tokio::fs::remove_file(state_path).await;
+    }
+
+    #[tokio::test]
     async fn spawn_rejects_unknown_parent() {
         let manager = AgentManager::new(
             mock_cli_path(),
@@ -1655,6 +1986,7 @@ mod tests {
         );
         let err = manager
             .spawn(SpawnRequest {
+                worktree_enabled: false,
                 cwd: "/tmp".to_string(),
                 parent_agent_id: Some("agent-missing".to_string()),
                 model: None,
@@ -1715,5 +2047,75 @@ mod tests {
         );
 
         let _ = tokio::fs::remove_file(state_path).await;
+    }
+
+    #[tokio::test]
+    async fn restore_marks_a_worktree_whose_checkout_disappeared() {
+        // The worktree index lives next to agents.json, so this test needs its own
+        // directory — a unique file name alone would still share `/tmp/worktrees.json`.
+        let test_dir = std::env::temp_dir().join(format!("nova-studio-worktree-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&test_dir).await.unwrap();
+        let state_path = test_dir.join("agents.json");
+        let index_path = state_path.with_file_name("worktrees.json");
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec(&vec![PersistedAgent {
+                id: "agent-mock-parent".to_string(),
+                parent_agent_id: None,
+                created_by: Some("user".to_string()),
+                name: Some("Parent".to_string()),
+                cwd: "/tmp".to_string(),
+                model: None,
+                provider: None,
+                args: Vec::new(),
+                session_id: "mock-parent".to_string(),
+                session_file: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                message_count: 0,
+                depth: 0,
+                project_cwd: None,
+                worktree: None,
+            }])
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let vanished = std::env::temp_dir().join(format!("nova-gone-{}", Uuid::new_v4()));
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "agent-mock-parent".to_string(),
+            WorktreeInfo {
+                path: vanished.to_string_lossy().to_string(),
+                branch: "nova/agent-mock-parent".to_string(),
+                project_cwd: "/tmp".to_string(),
+                base_commit: "deadbeef".to_string(),
+                base_branch: Some("main".to_string()),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                state: WorktreeState::Active,
+            },
+        );
+        tokio::fs::write(&index_path, serde_json::to_vec(&index).unwrap())
+            .await
+            .unwrap();
+
+        let restored = AgentManager::new(mock_cli_path(), state_path.clone());
+        restored.restore().await.unwrap();
+
+        let info = restored
+            .list()
+            .await
+            .into_iter()
+            .find(|info| info.id == "agent-mock-parent")
+            .unwrap();
+        assert_eq!(
+            info.worktree.map(|worktree| worktree.state),
+            Some(WorktreeState::Missing),
+            "a worktree whose directory vanished must be flagged, not silently forgotten"
+        );
+        assert_eq!(info.project_cwd.as_deref(), Some("/tmp"));
+
+        let _ = tokio::fs::remove_file(state_path).await;
+        let _ = tokio::fs::remove_file(index_path).await;
+        let _ = tokio::fs::remove_dir_all(test_dir).await;
     }
 }

@@ -1,3 +1,4 @@
+use crate::worktree::WorktreeInfo;
 use serde::{Deserialize, Serialize};
 
 /// Image content for prompt messages — mirrors nova's ImageContent
@@ -168,6 +169,20 @@ pub enum RpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         cancelled: Option<bool>,
     },
+    #[serde(rename = "get_tool_permission_mode")]
+    GetToolPermissionMode { id: Option<String> },
+    #[serde(rename = "set_tool_permission_mode")]
+    SetToolPermissionMode {
+        id: Option<String>,
+        mode: String,
+    },
+    #[serde(rename = "respond_tool_permission")]
+    RespondToolPermission {
+        id: Option<String>,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        allowed: bool,
+    },
 }
 
 /// Messages received from the agent process (stdout)
@@ -308,6 +323,13 @@ pub struct AgentInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<AgentLifecycleSnapshot>,
     pub cwd: String,
+    /// Repository root this agent belongs to when it runs in an isolated worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_cwd: Option<String>,
+    /// Present when this agent owns an isolated worktree. Delegated children share their
+    /// parent's checkout and carry only `project_cwd`, so accepting stays a single action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeInfo>,
     pub model: Option<String>,
     pub session_id: Option<String>,
     pub created_at: String,
@@ -319,6 +341,9 @@ pub struct AgentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnRequest {
     pub cwd: String,
+    /// Run this agent in its own git worktree instead of the project directory.
+    #[serde(default)]
+    pub worktree_enabled: bool,
     /// The agent that delegated this process, or None for a user-created root.
     #[serde(default)]
     pub parent_agent_id: Option<String>,
@@ -415,11 +440,11 @@ mod tests {
     }
 
     /// nova emits extension_ui_request via createDialogPromise — rpc-mode.ts
-    /// (fields id/method/title/message/options must survive the flatten)
+    /// (fields id/method/title/message/options/variant must survive the flatten)
     #[test]
     fn extension_ui_request_parse_preserving_dialog_fields() {
         let msg: AgentMessage = serde_json::from_str(
-            r#"{"type":"extension_ui_request","id":"abc-123","method":"select","title":"Choose","message":"Pick one","options":["选项A","选项B"],"timeout":120000}"#,
+            r#"{"type":"extension_ui_request","id":"abc-123","method":"select","title":"Choose","message":"Pick one","options":["选项A","选项B"],"timeout":120000,"variant":"danger"}"#,
         )
         .unwrap();
         match msg {
@@ -430,6 +455,7 @@ mod tests {
                 assert_eq!(data["message"], "Pick one");
                 assert_eq!(data["options"][0], "选项A");
                 assert_eq!(data["timeout"], 120000);
+                assert_eq!(data["variant"], "danger");
             }
             _ => panic!("expected ExtensionUIRequest"),
         }
