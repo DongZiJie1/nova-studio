@@ -5653,10 +5653,10 @@ body {
   pointer-events: none;
 }
 
-.activity-level-1 { background: color-mix(in srgb, #49d89b 35%, transparent); }
-.activity-level-2 { background: #3cc985; }
-.activity-level-3 { background: #22a866; }
-.activity-level-4 { background: #137a48; }
+.activity-level-1 { background: #c4b5fd; }
+.activity-level-2 { background: #a78bfa; }
+.activity-level-3 { background: #8b5cf6; }
+.activity-level-4 { background: #6d28d9; }
 
 .activity-legend {
   display: flex;
