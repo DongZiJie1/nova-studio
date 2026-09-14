@@ -68,6 +68,7 @@ export function ExtensionUIPrompt() {
   const title = request.title || "Nova";
   const message = request.message || "";
   const isToolPermission = request.method === "confirm" && title === "允许执行工具？";
+  const isDanger = request.variant === "danger";
 
   const respond = (
     resp: { value?: string; confirmed?: boolean; cancelled?: boolean },
@@ -115,7 +116,7 @@ export function ExtensionUIPrompt() {
         {request.method === "confirm" && (
           <div className="nova-question-actions">
             <button type="button" className="nova-question-button-secondary" onClick={() => respond({ cancelled: true })}>{isToolPermission ? "拒绝" : "取消"}</button>
-            <button type="button" className="nova-question-button-primary" onClick={() => respond({ confirmed: true })}><Check size={15} />{isToolPermission ? "允许执行" : "确认"}</button>
+            <button type="button" className={`nova-question-button-primary${isDanger ? " nova-question-button-danger" : ""}`} onClick={() => respond({ confirmed: true })}><Check size={15} />{isToolPermission ? "允许执行" : "确认"}</button>
           </div>
         )}
 

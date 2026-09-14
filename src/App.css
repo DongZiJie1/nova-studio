@@ -46,6 +46,8 @@
   --stats-tooltip-border: rgba(129, 140, 248, 0.26);
   --stats-tooltip-text: #e8eaff;
   --stats-tooltip-shadow: 0 10px 30px rgba(0, 0, 0, 0.42), 0 0 20px rgba(129, 140, 248, 0.1);
+  --danger-solid: #e5484d;
+  --danger-on-solid: #ffffff;
 }
 
 :root[data-theme="arctic-dawn"] {
@@ -75,6 +77,8 @@
   --stats-tooltip-border: rgba(79, 125, 243, 0.24);
   --stats-tooltip-text: #263b5d;
   --stats-tooltip-shadow: 0 10px 30px rgba(58, 91, 145, 0.16), 0 0 18px rgba(79, 125, 243, 0.08);
+  --danger-solid: #c2414b;
+  --danger-on-solid: #ffffff;
 }
 
 body,
@@ -6260,6 +6264,14 @@ body {
   color: white;
   background: var(--color-accent-start);
   box-shadow: 0 6px 16px var(--accent-shadow);
+}
+
+/* Confirm actions that destroy something (variant: "danger" on the dialog request). */
+.nova-question-button-primary.nova-question-button-danger {
+  border-color: color-mix(in srgb, var(--danger-solid) 62%, transparent);
+  color: var(--danger-on-solid);
+  background: var(--danger-solid);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--danger-solid) 32%, transparent);
 }
 
 @keyframes nova-question-overlay-in { from { opacity: 0; } to { opacity: 1; } }

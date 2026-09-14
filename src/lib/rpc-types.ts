@@ -165,6 +165,8 @@ export type AgentMessage =
       options?: string[];
       placeholder?: string;
       timeout?: number;
+      /** "danger" marks a confirm whose affirmative action destroys data. */
+      variant?: "default" | "danger";
       [key: string]: unknown;
     }
   | { type: "extension_ui_cancel"; id: string }
@@ -198,6 +200,8 @@ export interface ExtensionUIRequest {
   options?: string[];
   placeholder?: string;
   timeout?: number;
+  /** "danger" marks a confirm whose affirmative action destroys data. */
+  variant?: "default" | "danger";
 }
 
 /** One of value / confirmed / cancelled — mirrors nova's RpcExtensionUIResponse */

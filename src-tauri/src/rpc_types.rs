@@ -440,11 +440,11 @@ mod tests {
     }
 
     /// nova emits extension_ui_request via createDialogPromise — rpc-mode.ts
-    /// (fields id/method/title/message/options must survive the flatten)
+    /// (fields id/method/title/message/options/variant must survive the flatten)
     #[test]
     fn extension_ui_request_parse_preserving_dialog_fields() {
         let msg: AgentMessage = serde_json::from_str(
-            r#"{"type":"extension_ui_request","id":"abc-123","method":"select","title":"Choose","message":"Pick one","options":["选项A","选项B"],"timeout":120000}"#,
+            r#"{"type":"extension_ui_request","id":"abc-123","method":"select","title":"Choose","message":"Pick one","options":["选项A","选项B"],"timeout":120000,"variant":"danger"}"#,
         )
         .unwrap();
         match msg {
@@ -455,6 +455,7 @@ mod tests {
                 assert_eq!(data["message"], "Pick one");
                 assert_eq!(data["options"][0], "选项A");
                 assert_eq!(data["timeout"], 120000);
+                assert_eq!(data["variant"], "danger");
             }
             _ => panic!("expected ExtensionUIRequest"),
         }
