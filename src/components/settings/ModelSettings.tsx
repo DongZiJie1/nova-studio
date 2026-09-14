@@ -9,6 +9,7 @@ import {
   type ModelConfigurationInput,
   type ProviderConfiguration,
 } from "../../lib/tauri-bridge";
+import { providerLogo } from "../../lib/provider-logos";
 import type { AvailableModel } from "../../stores/agent-store";
 
 interface ModelSettingsProps {
@@ -50,33 +51,6 @@ const PRESET_PROVIDERS: { id: string; name: string; baseUrl: string; api: ModelC
 
 const CUSTOM_PROVIDER = "__custom__";
 
-/** Provider logos bundled at build time (Simple Icons SVGs + vendor favicons). */
-const LOGO_MODULES = import.meta.glob<string>("../../assets/provider-logos/*.{svg,png,ico}", {
-  eager: true,
-  query: "?url",
-  import: "default",
-});
-const PROVIDER_LOGOS: Record<string, string> = {};
-for (const [path, url] of Object.entries(LOGO_MODULES)) {
-  PROVIDER_LOGOS[path.split("/").pop()!.replace(/\.(svg|png|ico)$/, "")] = url;
-}
-/** Preset ids whose logo lives under a shared brand file. */
-const LOGO_ALIASES: Record<string, string> = {
-  google: "googlegemini",
-  "moonshotai-cn": "kimi",
-  moonshotai: "kimi",
-  "kimi-coding": "kimi",
-  "xiaomi-token-plan-cn": "xiaomi",
-  "xiaomi-token-plan-ams": "xiaomi",
-  "xiaomi-token-plan-sgp": "xiaomi",
-  "qwen-token-plan-cn": "qwen",
-  "qwen-token-plan": "qwen",
-  "minimax-cn": "minimax",
-  "vercel-ai-gateway": "vercel",
-  zai: "zhipu",
-  "zai-coding-cn": "zhipu",
-};
-
 /**
  * Output-token cap for a saved model. There is no user-facing field: a single
  * response never reaches the cap, and nova already clamps `maxTokens` to the
@@ -94,10 +68,6 @@ function formatContextWindow(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(0)}M`;
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(0)}K`;
   return tokens.toString();
-}
-
-function providerLogo(providerId: string): string | undefined {
-  return PROVIDER_LOGOS[LOGO_ALIASES[providerId] ?? providerId];
 }
 
 /**

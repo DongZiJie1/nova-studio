@@ -5031,6 +5031,20 @@ body {
   padding: 2px;
 }
 
+/* Brand marks inside the composer's model picker. Same white tile as the
+   settings preset chips: most bundled logos are Simple Icons SVGs with no
+   `fill` attribute, so they paint black and would vanish on the dark
+   popover without it. */
+.model-picker-logo {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border-glass);
+  border-radius: 4px;
+  object-fit: contain;
+  background: #fff;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
 .model-preset-avatar-sm {
   width: 20px;
   height: 20px;

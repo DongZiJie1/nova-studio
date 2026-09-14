@@ -74,6 +74,7 @@ import {
   type SlashCommand,
 } from "../../lib/slash-commands";
 import { findFileMention, insertFileMention } from "../../lib/file-mentions";
+import { providerLogo } from "../../lib/provider-logos";
 import {
   Paperclip,
   ArrowUp,
@@ -1669,6 +1670,21 @@ const WorktreeReviewPanel = memo(function WorktreeReviewPanel({
     </section>
   );
 });
+
+/** Provider brand mark; falls back to a globe when no logo asset is bundled. */
+function ProviderLogoMark({ provider, size = 16 }: { provider?: string; size?: number }) {
+  const logo = provider ? providerLogo(provider) : undefined;
+  if (logo) {
+    return <img className="model-picker-logo" src={logo} alt="" style={{ width: size, height: size }} />;
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </svg>
+  );
+}
 
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
@@ -4018,11 +4034,7 @@ export function AppShell() {
                             overflow: "hidden",
                           }}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
-                            <circle cx="12" cy="12" r="10" />
-                            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                            <path d="M2 12h20" />
-                          </svg>
+                          <ProviderLogoMark provider={activeModelProvider} size={15} />
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {activeModelName}
                           </span>
@@ -4073,7 +4085,10 @@ export function AppShell() {
                                     opacity: m.authConfigured ? 1 : 0.5,
                                   }}
                                 >
-                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
+                                    <ProviderLogoMark provider={m.provider} />
+                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                  </span>
                                   <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
                                     {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
                                   </span>
