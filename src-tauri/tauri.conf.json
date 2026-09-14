@@ -42,8 +42,7 @@
     ],
     "resources": [
       "binaries/theme/*",
-      "binaries/export-html/*",
-      "binaries/assets/*"
+      "binaries/export-html/*"
     ],
     "icon": [
       "icons/32x32.png",
