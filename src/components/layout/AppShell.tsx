@@ -48,7 +48,7 @@ import type { ExecutionTrace } from "../../lib/rpc-types";
 import type { ToolPermissionMode, WorktreeStatus } from "../../lib/rpc-types";
 
 const TOOL_PERMISSION_MODES: Array<{ value: ToolPermissionMode; label: string; description: string }> = [
-  { value: "ask", label: "询问", description: "危险操作前弹窗确认" },
+  { value: "ask", label: "每次询问", description: "危险操作前弹窗确认" },
   { value: "edits", label: "自动编辑", description: "文件编辑自动批准，其余仍询问" },
   { value: "allow", label: "全部放行", description: "跳过所有权限检查" },
 ];
@@ -4124,8 +4124,10 @@ export function AppShell() {
                           }}
                         >
                           <GitBranch size={12} style={{ flexShrink: 0 }} />
+                          {/* Both labels are four characters wide, so toggling the mode does not
+                              resize the chip and shift the chips to its left. */}
                           <span style={{ whiteSpace: "nowrap" }}>
-                            {worktreeEnabled && worktreeAvailable ? "独立 worktree" : "共用目录"}
+                            {worktreeEnabled && worktreeAvailable ? "独立目录" : "共用目录"}
                           </span>
                         </button>
                         {worktreePickerOpen && (
@@ -4193,6 +4195,9 @@ export function AppShell() {
                           <rect x="3" y="11" width="18" height="11" rx="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
+                        {/* Every label in TOOL_PERMISSION_MODES is four characters wide, so a
+                            shrink-to-fit chip keeps a constant size across modes and never shoves
+                            the model picker sideways. */}
                         <span style={{ whiteSpace: "nowrap" }}>
                           {TOOL_PERMISSION_MODES.find((m) => m.value === selectedToolPermissionMode)?.label ?? selectedToolPermissionMode}
                         </span>
