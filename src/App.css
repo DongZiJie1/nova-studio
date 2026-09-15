@@ -10459,3 +10459,30 @@ body {
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-py { color: #15803d; background: rgba(21, 128, 61, 0.11); }
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-sys { color: #b91c1c; background: rgba(185, 28, 28, 0.1); }
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-sh { color: #4d7c0f; background: rgba(77, 124, 15, 0.11); }
+
+/* ─── 重复出现的列表项不做 backdrop-filter ───
+   侧边栏折叠/展开是 width 过渡动画（240ms），内容区宽度在这期间每帧都在变化，
+   所以每一行、每一块内容都会重新布局并重新采样背景。对重复出现（每个消息、
+   每个工具调用、每个代码块各一份）的元素使用 backdrop-filter，代价会按
+   “元素数量 × 帧数”增长：一条 190 行的轨迹在 240ms 内就是每帧上百次 GPU 模糊，
+   这正是长会话里侧边栏展开/折叠卡顿的根因。与 BUGS.md #2 的结论一致——
+   backdrop-filter 只用于单例静态面板（输入框、弹窗、侧边栏本身），不用于列表项。
+
+   这些选择器在文件里被多轮覆盖规则重复声明（含 arctic-dawn 与自定义背景分支），
+   逐条修改容易漏掉，所以在这里统一收口。半透明背景与渐变全部保留，只去掉模糊，
+   Liquid Glass 的观感基本不变。若后续整理 App.css，应把这些声明合并回各自的源规则。 */
+.trajectory-row::before,
+.trajectory-row-user::before,
+.trajectory-row-system::before,
+.tool-card-detail,
+.tool-call-group,
+.read-detail,
+.bash-detail,
+.code-block,
+.turn-file-change,
+.msg-bubble-user,
+.msg-avatar-user,
+.md-body table {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
