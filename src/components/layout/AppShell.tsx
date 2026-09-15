@@ -55,9 +55,6 @@ const TOOL_PERMISSION_MODES: Array<{ value: ToolPermissionMode; label: string; d
 
 const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 
-/** 与 .studio-sidebar 的 width 过渡时长保持一致（见 App.css）。 */
-const SIDEBAR_TRANSITION_MS = 260;
-
 function isAgentTrajectoryTool(name: string): boolean {
   return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
 }
@@ -2348,22 +2345,6 @@ export function AppShell() {
   useEffect(() => {
     setSelectedTrajectoryEntry(null);
   }, [activeId]);
-
-  // 侧边栏折叠是 240ms 的 width 过渡，内容区宽度在这期间每帧都在变，所有跨在
-  // 这条边上的毛玻璃面板都要逐帧重新采样背景、重做模糊。WKWebView 上这一步很贵
-  // （见 BUGS.md #2），上面按行去掉模糊解决不了这些大面积面板，所以在过渡期间统一
-  // 关闭它们的模糊，动画结束立即恢复原样。
-  useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.sidebarAnimating = "true";
-    const timer = window.setTimeout(() => {
-      delete root.dataset.sidebarAnimating;
-    }, SIDEBAR_TRANSITION_MS);
-    return () => {
-      window.clearTimeout(timer);
-      delete root.dataset.sidebarAnimating;
-    };
-  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (conversationView !== "trajectory" || !activeId) return;

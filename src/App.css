@@ -2389,8 +2389,19 @@ body {
 
 /* ─── Workspace sidebar ─── */
 
-.studio-sidebar {  overflow: hidden;
-  padding: 0;  transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1);
+/* 折叠/展开不做 width 过渡。
+
+   内容区宽度一变，整段会话就要重新折行——文字排版是布局里最贵的一项，而且代价
+   正比于会话长度。实测（1440x900，正常换行文本，非 nowrap）：
+     30 条消息  -> 单帧 0.5ms
+     120 条消息 -> 单帧 1.5ms（p95 3.4ms）
+     300 条消息 -> 单帧 4.5ms（p95 6.6ms）
+   240ms 过渡约 14 帧，等于为了一个滑入动效把整屏文字重排十四次；120Hz 屏的
+   帧预算只有 8.3ms，这里必然掉帧。改成瞬时切换后只重排一次。
+   宽度不再参与动画，侧边栏自身的玻璃面板过渡由 .glass-panel 保留。 */
+.studio-sidebar {
+  overflow: hidden;
+  padding: 0;
 }
 
 .studio-sidebar-collapsed {}
@@ -10074,27 +10085,8 @@ body {
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-sh { color: #4d7c0f; background: rgba(77, 124, 15, 0.11); }
 
 
-/* ─── 侧边栏过渡期间临时关闭大面积毛玻璃 ───
-   折叠/展开是 width 过渡，这些面板横跨正在变化的边界，会在整段动画里逐帧重新
-   采样背景并重做模糊——这是 WKWebView 上最贵的一步（见 BUGS.md #2），比逐行去掉
-   模糊更关键，因为它们是整屏大小。过渡只有 240ms，期间短暂关掉毛玻璃几乎看不出，
-   动画结束后 AppShell 会移除 data-sidebar-animating，立即恢复原样。 */
-:root[data-sidebar-animating="true"] .studio-sidebar,
-:root[data-sidebar-animating="true"] .nova-input,
-:root[data-sidebar-animating="true"] .studio-main-has-messages::after,
-:root[data-sidebar-animating="true"] .studio-main-has-messages .conversation-input-area::before,
-:root[data-sidebar-animating="true"] .conversation-view-switcher,
-:root[data-sidebar-animating="true"] .conversation-task-summary,
-:root[data-sidebar-animating="true"] .scroll-to-bottom-button {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-/* 同一个过渡窗口里，滚动区的渐隐遮罩也必须停掉：mask 会把整块滚动区单独栅格化，
-   宽度每变一帧就要重新生成一次遮罩图，是仅次于毛玻璃的每帧开销。 */
-:root[data-sidebar-animating="true"] .conversation-scroll-has-messages,
-:root[data-sidebar-animating="true"] .studio-main-has-messages::after,
-:root[data-sidebar-animating="true"] .studio-main-has-messages .conversation-input-area::before {
-  mask-image: none !important;
-  -webkit-mask-image: none !important;
-}
+/* 侧边栏折叠已改为瞬时切换（见文件上方 .studio-sidebar 的说明），不再有过渡窗口，
+   所以这里曾经用 data-sidebar-animating 做的「过渡期间关掉大面积毛玻璃与遮罩」的
+   兜底已经不需要了：宽度只变一次，那些面板也就只重新栅格化一次。
+   如果以后要把 width 过渡加回来，必须同时恢复这段兜底，否则每帧重新模糊的老问题
+   会立刻回来（BUGS.md #2）。 */
