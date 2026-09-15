@@ -10486,3 +10486,18 @@ body {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* ─── 侧边栏过渡期间临时关闭大面积毛玻璃 ───
+   折叠/展开是 width 过渡，这些面板横跨正在变化的边界，会在整段动画里逐帧重新
+   采样背景并重做模糊——这是 WKWebView 上最贵的一步（见 BUGS.md #2），比逐行去掉
+   模糊更关键，因为它们是整屏大小。过渡只有 240ms，期间短暂关掉毛玻璃几乎看不出，
+   动画结束后 AppShell 会移除 data-sidebar-animating，立即恢复原样。 */
+:root[data-sidebar-animating="true"] .studio-sidebar,
+:root[data-sidebar-animating="true"] .nova-input,
+:root[data-sidebar-animating="true"] .studio-main-has-messages::after,
+:root[data-sidebar-animating="true"] .conversation-view-switcher,
+:root[data-sidebar-animating="true"] .conversation-task-summary,
+:root[data-sidebar-animating="true"] .scroll-to-bottom-button {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
