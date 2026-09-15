@@ -128,7 +128,9 @@ function avatarColor(id: string): string {
 
 export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
   const [form, setForm] = useState<ModelForm>(INITIAL_FORM);
-  const [modelRows, setModelRows] = useState<ModelRow[]>([INITIAL_MODEL_ROW]);
+  // Empty until the user asks for a model: the editor row is a form that only
+  // makes sense once "添加模型" was clicked.
+  const [modelRows, setModelRows] = useState<ModelRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -222,7 +224,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
         apiKey: savedConfig?.apiKey ?? "",
         ...DEFAULT_CAPABILITIES,
       });
-      setModelRows([{ ...INITIAL_MODEL_ROW }]);
+      setModelRows([]);
     },
     [configMap],
   );
@@ -265,7 +267,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
     setSaved(false);
     if (providerId === CUSTOM_PROVIDER) {
       setForm(INITIAL_FORM);
-      setModelRows([INITIAL_MODEL_ROW]);
+      setModelRows([]);
       return;
     }
     applyPresetPrefill(providerId);
@@ -287,7 +289,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
   };
 
   const removeModelRow = (index: number) => {
-    setModelRows((current) => current.length === 1 ? [INITIAL_MODEL_ROW] : current.filter((_, rowIndex) => rowIndex !== index));
+    setModelRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
     setSaved(false);
   };
 
@@ -297,7 +299,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
     if (selected && selected !== CUSTOM_PROVIDER) applyPresetPrefill(selected);
     else {
       setForm(INITIAL_FORM);
-      setModelRows([INITIAL_MODEL_ROW]);
+      setModelRows([]);
     }
   };
 
@@ -333,7 +335,7 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
         setForm(INITIAL_FORM);
       }
       // The saved model now lives in the list above, so clear the editor.
-      setModelRows([{ ...INITIAL_MODEL_ROW }]);
+      setModelRows([]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -521,13 +523,24 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
                   <small>
                     {editing
                       ? `正在编辑 ${editing.modelId}`
-                      : selectedModels.length > 0
-                        ? "可选；留空则只更新接入信息"
-                        : "必须至少填写一个模型，否则该 Provider 不会出现在模型选择器中"}
+                      : modelRows.length > 0
+                        ? selectedModels.length > 0
+                          ? "可选；留空则只更新接入信息"
+                          : "必须至少填写一个模型，否则该 Provider 不会出现在模型选择器中"
+                        : selectedModels.length > 0
+                          ? "需要新增模型时再展开填写，不添加则只更新接入信息"
+                          : "点击「添加模型」开始配置，至少需要一个模型才能接入"}
                   </small>
                 </div>
-                {!editing && <button type="button" className="model-add-row" onClick={addModelRow}><Plus size={13} />添加模型</button>}
+                {!editing && modelRows.length > 0 && (
+                  <button type="button" className="model-add-row" onClick={addModelRow}><Plus size={13} />添加模型</button>
+                )}
               </div>
+              {!editing && modelRows.length === 0 && (
+                <button type="button" className="model-row-placeholder" onClick={addModelRow}>
+                  <Plus size={14} />添加模型
+                </button>
+              )}
               {modelRows.map((row, index) => (
                 <div className="model-row-editor" key={index}>
                   <div className="model-row-editor-title">
