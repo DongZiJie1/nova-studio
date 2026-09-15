@@ -10501,3 +10501,11 @@ body {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* 同一个过渡窗口里，滚动区的渐隐遮罩也必须停掉：mask 会把整块滚动区单独栅格化，
+   宽度每变一帧就要重新生成一次遮罩图，是仅次于毛玻璃的每帧开销。 */
+:root[data-sidebar-animating="true"] .conversation-scroll-has-messages,
+:root[data-sidebar-animating="true"] .studio-main-has-messages::after {
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
