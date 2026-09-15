@@ -2404,6 +2404,20 @@ body {
   padding: 0;
 }
 
+/* 宽度是瞬时切换（原因见上），用一层便宜的淡入补回一点过渡感。
+   只动 opacity：走合成器，不触发布局，所以会话再长也不会因此掉帧。
+   动画挂在侧边栏的直接子元素上——折叠/展开会把这一层整体替换掉（<nav> /
+   设置面板 / header+agent-tree+footer），新节点挂载即触发，不需要任何 JS。
+   其它情况下这些节点不会重挂，所以不会莫名重放。 */
+@keyframes studio-sidebar-panel-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.studio-sidebar > * {
+  animation: studio-sidebar-panel-in 170ms ease-out;
+}
+
 .studio-sidebar-collapsed {}
 
 .sidebar-header {
@@ -7546,7 +7560,8 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-task-summary,
-  .nova-input {
+  .nova-input,
+  .studio-sidebar > * {
     animation: none;
   }
 
