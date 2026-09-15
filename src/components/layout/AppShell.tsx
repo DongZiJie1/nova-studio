@@ -469,8 +469,8 @@ const ChatHistory = memo(function ChatHistory({
         onFeedback={onFeedback}
         onFork={onFork}
         onOpenAgent={onOpenAgent}
-        onRevertFileChange={(change) => onRevertFileChange(message.id, change)}
-        onReviewFileChange={(path) => onReviewFileChange(message.id, path)}
+        onRevertFileChange={onRevertFileChange}
+        onReviewFileChange={onReviewFileChange}
         fileChanges={turnFileChangesByAssistantId.get(message.id)}
       />
     </div>
@@ -2870,11 +2870,15 @@ export function AppShell() {
     setActiveAgent(agentId);
     void activateAgent(agentId)
       .then((info) => {
+        // 在回调触发时读当前状态，而不是闭包捕获 agentsById：agentsById 每个流式
+        // token 都会重建，放进依赖数组会让这个回调每次都换引用，进而击穿所有
+        // 把它当下传 prop 的 memo 组件。
+        const currentMessageCount = useAgentStore.getState().getAgent(agentId)?.messageCount ?? 0;
         updateAgent(agentId, {
           status: info.status,
           name: info.name,
           model: info.model,
-          messageCount: Math.max(info.message_count, agentsById.get(agentId)?.messageCount ?? 0),
+          messageCount: Math.max(info.message_count, currentMessageCount),
         });
       })
       .catch((err) => {
@@ -2883,7 +2887,14 @@ export function AppShell() {
         updateAgent(agentId, { status: "error" });
         setError(message);
       });
-  }, [agentsById, setActiveAgent, updateAgent]);
+  }, [setActiveAgent, updateAgent]);
+
+  // ChatHistory 是 memo 组件；调用点若传内联箭头函数，每次渲染都是新引用，
+  // memo 会被击穿，所有历史消息就会在每个流式 token 上重渲染。
+  const handleOpenAgentConversation = useCallback((agentId: string, view: "chat" | "trajectory") => {
+    handleSelectAgent(agentId);
+    setConversationView(view);
+  }, [handleSelectAgent]);
 
   const handleEditAgent = useCallback((agent: AgentState) => {
     setEditingAgent({
@@ -3625,10 +3636,7 @@ export function AppShell() {
                     turnFileChangesByAssistantId={turnFileChangesByAssistantId}
                     onFeedback={handleMessageFeedback}
                     onFork={handleForkMessage}
-                    onOpenAgent={(agentId, view) => {
-                      handleSelectAgent(agentId);
-                      setConversationView(view);
-                    }}
+                    onOpenAgent={handleOpenAgentConversation}
                     onRevertFileChange={handleRevertFileChange}
                     onReviewFileChange={handleReviewFileChange}
                   />

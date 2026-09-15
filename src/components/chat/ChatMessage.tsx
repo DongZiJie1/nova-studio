@@ -158,8 +158,12 @@ export const ChatMessage = memo(function ChatMessage({
   onFeedback?: (message: ChatMessageData, rating: "up" | "down" | null) => void;
   onFork?: (message: ChatMessageData) => void;
   onOpenAgent?: (agentId: string, view: "chat" | "trajectory") => void;
-  onRevertFileChange?: (change: TurnFileChange) => Promise<void>;
-  onReviewFileChange?: (path: string) => void;
+  // 这两个回调接收 messageId 而不是由调用方闭包绑定：调用方曾经用
+  // onRevertFileChange={(change) => ...(message.id, change)} 传进来，
+  // 每次渲染都是新函数引用，会把 ChatMessage 的 memo 打穿，导致所有历史
+  // 消息在每个流式 token 上重新渲染。绑定放在组件内部即可。
+  onRevertFileChange?: (messageId: string, change: TurnFileChange) => Promise<void>;
+  onReviewFileChange?: (messageId: string, path: string) => void;
   fileChanges?: TurnFileChange[];
 }) {
   const [copied, setCopied] = useState(false);
@@ -264,7 +268,11 @@ export const ChatMessage = memo(function ChatMessage({
         )}
         {!isUser && showActions && fileChanges.length > 0 && (
           <div className="turn-file-changes" aria-label="本轮文件改动">
-            <FileChangesCard changes={fileChanges} onRevert={onRevertFileChange} onReview={onReviewFileChange} />
+            <FileChangesCard
+              changes={fileChanges}
+              onRevert={onRevertFileChange ? (change) => onRevertFileChange(message.id, change) : undefined}
+              onReview={onReviewFileChange ? (path) => onReviewFileChange(message.id, path) : undefined}
+            />
           </div>
         )}
         {!isUser && showActions && (
