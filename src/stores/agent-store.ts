@@ -903,8 +903,9 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     if (parsed.kind === "turn_lifecycle" && parsed.phase === "end" && parsed.usage) {
       recordTokenUsage(parsed.usage);
     }
-    set((s) => ({
-      agents: s.agents.map((agent) => {
+    set((s) => {
+      let changed = false;
+      const agents = s.agents.map((agent) => {
         if (agent.id !== agentId) return agent;
         let next = applyEvent(agent, parsed);
         // Live token usage streamed during the current turn
@@ -923,9 +924,14 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
             };
           }
         }
+        if (next !== agent) changed = true;
         return next;
-      }),
-    }));
+      });
+      // 事件没有真正改变状态时不要替换 agents 数组。订阅它的组件虽然仍会被通知，
+      // 但选择器会拿到同一个引用，于是跳过重渲染。流式过程中这类空转事件不少
+      // （例如 toolcall_delta，一秒能来几十次），每次都会白白重渲染整个 Shell。
+      return changed ? { agents } : {};
+    });
 
     // Refresh context usage after each turn completes
     if (event.type === "turn_end" || event.type === "agent_settled") {
