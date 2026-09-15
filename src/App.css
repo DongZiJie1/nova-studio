@@ -6581,10 +6581,12 @@ body {
   border-radius: inherit;
   background: color-mix(in srgb, var(--surface-control) 54%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
-  backdrop-filter: blur(7px) saturate(108%);
-  -webkit-backdrop-filter: blur(7px) saturate(108%);
-  mask-image: linear-gradient(90deg, transparent 0%, #000 3.5%, #000 94%, transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 3.5%, #000 94%, transparent 100%);
+  /* 逐行的 blur / mask 都去掉（文件末尾还有一道统一收口）。
+     列表项每次只要宽度变化就会重新栅格化，190 行就是 190 层；mask 尤其贵，
+     因为它会强制该元素单独生成一张遮罩图。代价是行左右两端的渐隐消失，
+     只剩 12px 圆角——arctic-dawn + 自定义背景那条分支本来就是这个观感。 */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   pointer-events: none;
   transition: background 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
 }
