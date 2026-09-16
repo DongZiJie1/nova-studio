@@ -5139,6 +5139,30 @@ body {
   padding: 0 6px;
 }
 
+/* Collapsed state of the model editor: the row form only appears after a click. */
+.model-row-placeholder {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px;
+  border: 1px dashed var(--color-border-glass);
+  border-radius: 12px;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.model-row-placeholder:hover {
+  border-color: var(--color-accent-start);
+  color: var(--color-accent-start);
+}
+
 .model-add-row {
   display: inline-flex;
   height: 30px;
