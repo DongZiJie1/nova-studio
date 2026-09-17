@@ -62,6 +62,7 @@ import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMess
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
+import { PersonalizationSettings } from "../settings/PersonalizationSettings";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { Markdown } from "../chat/Markdown";
@@ -108,6 +109,7 @@ import {
   LoaderCircle,
   RotateCcw,
   Bot,
+  UserRound,
   GitBranch,
   GitMerge,
   Trash2,
@@ -509,6 +511,7 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
   const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
   const role = typeof data.role === "string" ? data.role : typeof data.type === "string" ? data.type : entry.label.toLowerCase();
   const timestamp = data.timestamp;
+  const memorySections = role === "context_user_memory" && typeof data.content === "string" ? parseUserMemorySections(data.content) : [];
   const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls as Array<Record<string, unknown>> : [];
   const entryId = typeof data.entryId === "string" ? data.entryId : undefined;
   const toolCallIds = new Set(toolCalls.map((tool) => tool.id).filter((id): id is string => typeof id === "string"));
@@ -541,8 +544,10 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
             ? "系统提示词"
             : role === "context_tools"
               ? "工具定义集合"
-              : role === "context_skills"
-                ? "Skill 声明集合"
+            : role === "context_skills"
+              ? "Skill 声明集合"
+              : role === "context_user_memory"
+                ? "长期记忆集合"
                 : role === "context_instructions"
                   ? "项目指令集合"
           : role;
@@ -553,6 +558,7 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
       <dl className="trajectory-execution-summary">
         <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
         {isContextEntry && Array.isArray(data.items) && <div><dt>资源数量</dt><dd>{data.items.length}</dd></div>}
+        {role === "context_user_memory" && <div><dt>记忆数量</dt><dd>{memorySections.length}</dd></div>}
         {isContextEntry && typeof data.name === "string" && <div><dt>资源名称</dt><dd>{data.name}</dd></div>}
         {isContextEntry && typeof data.path === "string" && <div><dt>来源路径</dt><dd>{data.path}</dd></div>}
         <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
@@ -636,6 +642,28 @@ function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
     );
   }
 
+  if (type === "context_user_memory") {
+    const content = typeof data.content === "string" ? data.content : "";
+    const sections = parseUserMemorySections(content);
+    return (
+      <div className="trajectory-memory-details">
+        <div className="trajectory-memory-summary">
+          <span>{sections.length}</span>
+          <div><strong>条长期记忆</strong><p>已注入当前会话的上下文</p></div>
+        </div>
+        <div className="trajectory-memory-list">
+          {sections.map((section, index) => (
+            <section className="trajectory-memory-section" key={section.id || `${section.title}-${index}`}>
+              <header><span>{String(index + 1).padStart(2, "0")}</span><strong>{section.title}</strong></header>
+              <p>{section.content}</p>
+            </section>
+          ))}
+          {sections.length === 0 && <p className="trajectory-detail-empty">当前会话没有加载长期记忆</p>}
+        </div>
+      </div>
+    );
+  }
+
   if (type === "context_instructions") {
     const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
     return (
@@ -656,6 +684,21 @@ function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
   }
 
   return <pre className="trajectory-detail-json">{JSON.stringify(entry.data, null, 2)}</pre>;
+}
+
+function parseUserMemorySections(content: string): Array<{ id: string; title: string; content: string }> {
+  const headings = [...content.matchAll(/^##\s+(.+)$/gm)];
+  return headings.map((heading, index) => {
+    const start = (heading.index ?? 0) + heading[0].length;
+    const end = headings[index + 1]?.index ?? content.length;
+    const body = content.slice(start, end).trim();
+    const idMatch = body.match(/<section_id>(.*?)<\/section_id>/);
+    return {
+      id: idMatch?.[1]?.trim() ?? "",
+      title: heading[1].trim(),
+      content: body.replace(/<section_id>.*?<\/section_id>\s*/s, "").trim(),
+    };
+  });
 }
 
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
@@ -1774,7 +1817,7 @@ export function AppShell() {
   // Whether the project staged for the next agent is a git repo (worktrees need one).
   const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -2014,7 +2057,9 @@ export function AppShell() {
   const trajectoryContextEntries = useMemo(() => {
     const snapshot = activeAgent?.contextSnapshot;
     if (!snapshot) return [];
-    return [
+    const userMemoryMatch = snapshot.systemPrompt.match(/<user_memory>\n([\s\S]*?)\n<\/user_memory>/);
+    const userMemories = userMemoryMatch ? parseUserMemorySections(userMemoryMatch[1]) : [];
+    const entries = [
       {
         id: "context-system",
         role: "SYSTEM",
@@ -2050,6 +2095,16 @@ export function AppShell() {
         data: { type: "context_instructions", items: snapshot.contextFiles },
       },
     ];
+    if (userMemoryMatch) {
+      entries.splice(1, 0, {
+        id: "context-user-memory",
+        role: "MEMORY",
+        className: "instruction",
+        preview: userMemories.length > 0 ? `${userMemories.length} 个 Section · ${userMemories.map((memory) => memory.title).join(" · ")}` : "未加载用户记忆",
+        data: { type: "context_user_memory", content: userMemoryMatch[1] },
+      });
+    }
+    return entries;
   }, [activeAgent?.contextSnapshot]);
   const chatMessages = useMemo(() => {
     const grouped: AgentState["messages"] = [];
@@ -3018,6 +3073,7 @@ export function AppShell() {
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" title="模型设置"><Bot size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" title="个性化设置"><UserRound size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" title="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
               ) : (
@@ -3069,10 +3125,14 @@ export function AppShell() {
                   <Palette size={16} />
                   <span>外观</span>
                 </button>
-                <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
-                  <Bot size={16} />
-                  <span>模型</span>
-                </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
+                    <Bot size={16} />
+                    <span>模型</span>
+                  </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "personalization" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("personalization")}>
+                    <UserRound size={16} />
+                    <span>个性化</span>
+                  </button>
                 <button type="button" className={`settings-category-button ${settingsSection === "activity" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("activity")}>
                   <ChartNoAxesColumnIncreasing size={16} />
                   <span>活跃度</span>
@@ -3299,6 +3359,8 @@ export function AppShell() {
                     models={availableModels}
                     onSaved={refreshModelCatalog}
                   />
+                ) : settingsSection === "personalization" ? (
+                  <PersonalizationSettings />
                 ) : (
                   <ActivityHeatmap />
                 )}
@@ -3517,11 +3579,13 @@ export function AppShell() {
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "execution"} className={trajectoryDetailView === "execution" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("execution")}>执行信息</button>
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整信息</button>
                     </div>
-                    {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
-                      <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
-                    ) : (
-                      selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
-                    )}
+                    <div className="trajectory-detail-body">
+                      {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
+                        <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                      ) : (
+                        selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
+                      )}
+                    </div>
                   </aside>
               </div>
             ) : !hasMessages ? (

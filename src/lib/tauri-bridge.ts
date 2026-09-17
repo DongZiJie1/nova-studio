@@ -306,6 +306,35 @@ export async function deleteProviderConfiguration(providerId: string): Promise<v
   return invoke("delete_provider_configuration", { providerId });
 }
 
+export interface UserMemorySection {
+  id: string;
+  title: string;
+  content: string;
+  updatedAt: string;
+}
+
+export interface UserMemoryState {
+  version: number;
+  enabled: boolean;
+  sections: UserMemorySection[];
+}
+
+export async function getUserMemory(): Promise<UserMemoryState> {
+  return invoke<UserMemoryState>("get_user_memory");
+}
+
+export async function saveUserMemory(input: { sectionId?: string; title: string; content: string }): Promise<UserMemoryState> {
+  return invoke<UserMemoryState>("save_user_memory", { input });
+}
+
+export async function deleteUserMemory(id: string): Promise<UserMemoryState> {
+  return invoke<UserMemoryState>("delete_user_memory", { id });
+}
+
+export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemoryState> {
+  return invoke<UserMemoryState>("set_user_memory_enabled", { enabled });
+}
+
 export async function setModel(agentId: string, provider: string, modelId: string): Promise<void> {
   return invoke("set_model", { agentId, provider, modelId });
 }

@@ -26,14 +26,210 @@ pub struct ModelConfigurationInput {
     images: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserMemorySection {
+    id: String,
+    title: String,
+    content: String,
+    updated_at: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserMemoryState {
+    version: u8,
+    enabled: bool,
+    sections: Vec<UserMemorySection>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveUserMemoryInput {
+    section_id: Option<String>,
+    title: String,
+    content: String,
+}
+
 fn nova_agent_dir() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR") {
+    if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR")
+        .or_else(|| std::env::var_os("CODING_AGENT_DIR"))
+        .or_else(|| std::env::var_os("PI_CODING_AGENT_DIR"))
+    {
         return Ok(PathBuf::from(path));
     }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or("Unable to locate the user home directory")?;
     Ok(PathBuf::from(home).join(".nova").join("agent"))
+}
+
+fn user_memory_path() -> Result<PathBuf, String> {
+    Ok(nova_agent_dir()?.join("user-memory.json"))
+}
+
+fn read_user_memory_state() -> Result<UserMemoryState, String> {
+    let path = user_memory_path()?;
+    if !path.exists() {
+        return Ok(UserMemoryState {
+            version: 3,
+            enabled: true,
+            sections: Vec::new(),
+        });
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
+    if matches!(
+        value.get("version").and_then(serde_json::Value::as_u64),
+        Some(2 | 3)
+    ) {
+        let mut state: UserMemoryState =
+            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        state.version = 3;
+        return Ok(state);
+    }
+    let enabled = value
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let memories = value
+        .get("memories")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let now = chrono::Utc::now().to_rfc3339();
+    let join_category = |category: &str| {
+        memories
+            .iter()
+            .filter(|item| {
+                item.get("category").and_then(serde_json::Value::as_str) == Some(category)
+            })
+            .filter_map(|item| item.get("content").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join("；")
+    };
+    let mut sections = Vec::new();
+    let overview = join_category("identity");
+    if !overview.is_empty() {
+        sections.push(UserMemorySection {
+            id: format!("section_{}", uuid::Uuid::new_v4()),
+            title: "概览".into(),
+            content: overview,
+            updated_at: now.clone(),
+        });
+    }
+    let preferences = join_category("preference");
+    if !preferences.is_empty() {
+        sections.push(UserMemorySection {
+            id: format!("section_{}", uuid::Uuid::new_v4()),
+            title: "协作偏好".into(),
+            content: preferences,
+            updated_at: now,
+        });
+    }
+    Ok(UserMemoryState {
+        version: 3,
+        enabled,
+        sections,
+    })
+}
+
+fn write_user_memory_state(state: &UserMemoryState) -> Result<(), String> {
+    let path = user_memory_path()?;
+    let directory = path
+        .parent()
+        .ok_or("Unable to locate user-memory directory")?;
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
+    let value = serde_json::to_value(state).map_err(|error| error.to_string())?;
+    write_private_json(&path, &value)
+}
+
+fn is_sensitive_memory(content: &str) -> bool {
+    let normalized = content.to_ascii_lowercase();
+    [
+        "api key",
+        "api_key",
+        "access token",
+        "access_token",
+        "password",
+        "passwd",
+        "private key",
+        "secret",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+#[tauri::command]
+pub async fn get_user_memory() -> Result<UserMemoryState, String> {
+    read_user_memory_state()
+}
+
+#[tauri::command]
+pub async fn save_user_memory(input: SaveUserMemoryInput) -> Result<UserMemoryState, String> {
+    let title = input.title.trim();
+    let content = input
+        .content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() {
+        return Err("Memory section title is required".to_string());
+    }
+    if content.is_empty() {
+        return Err("Memory content is required".to_string());
+    }
+    if is_sensitive_memory(&content) {
+        return Err("Sensitive information must not be saved to memory".to_string());
+    }
+
+    let mut state = read_user_memory_state()?;
+    if !state.enabled {
+        return Err("User memory is disabled".to_string());
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Some(section_id) = input.section_id.as_deref() {
+        let memory = state
+            .sections
+            .iter_mut()
+            .find(|memory| memory.id == section_id)
+            .ok_or_else(|| format!("User memory section not found: {section_id}"))?;
+        memory.title = title.to_string();
+        memory.content = content;
+        memory.updated_at = now;
+    } else {
+        state.sections.push(UserMemorySection {
+            id: format!("section_{}", uuid::Uuid::new_v4()),
+            title: title.to_string(),
+            content,
+            updated_at: now,
+        });
+    }
+    write_user_memory_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn delete_user_memory(id: String) -> Result<UserMemoryState, String> {
+    let mut state = read_user_memory_state()?;
+    let before = state.sections.len();
+    state.sections.retain(|memory| memory.id != id);
+    if state.sections.len() == before {
+        return Err("User memory section not found".to_string());
+    }
+    write_user_memory_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn set_user_memory_enabled(enabled: bool) -> Result<UserMemoryState, String> {
+    let mut state = read_user_memory_state()?;
+    state.enabled = enabled;
+    write_user_memory_state(&state)?;
+    Ok(state)
 }
 
 fn read_json_object(path: &Path, root_key: &str) -> Result<serde_json::Value, String> {
@@ -74,14 +270,22 @@ fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<(), Stri
 #[tauri::command]
 pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<(), String> {
     let provider_id = input.provider_id.trim();
-    let model_id = input.model_id.as_deref().map(str::trim).filter(|model| !model.is_empty());
+    let model_id = input
+        .model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
     let previous_model_id = input
         .previous_model_id
         .as_deref()
         .map(str::trim)
         .filter(|model| !model.is_empty());
     let base_url = input.base_url.trim().trim_end_matches('/');
-    let api_key = input.api_key.as_deref().map(str::trim).filter(|key| !key.is_empty());
+    let api_key = input
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
     if provider_id.is_empty() {
         return Err("Provider ID is required".to_string());
     }
@@ -104,7 +308,9 @@ pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<
         if !SUPPORTED_APIS.contains(&input.api.as_str()) {
             return Err("Unsupported API type".to_string());
         }
-        if input.context_window == 0 || input.max_tokens == 0 || input.max_tokens > input.context_window
+        if input.context_window == 0
+            || input.max_tokens == 0
+            || input.max_tokens > input.context_window
         {
             return Err("Token limits are invalid".to_string());
         }
@@ -235,15 +441,24 @@ pub async fn get_model_configurations() -> Result<Vec<ProviderConfiguration>, St
         let (api_key, api_key_source) = if let Some(key) = auth_key {
             (Some(key), Some("auth".to_string()))
         } else {
-            match provider_object.get("apiKey").and_then(serde_json::Value::as_str) {
+            match provider_object
+                .get("apiKey")
+                .and_then(serde_json::Value::as_str)
+            {
                 Some(key) => (Some(key.to_string()), Some("models".to_string())),
                 None => (None, None),
             }
         };
         configurations.push(ProviderConfiguration {
             provider_id: provider_id.clone(),
-            base_url: provider_object.get("baseUrl").and_then(serde_json::Value::as_str).map(str::to_string),
-            api: provider_object.get("api").and_then(serde_json::Value::as_str).map(str::to_string),
+            base_url: provider_object
+                .get("baseUrl")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            api: provider_object
+                .get("api")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             api_key,
             api_key_source,
         });
@@ -259,7 +474,10 @@ pub async fn get_model_configurations() -> Result<Vec<ProviderConfiguration>, St
                 provider_id: provider_id.clone(),
                 base_url: None,
                 api: None,
-                api_key: entry.get("key").and_then(serde_json::Value::as_str).map(str::to_string),
+                api_key: entry
+                    .get("key")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
                 api_key_source: Some("auth".to_string()),
             });
         }
@@ -285,7 +503,10 @@ fn remove_auth_entry(agent_dir: &Path, provider_id: &str) -> Result<bool, String
 }
 
 #[tauri::command]
-pub async fn delete_model_configuration(provider_id: String, model_id: String) -> Result<(), String> {
+pub async fn delete_model_configuration(
+    provider_id: String,
+    model_id: String,
+) -> Result<(), String> {
     let agent_dir = nova_agent_dir()?;
     let models_path = agent_dir.join("models.json");
     let mut config = read_json_object(&models_path, "providers")?;
@@ -303,9 +524,13 @@ pub async fn delete_model_configuration(provider_id: String, model_id: String) -
         .and_then(serde_json::Value::as_array_mut)
         .ok_or_else(|| format!("Provider {provider_id} has no models array"))?;
     let before = models.len();
-    models.retain(|model| model.get("id").and_then(serde_json::Value::as_str) != Some(model_id.as_str()));
+    models.retain(|model| {
+        model.get("id").and_then(serde_json::Value::as_str) != Some(model_id.as_str())
+    });
     if models.len() == before {
-        return Err(format!("Model {model_id} not found for provider {provider_id}"));
+        return Err(format!(
+            "Model {model_id} not found for provider {provider_id}"
+        ));
     }
     // Removing a model never removes the provider or its credentials: the
     // provider stays connected so the user can add models back.
@@ -825,7 +1050,9 @@ pub async fn revert_file_change(
 }
 
 #[tauri::command]
-pub async fn get_model_catalog(state: State<'_, AgentManagerState>) -> Result<serde_json::Value, String> {
+pub async fn get_model_catalog(
+    state: State<'_, AgentManagerState>,
+) -> Result<serde_json::Value, String> {
     state.0.get_model_catalog().await
 }
 
