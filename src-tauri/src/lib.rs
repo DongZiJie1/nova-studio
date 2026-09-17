@@ -221,6 +221,10 @@ pub fn run() {
             commands::save_user_memory,
             commands::delete_user_memory,
             commands::set_user_memory_enabled,
+            commands::list_todos,
+            commands::create_todo,
+            commands::update_todo,
+            commands::delete_todo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

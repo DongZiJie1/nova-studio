@@ -36,6 +36,7 @@ import {
   getWorktreeDiff,
   acceptWorktree,
   rejectWorktree,
+  type TodoItem,
 } from "../../lib/tauri-bridge";
 import { common, createLowlight } from "lowlight";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -63,6 +64,7 @@ import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
 import { PersonalizationSettings } from "../settings/PersonalizationSettings";
+import { TodoPage } from "../todos/TodoPage";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { Markdown } from "../chat/Markdown";
@@ -113,6 +115,7 @@ import {
   GitBranch,
   GitMerge,
   Trash2,
+  ListTodo,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -1817,6 +1820,7 @@ export function AppShell() {
   // Whether the project staged for the next agent is a git repo (worktrees need one).
   const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [todosOpen, setTodosOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
@@ -2852,6 +2856,67 @@ export function AppShell() {
     }
   };
 
+  const handleRunTodo = async (todo: TodoItem): Promise<{ agentId: string; sessionId: string }> => {
+    const cwd = todo.projectPath || welcomeProjectCwd;
+    const canUseWorktree = worktreeEnabled ? await checkWorktreeAvailable(cwd).catch(() => false) : false;
+    const info = await spawnAgent(
+      cwd,
+      defaultModel || undefined,
+      defaultProvider || undefined,
+      worktreeEnabled && canUseWorktree ? true : undefined,
+    );
+    await setToolPermissionMode(info.id, defaultToolPermissionMode);
+    const newAgent: AgentState = {
+      id: info.id,
+      parentAgentId: info.parent_agent_id,
+      createdBy: info.created_by,
+      name: todo.title,
+      avatarId: getOrAssignAgentAvatar(info.id),
+      status: info.status,
+      cwd: info.cwd,
+      projectCwd: info.project_cwd ?? null,
+      worktree: info.worktree ?? null,
+      model: info.model,
+      messages: [],
+      createdAt: info.created_at,
+      messageCount: info.message_count,
+      streamingText: "",
+      streamingThinking: "",
+      activeToolCalls: new Map(),
+      modelMeta: null,
+      contextUsage: null,
+      lastTurnUsage: null,
+      sessionUsage: null,
+      executionTraces: [],
+      contextSnapshot: null,
+      autoCompactionEnabled: true,
+      toolPermissionMode: defaultToolPermissionMode,
+      pendingPermission: null,
+      liveUsage: null,
+      outputSinceLastUserInput: 0,
+    };
+    addAgent(newAgent);
+    setActiveAgent(info.id);
+    setAgentNames((names) => {
+      const next = { ...names, [info.id]: todo.title };
+      localStorage.setItem(AGENT_NAMES_KEY, JSON.stringify(next));
+      return next;
+    });
+    await setSessionName(info.id, todo.title).catch(() => undefined);
+    const prompt = [
+      "请处理以下 Nova 待办。",
+      `标题：${todo.title}`,
+      todo.description ? `描述：${todo.description}` : "描述：无",
+      todo.dueAt ? `截止日期：${todo.dueAt.slice(0, 10)}` : "截止日期：未设置",
+      "完成后请总结实际完成的内容、验证结果和仍需处理的问题。不要在缺少证据时声称任务已经完成。",
+    ].join("\n\n");
+    addUserMessage(info.id, prompt);
+    await sendPrompt(info.id, prompt);
+    setTodosOpen(false);
+    setConversationView("chat");
+    return { agentId: info.id, sessionId: info.id };
+  };
+
   const selectSlashCommand = useCallback((command: SlashCommand) => {
     setInput(`/${command.name} `);
     setSlashCommandMenuDismissed(true);
@@ -2901,6 +2966,7 @@ export function AppShell() {
   }, [activeAgent?.status, handleAbort]);
 
   const handleSelectAgent = useCallback((agentId: string) => {
+    setTodosOpen(false);
     setSettingsOpen(false);
     setConversationView("chat");
     setActiveAgent(agentId);
@@ -3085,6 +3151,7 @@ export function AppShell() {
                       setPendingProjectCwd(null);
                       setActiveAgent(null);
                       setSettingsOpen(false);
+                      setTodosOpen(false);
                       setConversationView("chat");
                     }}
                     aria-label="新会话"
@@ -3092,9 +3159,10 @@ export function AppShell() {
                   >
                     <Plus size={20} />
                   </button>
+                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => setSettingsOpen(true)} aria-label="设置" title="设置"><Settings size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSettingsOpen(true); }} aria-label="设置" title="设置"><Settings size={19} /></button>
                 </>
               )}
             </nav>
@@ -3165,11 +3233,16 @@ export function AppShell() {
                     setPendingProjectCwd(null);
                     setActiveAgent(null);
                     setSettingsOpen(false);
+                    setTodosOpen(false);
                     setConversationView("chat");
                   }}
                 >
                   <Plus size={16} />
                   <span>新会话</span>
+                </button>
+                <button type="button" className={`sidebar-todo-button ${todosOpen ? "sidebar-todo-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }}>
+                  <ListTodo size={16} />
+                  <span>待办</span>
                 </button>
               </header>
 
@@ -3271,7 +3344,7 @@ export function AppShell() {
                 <button
                   type="button"
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
-                  onClick={() => setSettingsOpen(true)}
+                  onClick={() => { setTodosOpen(false); setSettingsOpen(true); }}
                 >
                   <Settings size={16} />
                   <span>设置</span>
@@ -3283,6 +3356,7 @@ export function AppShell() {
 
         {/* Main */}
         <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} relative w-full flex flex-col overflow-hidden`}>
+          {todosOpen && <TodoPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onRunTodo={handleRunTodo} onOpenSession={(todo) => { if (todo.agentId) handleSelectAgent(todo.agentId); }} />}
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>

@@ -335,6 +335,57 @@ export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemory
   return invoke<UserMemoryState>("set_user_memory_enabled", { enabled });
 }
 
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export type TodoPriority = "low" | "medium" | "high";
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  description: string;
+  status: TodoStatus;
+  priority: TodoPriority;
+  projectPath?: string;
+  dueAt?: string;
+  source: "user" | "agent";
+  agentId?: string;
+  sessionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  order: number;
+}
+
+export interface TodoState {
+  version: number;
+  items: TodoItem[];
+}
+
+export interface CreateTodoInput {
+  title: string;
+  description: string;
+  priority: TodoPriority;
+  projectPath?: string;
+  dueAt?: string;
+}
+
+export type UpdateTodoInput = Partial<Pick<TodoItem, "title" | "description" | "status" | "priority" | "projectPath" | "dueAt" | "agentId" | "sessionId">> & { id: string };
+
+export async function listTodos(): Promise<TodoState> {
+  return invoke<TodoState>("list_todos");
+}
+
+export async function createTodo(input: CreateTodoInput): Promise<TodoState> {
+  return invoke<TodoState>("create_todo", { input });
+}
+
+export async function updateTodo(input: UpdateTodoInput): Promise<TodoState> {
+  return invoke<TodoState>("update_todo", { input });
+}
+
+export async function deleteTodo(id: string): Promise<TodoState> {
+  return invoke<TodoState>("delete_todo", { id });
+}
+
 export async function setModel(agentId: string, provider: string, modelId: string): Promise<void> {
   return invoke("set_model", { agentId, provider, modelId });
 }

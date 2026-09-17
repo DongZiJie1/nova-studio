@@ -51,6 +51,59 @@ pub struct SaveUserMemoryInput {
     content: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    id: String,
+    title: String,
+    description: String,
+    status: String,
+    priority: String,
+    project_path: Option<String>,
+    due_at: Option<String>,
+    source: String,
+    agent_id: Option<String>,
+    session_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+    completed_at: Option<String>,
+    order: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoState {
+    version: u8,
+    items: Vec<TodoItem>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTodoInput {
+    title: String,
+    #[serde(default)]
+    description: String,
+    priority: Option<String>,
+    project_path: Option<String>,
+    due_at: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTodoInput {
+    id: String,
+    title: Option<String>,
+    description: Option<String>,
+    status: Option<String>,
+    priority: Option<String>,
+    project_path: Option<String>,
+    due_at: Option<String>,
+    agent_id: Option<String>,
+    session_id: Option<String>,
+}
+
+static TODO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn nova_agent_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR")
         .or_else(|| std::env::var_os("CODING_AGENT_DIR"))
@@ -66,6 +119,199 @@ fn nova_agent_dir() -> Result<PathBuf, String> {
 
 fn user_memory_path() -> Result<PathBuf, String> {
     Ok(nova_agent_dir()?.join("user-memory.json"))
+}
+
+fn todo_path() -> Result<PathBuf, String> {
+    Ok(nova_agent_dir()?.join("todos.json"))
+}
+
+fn read_todo_state() -> Result<TodoState, String> {
+    let path = todo_path()?;
+    if !path.exists() {
+        return Ok(TodoState {
+            version: 1,
+            items: Vec::new(),
+        });
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let mut state: TodoState = serde_json::from_str(&content)
+        .map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
+    state.version = 1;
+    Ok(state)
+}
+
+fn write_todo_state(state: &TodoState) -> Result<(), String> {
+    let path = todo_path()?;
+    let directory = path.parent().ok_or("Unable to locate todo directory")?;
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
+    let value = serde_json::to_value(state).map_err(|error| error.to_string())?;
+    write_private_json(&path, &value)
+}
+
+fn normalize_todo_title(value: &str) -> Result<String, String> {
+    let title = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        return Err("Todo title is required".to_string());
+    }
+    if title.chars().count() > 120 {
+        return Err("Todo title must not exceed 120 characters".to_string());
+    }
+    Ok(title)
+}
+
+fn normalize_todo_description(value: &str) -> Result<String, String> {
+    let description = value.trim().to_string();
+    if description.chars().count() > 4000 {
+        return Err("Todo description must not exceed 4000 characters".to_string());
+    }
+    Ok(description)
+}
+
+fn validate_todo_status(value: &str) -> Result<(), String> {
+    if matches!(value, "pending" | "in_progress" | "completed") {
+        Ok(())
+    } else {
+        Err(format!("Invalid todo status: {value}"))
+    }
+}
+
+fn validate_todo_priority(value: &str) -> Result<(), String> {
+    if matches!(value, "low" | "medium" | "high") {
+        Ok(())
+    } else {
+        Err(format!("Invalid todo priority: {value}"))
+    }
+}
+
+fn normalize_optional_todo_value(value: Option<String>) -> Option<String> {
+    value.and_then(|item| {
+        let trimmed = item.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn validate_todo_due_at(value: Option<String>) -> Result<Option<String>, String> {
+    let value = normalize_optional_todo_value(value);
+    if let Some(date) = value.as_deref() {
+        if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err()
+            && chrono::DateTime::parse_from_rfc3339(date).is_err()
+        {
+            return Err("Todo due date must be YYYY-MM-DD or RFC 3339".to_string());
+        }
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub async fn list_todos() -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    read_todo_state()
+}
+
+#[tauri::command]
+pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let title = normalize_todo_title(&input.title)?;
+    let description = normalize_todo_description(&input.description)?;
+    let priority = input.priority.unwrap_or_else(|| "medium".to_string());
+    validate_todo_priority(&priority)?;
+    let due_at = validate_todo_due_at(input.due_at)?;
+    let project_path = normalize_optional_todo_value(input.project_path);
+    let mut state = read_todo_state()?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let next_order = state
+        .items
+        .iter()
+        .map(|item| item.order)
+        .max()
+        .unwrap_or(-1)
+        + 1;
+    state.items.push(TodoItem {
+        id: format!("todo_{}", uuid::Uuid::new_v4()),
+        title,
+        description,
+        status: "pending".to_string(),
+        priority,
+        project_path,
+        due_at,
+        source: "user".to_string(),
+        agent_id: None,
+        session_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+        completed_at: None,
+        order: next_order,
+    });
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let todo = state
+        .items
+        .iter_mut()
+        .find(|todo| todo.id == input.id)
+        .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    if let Some(title) = input.title.as_deref() {
+        todo.title = normalize_todo_title(title)?;
+    }
+    if let Some(description) = input.description.as_deref() {
+        todo.description = normalize_todo_description(description)?;
+    }
+    if let Some(status) = input.status.as_deref() {
+        validate_todo_status(status)?;
+        todo.status = status.to_string();
+        todo.completed_at = if status == "completed" {
+            Some(chrono::Utc::now().to_rfc3339())
+        } else {
+            None
+        };
+    }
+    if let Some(priority) = input.priority.as_deref() {
+        validate_todo_priority(priority)?;
+        todo.priority = priority.to_string();
+    }
+    if input.project_path.is_some() {
+        todo.project_path = normalize_optional_todo_value(input.project_path);
+    }
+    if input.due_at.is_some() {
+        todo.due_at = validate_todo_due_at(input.due_at)?;
+    }
+    if input.agent_id.is_some() {
+        todo.agent_id = normalize_optional_todo_value(input.agent_id);
+    }
+    if input.session_id.is_some() {
+        todo.session_id = normalize_optional_todo_value(input.session_id);
+    }
+    todo.updated_at = chrono::Utc::now().to_rfc3339();
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn delete_todo(id: String) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let before = state.items.len();
+    state.items.retain(|todo| todo.id != id);
+    if before == state.items.len() {
+        return Err(format!("Todo not found: {id}"));
+    }
+    write_todo_state(&state)?;
+    Ok(state)
 }
 
 fn read_user_memory_state() -> Result<UserMemoryState, String> {
@@ -1086,4 +1332,39 @@ pub async fn respond_tool_permission(
         .0
         .respond_tool_permission(&agent_id, tool_call_id, allowed)
         .await
+}
+
+#[cfg(test)]
+mod todo_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_todo_title_and_description() {
+        assert_eq!(
+            normalize_todo_title("  ship   Nova  ").unwrap(),
+            "ship Nova"
+        );
+        assert_eq!(
+            normalize_todo_description("  first line\nsecond line  ").unwrap(),
+            "first line\nsecond line"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_todo_values() {
+        assert!(normalize_todo_title("   ").is_err());
+        assert!(validate_todo_status("cancelled").is_err());
+        assert!(validate_todo_priority("urgent").is_err());
+        assert!(validate_todo_due_at(Some("tomorrow".to_string())).is_err());
+    }
+
+    #[test]
+    fn accepts_supported_todo_dates() {
+        assert_eq!(
+            validate_todo_due_at(Some("2026-09-18".to_string())).unwrap(),
+            Some("2026-09-18".to_string())
+        );
+        assert!(validate_todo_due_at(Some("2026-09-18T08:00:00Z".to_string())).is_ok());
+        assert_eq!(validate_todo_due_at(Some("  ".to_string())).unwrap(), None);
+    }
 }
