@@ -27,6 +27,7 @@ import {
   type TodoState,
   type TodoStatus,
 } from "../../lib/tauri-bridge";
+import { useTodoStore } from "../../stores/todo-store";
 
 type TodoView = "today" | "in_progress" | "pending" | "completed";
 
@@ -87,16 +88,28 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const revision = useTodoStore((store) => store.revision);
 
   useEffect(() => {
+    let cancelled = false;
     void listTodos()
       .then((next) => {
+        if (cancelled) return;
         setState(next);
         setError(null);
       })
-      .catch((reason) => setError(String(reason)))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((reason) => {
+        if (!cancelled) setError(String(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // A new revision means the agent wrote to the same todo store; re-read it so
+    // its items appear without the user reopening the page.
+  }, [revision]);
 
   const counts = useMemo(
     () =>
@@ -587,9 +600,16 @@ function TodoDetail({
   return (
     <aside className="todo-detail">
       <header>
-        <div>
-          <span className="todo-eyebrow">TASK DETAIL</span>
-          <h2>待办详情</h2>
+        <div className="todo-detail-heading">
+          <span className="todo-detail-heading-icon">
+            <ListTodo size={16} />
+          </span>
+          <div>
+            <h2>任务详情</h2>
+            <span className={`todo-detail-status todo-detail-status-${status}`}>
+              {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
+            </span>
+          </div>
         </div>
         <button type="button" className="todo-icon-button" onClick={onClose} aria-label="关闭">
           <X size={16} />
@@ -597,81 +617,93 @@ function TodoDetail({
       </header>
 
       <div className="todo-detail-fields">
-        <label>
-          <span>标题</span>
-          <input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} />
-        </label>
-        <label>
-          <span>描述</span>
-          <textarea
-            rows={4}
-            maxLength={4000}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="暂无描述"
-          />
-        </label>
-        <div className="todo-detail-grid">
+        <section className="todo-detail-section">
+          <span className="todo-detail-section-title">任务内容</span>
           <label>
-            <span>状态</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value as TodoStatus)}>
-              <option value="pending">待处理</option>
-              <option value="in_progress">进行中</option>
-              <option value="completed">已完成</option>
-            </select>
+            <span>标题</span>
+            <input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label>
-            <span>优先级</span>
-            <select value={priority} onChange={(event) => setPriority(event.target.value as TodoPriority)}>
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
+            <span className="todo-field-label">
+              描述 <small>{description.length}/4000</small>
+            </span>
+            <textarea
+              rows={5}
+              maxLength={4000}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="补充目标、要求或验收标准…"
+            />
           </label>
-        </div>
-        <div className="todo-detail-grid">
-          <label>
-            <span>截止日期</span>
-            <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
-          </label>
-          <label>
-            <span>所属项目</span>
-            <select value={projectPath} onChange={(event) => setProjectPath(event.target.value)}>
-              <option value="">不关联项目</option>
-              {projects.map((project) => (
-                <option key={project.path} value={project.path}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        </section>
 
-      </div>
+        <section className="todo-detail-section">
+          <span className="todo-detail-section-title">任务属性</span>
+          <div className="todo-detail-grid">
+            <label>
+              <span>状态</span>
+              <select value={status} onChange={(event) => setStatus(event.target.value as TodoStatus)}>
+                <option value="pending">待处理</option>
+                <option value="in_progress">进行中</option>
+                <option value="completed">已完成</option>
+              </select>
+            </label>
+            <label>
+              <span>优先级</span>
+              <select value={priority} onChange={(event) => setPriority(event.target.value as TodoPriority)}>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+            </label>
+          </div>
+          <div className="todo-detail-grid">
+            <label>
+              <span>截止日期</span>
+              <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
+            </label>
+            <label>
+              <span>所属项目</span>
+              <select value={projectPath} onChange={(event) => setProjectPath(event.target.value)}>
+                <option value="">不关联项目</option>
+                {projects.map((project) => (
+                  <option key={project.path} value={project.path}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </section>
 
-      {/* Pinned above the footer so handing the task to Nova never hides below the fold. */}
-      <div className="todo-detail-actions">
-        {todo.sessionId ? (
-          <button type="button" className="todo-agent-link" onClick={onOpenSession}>
-            <Sparkles size={15} />
-            <div>
-              <strong>打开 Nova 会话</strong>
-              <span>查看处理过程与结果</span>
-            </div>
-            <ChevronRight size={15} />
-          </button>
-        ) : (
-          todo.status !== "completed" && (
-            <button type="button" className="todo-run-button" disabled={busy || dirty} onClick={onRun}>
-              <Sparkles size={15} />
-              让 Nova 处理
+        <section className="todo-detail-section todo-detail-nova-section">
+          <span className="todo-detail-section-title">Nova 协作</span>
+          {todo.sessionId ? (
+            <button type="button" className="todo-agent-link" onClick={onOpenSession}>
+              <span className="todo-nova-icon"><Sparkles size={15} /></span>
+              <div>
+                <strong>打开 Nova 会话</strong>
+                <span>查看处理过程与结果</span>
+              </div>
+              <ChevronRight size={15} />
             </button>
-          )
-        )}
+          ) : (
+            todo.status !== "completed" && (
+              <button type="button" className="todo-run-button" disabled={busy || dirty} onClick={onRun}>
+                <span className="todo-nova-icon"><Sparkles size={15} /></span>
+                <div>
+                  <strong>交给 Nova 处理</strong>
+                  <span>{dirty ? "请先保存当前更改" : "Nova 将创建会话并开始执行"}</span>
+                </div>
+                <ChevronRight size={15} />
+              </button>
+            )
+          )}
+        </section>
+
         <div className="todo-detail-meta">
-          <span>
-            创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}
-          </span>
+          <span>创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}</span>
+          <i />
           <span>来源：{todo.source === "agent" ? "Nova" : "手动创建"}</span>
         </div>
       </div>

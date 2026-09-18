@@ -1367,4 +1367,85 @@ mod todo_tests {
         assert!(validate_todo_due_at(Some("2026-09-18T08:00:00Z".to_string())).is_ok());
         assert_eq!(validate_todo_due_at(Some("  ".to_string())).unwrap(), None);
     }
+
+    /// The agent's `todo` tool writes this file from TypeScript
+    /// (`packages/nova/src/core/todo-store.ts`). Both writers must agree on the
+    /// exact shape, so this pins the payload the tool produces.
+    #[test]
+    fn reads_todos_written_by_the_agent_tool() {
+        let content = r#"{
+            "version": 1,
+            "items": [
+                {
+                    "id": "todo_c66e90eb-31e8-4571-9d96-467e5fe21bd7",
+                    "title": "整理 v1.7 发布说明",
+                    "description": "",
+                    "status": "pending",
+                    "priority": "high",
+                    "projectPath": "/Users/dongzj1102/Desktop/Pi-Agent/nova",
+                    "dueAt": "2026-09-30",
+                    "source": "agent",
+                    "agentId": "agent-1234",
+                    "sessionId": "agent-1234",
+                    "createdAt": "2026-09-17T16:50:03.218Z",
+                    "updatedAt": "2026-09-17T16:50:03.218Z",
+                    "order": 0
+                }
+            ]
+        }"#;
+
+        let state: TodoState = serde_json::from_str(content).expect("agent-written todos must parse");
+
+        assert_eq!(state.version, 1);
+        assert_eq!(state.items.len(), 1);
+        let todo = &state.items[0];
+        assert_eq!(todo.title, "整理 v1.7 发布说明");
+        assert_eq!(todo.status, "pending");
+        assert_eq!(todo.priority, "high");
+        assert_eq!(
+            todo.project_path.as_deref(),
+            Some("/Users/dongzj1102/Desktop/Pi-Agent/nova")
+        );
+        assert_eq!(todo.due_at.as_deref(), Some("2026-09-30"));
+        assert_eq!(todo.source, "agent");
+        assert_eq!(todo.agent_id.as_deref(), Some("agent-1234"));
+        assert_eq!(todo.completed_at, None);
+        assert_eq!(todo.order, 0);
+    }
+
+    /// The reverse direction: the UI writes the file the agent tool reads.
+    #[test]
+    fn writes_todos_the_agent_tool_can_read() {
+        let state = TodoState {
+            version: 1,
+            items: vec![TodoItem {
+                id: "todo_1".to_string(),
+                title: "Ship the todo tool".to_string(),
+                description: "Wire the agent tool to the 待办 page.".to_string(),
+                status: "pending".to_string(),
+                priority: "medium".to_string(),
+                project_path: Some("/tmp/project".to_string()),
+                due_at: None,
+                source: "user".to_string(),
+                agent_id: None,
+                session_id: None,
+                created_at: "2026-09-17T00:00:00Z".to_string(),
+                updated_at: "2026-09-17T00:00:00Z".to_string(),
+                completed_at: None,
+                order: 4,
+            }],
+        };
+
+        let value = serde_json::to_value(&state).unwrap();
+        let item = &value["items"][0];
+
+        // Field names the TypeScript store reads.
+        assert_eq!(value["version"], 1);
+        assert_eq!(item["projectPath"], "/tmp/project");
+        assert_eq!(item["createdAt"], "2026-09-17T00:00:00Z");
+        assert_eq!(item["updatedAt"], "2026-09-17T00:00:00Z");
+        assert_eq!(item["order"], 4);
+        assert!(item.get("dueAt").is_some());
+        assert!(item.get("completedAt").is_some());
+    }
 }

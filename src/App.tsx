@@ -1,10 +1,12 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
+import { NovaIntro } from "./components/layout/NovaIntro";
 import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
 import { listAgents, onAgentEvent, requestMessages } from "./lib/tauri-bridge";
 import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
+import { useTodoStore } from "./stores/todo-store";
 import { useUiStore } from "./stores/ui-store";
 
 const STREAM_FLUSH_INTERVAL_MS = 50;
@@ -15,6 +17,16 @@ const STREAM_FLUSH_INTERVAL_MS = 50;
  * 都会写一次 store，进而让整个 AppShell 重渲染一次。
  */
 const COALESCED_DELTA_TYPES = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
+
+/** The agent writes the same `todos.json` the 待办 page reads, so a finished
+ * `todo` tool call means the page is showing stale data. */
+function isTodoMutation(payload: AgentEventPayload): boolean {
+  return (
+    payload.event.type === "tool_execution_end" &&
+    payload.event.toolName === "todo" &&
+    !payload.event.isError
+  );
+}
 
 interface PendingStreamDelta {
   agentId: string;
@@ -39,9 +51,13 @@ function isSuccessfulNovaSessionDeletion(payload: AgentEventPayload): boolean {
 }
 
 function App() {
+  const [showIntro, setShowIntro] = useState(true);
+  const [introExiting, setIntroExiting] = useState(false);
   const handleAgentEvent = useAgentStore((s) => s.handleAgentEvent);
   const syncAgents = useAgentStore((s) => s.syncAgents);
   const theme = useUiStore((s) => s.theme);
+  const finishIntro = useCallback(() => setShowIntro(false), []);
+  const beginIntroExit = useCallback(() => setIntroExiting(true), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -99,6 +115,9 @@ function App() {
       // Preserve event order: a message_end must never overtake buffered deltas.
       flushDeltas(payload.agentId);
       handleAgentEvent(payload);
+      if (isTodoMutation(payload)) {
+        useTodoStore.getState().markTodosChanged();
+      }
       if (payload.event.type === "agent_settled") {
         void requestMessages(payload.agentId).catch((error) => console.error("Failed to refresh message entries:", error));
       }
@@ -125,8 +144,11 @@ function App() {
 
   return (
     <>
-      <AppShell />
+      <div className={`nova-app-stage${showIntro && !introExiting ? " nova-app-stage-intro" : ""}`}>
+        <AppShell />
+      </div>
       <ExtensionUIPrompt />
+      {showIntro && <NovaIntro onComplete={finishIntro} onExitStart={beginIntroExit} />}
     </>
   );
 }

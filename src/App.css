@@ -325,6 +325,219 @@ body {
   width: 100%;
 }
 
+/* Startup signature ------------------------------------------------------- */
+.nova-app-stage {
+  width: 100%;
+  height: 100%;
+  transform: none;
+  opacity: 1;
+  filter: none;
+  transition: opacity 550ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 650ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 550ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.nova-app-stage-intro {
+  transform: scale(0.985);
+  opacity: 0;
+  filter: blur(4px);
+}
+
+.nova-intro {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  opacity: 1;
+  background: transparent;
+  transition: opacity 550ms cubic-bezier(0.22, 1, 0.36, 1);
+  user-select: none;
+  pointer-events: all;
+  isolation: isolate;
+}
+
+.nova-intro::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: #08090b;
+  content: "";
+  animation: nova-intro-background-in 200ms ease-out both;
+}
+
+:root[data-theme="arctic-dawn"] .nova-intro::before {
+  background: #f3f5f7;
+}
+
+.nova-intro-signature {
+  position: relative;
+  width: min(48vw, 520px);
+  min-width: 300px;
+  color: rgba(255, 255, 255, 0.92);
+  transform: translateZ(0) scale(1);
+  opacity: 1;
+  filter: blur(0);
+  animation: nova-intro-breathe 350ms 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: opacity 500ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 600ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 500ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity, filter;
+}
+
+:root[data-theme="arctic-dawn"] .nova-intro-signature {
+  color: rgba(30, 35, 43, 0.88);
+}
+
+.nova-intro-wordmark {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.nova-intro-ink {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 4.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 3px rgba(184, 202, 255, 0.13));
+}
+
+.nova-intro-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation-name: nova-intro-write;
+  animation-timing-function: cubic-bezier(0.42, 0, 0.2, 1);
+  animation-fill-mode: forwards;
+  will-change: stroke-dashoffset;
+}
+
+.nova-intro-stroke-n {
+  animation-duration: 330ms;
+  animation-delay: 210ms;
+}
+
+.nova-intro-stroke-o {
+  animation-duration: 310ms;
+  animation-delay: 450ms;
+}
+
+.nova-intro-stroke-v {
+  animation-duration: 260ms;
+  animation-delay: 690ms;
+}
+
+.nova-intro-stroke-a {
+  animation-duration: 350ms;
+  animation-delay: 850ms;
+}
+
+.nova-intro-halo {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: 84%;
+  height: 56%;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(ellipse, rgba(121, 145, 224, 0.12), transparent 68%);
+  filter: blur(24px);
+  transform: translate(-50%, -50%) scale(0.92);
+  animation: nova-intro-halo 350ms 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+:root[data-theme="arctic-dawn"] .nova-intro-halo {
+  background: radial-gradient(ellipse, rgba(99, 124, 180, 0.09), transparent 68%);
+}
+
+.nova-intro-exiting {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nova-intro-exiting .nova-intro-signature {
+  transform: translateZ(0) scale(1.03);
+  opacity: 0;
+  filter: blur(6px);
+}
+
+@keyframes nova-intro-write {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes nova-intro-background-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes nova-intro-breathe {
+  0%,
+  100% {
+    transform: translateZ(0) scale(1);
+  }
+  55% {
+    transform: translateZ(0) scale(1.015);
+  }
+}
+
+@keyframes nova-intro-halo {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nova-app-stage,
+  .nova-intro,
+  .nova-intro-signature {
+    transition-duration: 300ms;
+  }
+
+  .nova-app-stage-intro {
+    transform: none;
+    filter: none;
+  }
+
+  .nova-intro-signature {
+    animation: nova-intro-reduced-in 180ms 80ms ease-out both;
+  }
+
+  .nova-intro-stroke {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  .nova-intro-halo {
+    display: none;
+  }
+}
+
+@keyframes nova-intro-reduced-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .app-background-layer {
   z-index: 0;
   width: 100dvw;
@@ -1716,6 +1929,22 @@ body {
   display: flex;
   flex-direction: column;
   gap: 7px;
+}
+
+/* Todo tool calls reuse the Nova-data card material; only the status colour of
+   the row icon and the action chip differ. */
+.todo-tool-action-list {
+  border-color: color-mix(in srgb, var(--color-border-glass) 92%, transparent);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-control) 56%, transparent);
+}
+
+.todo-tool-item-in_progress > svg {
+  color: var(--color-warning);
+}
+
+.todo-tool-item-completed > svg {
+  color: var(--color-success);
 }
 
 .nova-session-meta {
@@ -5297,10 +5526,12 @@ body {
   margin: 30px 26px 30px 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--todo-border);
-  border-radius: 22px;
-  background: linear-gradient(135deg, var(--todo-highlight), transparent 44%), var(--todo-panel);
-  box-shadow: 0 22px 60px rgba(15, 22, 38, 0.18), inset 0 1px 0 var(--todo-highlight);
+  border: 1px solid color-mix(in srgb, var(--todo-border) 84%, transparent);
+  border-radius: 20px;
+  background:
+    radial-gradient(120% 58% at 8% 0%, color-mix(in srgb, var(--color-accent-start) 8%, transparent), transparent 62%),
+    color-mix(in srgb, var(--todo-panel) 94%, var(--color-bg-primary));
+  box-shadow: 0 24px 70px rgba(6, 10, 20, 0.24), inset 0 1px 0 var(--todo-highlight);
   backdrop-filter: blur(28px) saturate(145%);
   -webkit-backdrop-filter: blur(28px) saturate(145%);
   animation: liquid-panel-in 220ms ease-out both;
@@ -5308,18 +5539,63 @@ body {
 
 .todo-detail > header {
   display: flex;
-  min-height: 62px;
-  padding: 15px 16px 14px 18px;
+  min-height: 72px;
+  padding: 16px 16px 15px 18px;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--todo-border);
 }
 
 .todo-detail > header h2 {
-  margin: 6px 0 0;
+  margin: 0;
   color: var(--text-heading);
-  font-size: 15px;
-  font-weight: 680;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.todo-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.todo-detail-heading-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 24%, transparent);
+  border-radius: 11px;
+  place-items: center;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 11%, transparent);
+}
+
+.todo-detail-status {
+  display: inline-flex;
+  margin-top: 4px;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.todo-detail-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.todo-detail-status-in_progress {
+  color: var(--color-warning);
+}
+
+.todo-detail-status-completed {
+  color: var(--color-success);
 }
 
 .todo-icon-button {
@@ -5344,10 +5620,23 @@ body {
 .todo-detail-fields {
   display: grid;
   min-height: 0;
-  padding: 16px 18px 18px;
+  padding: 18px;
   overflow-y: auto;
   align-content: start;
-  gap: 14px;
+  gap: 20px;
+}
+
+.todo-detail-section {
+  display: grid;
+  gap: 12px;
+}
+
+.todo-detail-section-title {
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .todo-detail-fields label,
@@ -5355,8 +5644,19 @@ body {
   display: grid;
   gap: 7px;
   color: var(--color-text-secondary);
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.todo-field-label {
+  display: flex;
+  justify-content: space-between;
+}
+
+.todo-field-label small {
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  font-weight: 500;
 }
 
 .todo-detail-fields input,
@@ -5367,11 +5667,11 @@ body {
 .todo-modal-fields select {
   box-sizing: border-box;
   width: 100%;
-  border: 1px solid var(--todo-border);
-  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 90%, transparent);
+  border-radius: 10px;
   outline: none;
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 56%, transparent);
   font: inherit;
   font-size: 12.5px;
   transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
@@ -5379,12 +5679,12 @@ body {
 
 .todo-detail-fields input,
 .todo-detail-fields select {
-  height: 40px;
+  height: 38px;
   padding: 0 11px;
 }
 
 .todo-detail-fields textarea {
-  min-height: 92px;
+  min-height: 110px;
   padding: 10px 11px;
   resize: vertical;
   line-height: 1.65;
@@ -5402,36 +5702,42 @@ body {
 .todo-modal-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.todo-detail-actions {
-  display: grid;
-  padding: 14px 18px 15px;
-  gap: 12px;
-  flex: 0 0 auto;
-  border-top: 1px solid var(--todo-border);
+  gap: 9px;
 }
 
 .todo-detail-meta {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  padding: 0 2px 2px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
   color: var(--color-text-muted);
-  font-size: 10.5px;
+  font-size: 9.5px;
+}
+
+.todo-detail-meta i {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .todo-run-button,
 .todo-agent-link {
   display: flex;
   width: 100%;
-  min-height: 44px;
-  padding: 0 13px;
+  min-height: 58px;
+  padding: 9px 12px;
   align-items: center;
   gap: 10px;
   border: 1px solid color-mix(in srgb, var(--color-accent-start) 26%, transparent);
-  border-radius: 13px;
+  border-radius: 12px;
   color: var(--color-accent-start);
-  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--color-accent-start) 13%, transparent),
+    color-mix(in srgb, var(--color-accent-end) 5%, transparent)
+  );
   font: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -5446,43 +5752,62 @@ body {
 }
 
 .todo-run-button:disabled {
-  opacity: 0.45;
+  opacity: 0.58;
   cursor: default;
 }
 
-.todo-agent-link {
+.todo-agent-link,
+.todo-run-button {
   text-align: left;
 }
 
-.todo-agent-link > div {
+.todo-agent-link > div,
+.todo-run-button > div {
   min-width: 0;
   flex: 1;
 }
 
 .todo-agent-link strong,
-.todo-agent-link span {
+.todo-agent-link > div span,
+.todo-run-button strong,
+.todo-run-button > div span {
   display: block;
 }
 
-.todo-agent-link strong {
+.todo-agent-link strong,
+.todo-run-button strong {
   color: var(--color-accent-start);
   font-size: 12.5px;
 }
 
-.todo-agent-link span {
+.todo-agent-link > div span,
+.todo-run-button > div span {
   margin-top: 3px;
   color: var(--color-text-muted);
   font-size: 10.5px;
   font-weight: 500;
 }
 
+.todo-nova-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--color-accent-start), var(--color-accent-end));
+  box-shadow: 0 7px 16px var(--accent-shadow);
+}
+
 .todo-detail > footer {
   display: flex;
-  padding: 14px 18px 16px;
+  padding: 13px 18px 15px;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-top: 1px solid var(--todo-border);
+  border-top: 1px solid color-mix(in srgb, var(--todo-border) 84%, transparent);
+  background: color-mix(in srgb, var(--color-bg-primary) 24%, transparent);
 }
 
 .todo-delete-button {
@@ -8637,13 +8962,18 @@ body {
 }
 
 .studio-sidebar {
-  margin: 0 0 12px 12px !important;
-  border: 1px solid var(--liquid-glass-border);
-  border-radius: 24px;
+  margin: 0 !important;
+  border: 0;
+  border-right: 1px solid var(--liquid-glass-border-soft);
+  border-radius: 0;
   background: linear-gradient(145deg, rgba(40, 49, 65, 0.46), rgba(18, 23, 34, 0.34));
-  box-shadow: var(--liquid-glass-shadow);
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.12);
   backdrop-filter: blur(30px) saturate(145%);
   -webkit-backdrop-filter: blur(30px) saturate(145%);
+}
+
+.studio-sidebar::after {
+  content: none;
 }
 
 .studio-sidebar::after,

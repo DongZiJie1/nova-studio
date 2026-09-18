@@ -2906,9 +2906,12 @@ export function AppShell() {
     const prompt = [
       "请处理以下 Nova 待办。",
       `标题：${todo.title}`,
+      `待办 id：${todo.id}`,
       todo.description ? `描述：${todo.description}` : "描述：无",
       todo.dueAt ? `截止日期：${todo.dueAt.slice(0, 10)}` : "截止日期：未设置",
       "完成后请总结实际完成的内容、验证结果和仍需处理的问题。不要在缺少证据时声称任务已经完成。",
+      // Keeps the 待办 page truthful after the run instead of leaving it stuck on 进行中.
+      "处理结束后用 todo 工具（todo_id 用上面这个 id）更新这条待办：确实完成并验证过就设为 completed；只推进了一部分则保持 in_progress。",
     ].join("\n\n");
     addUserMessage(info.id, prompt);
     await sendPrompt(info.id, prompt);
@@ -3120,7 +3123,7 @@ export function AppShell() {
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className={`studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
+          className={`studio-sidebar glass-panel relative z-20 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
         >
           {sidebarCollapsed ? (
             <nav className="sidebar-collapsed-nav" aria-label="折叠侧边栏">
