@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-const INTRO_EXIT_DELAY_MS = 1550;
-const INTRO_FALLBACK_END_MS = 2300;
+const INTRO_EXIT_DELAY_MS = 1280;
+const INTRO_FALLBACK_END_MS = 2050;
 const REDUCED_EXIT_DELAY_MS = 430;
 const REDUCED_FALLBACK_END_MS = 900;
 
@@ -17,31 +17,51 @@ interface NovaIntroProps {
 export function NovaIntro({ onComplete, onExitStart }: NovaIntroProps) {
 	const [isExiting, setIsExiting] = useState(false);
 	const [reduceMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+	const [preboot] = useState(() => document.getElementById("nova-preboot"));
+	const exitStartedRef = useRef(false);
 
 	const finish = useCallback(() => {
+		preboot?.remove();
 		onComplete();
-	}, [onComplete]);
+	}, [onComplete, preboot]);
+
+	const beginExit = useCallback(() => {
+		if (exitStartedRef.current) return;
+		exitStartedRef.current = true;
+		setIsExiting(true);
+		preboot?.classList.add("nova-preboot-exiting");
+		onExitStart();
+	}, [onExitStart, preboot]);
 
 	useEffect(() => {
+		const startedBeforeReact = preboot ? performance.now() : 0;
+		const exitAt = reduceMotion ? REDUCED_EXIT_DELAY_MS : INTRO_EXIT_DELAY_MS;
+		const finishAt = reduceMotion ? REDUCED_FALLBACK_END_MS : INTRO_FALLBACK_END_MS;
+		const handleTransitionEnd = (event: TransitionEvent) => {
+			if (event.target === preboot && event.propertyName === "opacity") finish();
+		};
+		preboot?.addEventListener("transitionend", handleTransitionEnd);
 		const exitTimer = window.setTimeout(
-			() => {
-				setIsExiting(true);
-				onExitStart();
-			},
-			reduceMotion ? REDUCED_EXIT_DELAY_MS : INTRO_EXIT_DELAY_MS,
+			beginExit,
+			Math.max(0, exitAt - startedBeforeReact),
 		);
 		// WebViews can occasionally drop animationend while backgrounded or
 		// during HMR. Never allow a decorative overlay to trap the application.
 		const fallbackTimer = window.setTimeout(
 			finish,
-			reduceMotion ? REDUCED_FALLBACK_END_MS : INTRO_FALLBACK_END_MS,
+			Math.max(0, finishAt - startedBeforeReact),
 		);
 
 		return () => {
+			preboot?.removeEventListener("transitionend", handleTransitionEnd);
 			window.clearTimeout(exitTimer);
 			window.clearTimeout(fallbackTimer);
 		};
-	}, [finish, onExitStart, reduceMotion]);
+	}, [beginExit, finish, preboot, reduceMotion]);
+
+	// On a real app launch the parser-created layer is already animating before
+	// React loads. Reuse it as the single source of truth instead of restarting.
+	if (preboot) return null;
 
 	return (
 		<div

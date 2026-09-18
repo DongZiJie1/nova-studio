@@ -1,10 +1,50 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="nova-booting">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nova Studio</title>
+    <style>
+      html.nova-booting, html.nova-booting body, html.nova-booting #root { background: #08090b; }
+      #nova-preboot {
+        position: fixed;
+        z-index: 10001;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #08090b;
+        opacity: 1;
+        transition: opacity 550ms cubic-bezier(0.22, 1, 0.36, 1);
+        pointer-events: all;
+      }
+      #nova-preboot.nova-preboot-exiting { opacity: 0; }
+      #nova-preboot .nova-preboot-signature {
+        width: min(48vw, 520px);
+        min-width: 300px;
+        transition: opacity 500ms cubic-bezier(0.22, 1, 0.36, 1), transform 600ms cubic-bezier(0.22, 1, 0.36, 1), filter 500ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #nova-preboot.nova-preboot-exiting .nova-preboot-signature { opacity: 0; transform: scale(1.03); filter: blur(6px); }
+      #nova-preboot svg { display: block; width: 100%; overflow: visible; }
+      #nova-preboot path {
+        fill: none;
+        stroke: rgba(255, 255, 255, 0.92);
+        stroke-width: 4.2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-dasharray: 1;
+        stroke-dashoffset: 1;
+        animation: nova-preboot-write cubic-bezier(0.42, 0, 0.2, 1) forwards;
+      }
+      #nova-preboot .n { animation-duration: 280ms; }
+      #nova-preboot .o { animation-duration: 260ms; animation-delay: 240ms; }
+      #nova-preboot .v { animation-duration: 220ms; animation-delay: 450ms; }
+      #nova-preboot .a { animation-duration: 310ms; animation-delay: 620ms; }
+      @keyframes nova-preboot-write { to { stroke-dashoffset: 0; } }
+      @media (prefers-reduced-motion: reduce) {
+        #nova-preboot path { animation: none; stroke-dashoffset: 0; }
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -15,6 +55,16 @@
     />
   </head>
   <body>
+    <div id="nova-preboot" aria-hidden="true">
+      <div class="nova-preboot-signature">
+        <svg viewBox="0 0 520 180" role="presentation">
+          <path class="n" pathLength="1" d="M 30 139 C 34 108, 37 66, 45 39 C 48 29, 54 27, 60 39 C 76 70, 88 107, 105 135 C 110 143, 115 139, 117 127 C 122 97, 124 62, 132 33" />
+          <path class="o" pathLength="1" d="M 221 60 C 210 38, 178 32, 157 51 C 137 70, 137 111, 158 132 C 178 152, 213 142, 226 116 C 238 92, 233 67, 221 60 C 210 54, 192 62, 181 79" />
+          <path class="v" pathLength="1" d="M 253 38 C 260 66, 270 105, 288 137 C 292 145, 297 145, 302 136 C 319 106, 332 70, 347 34" />
+          <path class="a" pathLength="1" d="M 365 139 C 380 103, 394 66, 414 37 C 420 28, 427 30, 432 41 C 445 69, 455 105, 466 139 M 383 103 C 405 99, 430 97, 451 101 C 463 103, 477 102, 489 96" />
+        </svg>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

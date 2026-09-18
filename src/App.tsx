@@ -60,6 +60,10 @@ function App() {
   const beginIntroExit = useCallback(() => setIntroExiting(true), []);
 
   useEffect(() => {
+    document.documentElement.classList.remove("nova-booting");
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme === "arctic-dawn" ? "light" : "dark";
   }, [theme]);

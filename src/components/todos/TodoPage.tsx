@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   CalendarDays,
@@ -84,11 +84,40 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   const [query, setQuery] = useState("");
   const [priority, setPriority] = useState<TodoPriority | "all">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const revision = useTodoStore((store) => store.revision);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openTodo = useCallback((id: string) => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    setSelectedId(id);
+    requestAnimationFrame(() => setDetailOpen(true));
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    setDetailOpen(false);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
+      setSelectedId(null);
+      closeTimerRef.current = null;
+    }, 400);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && detailOpen) closeDetail();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeDetail, detailOpen]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +184,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
     setBusyId(todo.id);
     try {
       setState(await deleteTodo(todo.id));
-      setSelectedId(null);
+      closeDetail();
       setError(null);
     } catch (reason) {
       setError(String(reason));
@@ -219,8 +248,14 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           </div>
         </aside>
 
-        <div className="todo-content">
-          <div className="todo-content-inner">
+        <div className={`todo-workspace ${detailOpen ? "todo-workspace-focus" : ""}`}>
+          <div
+            className="todo-content"
+            onClick={() => {
+              if (detailOpen) closeDetail();
+            }}
+          >
+            <div className="todo-content-inner">
             <header className="todo-page-header">
               <div className="todo-page-header-copy">
                 <h1>
@@ -308,7 +343,10 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                     <article
                       key={todo.id}
                       className={`todo-card ${selectedId === todo.id ? "todo-card-selected" : ""}`}
-                      onClick={() => setSelectedId(todo.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openTodo(todo.id);
+                      }}
                     >
                       <button
                         type="button"
@@ -363,22 +401,23 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                 })}
               </div>
             )}
+            </div>
           </div>
-        </div>
 
-        {selected && (
-          <TodoDetail
-            key={selected.id}
-            todo={selected}
-            projects={projects}
-            busy={busyId === selected.id}
-            onClose={() => setSelectedId(null)}
-            onSave={(input) => runUpdate(input)}
-            onDelete={() => void removeTodo(selected)}
-            onRun={() => void runWithNova(selected)}
-            onOpenSession={() => onOpenSession(selected)}
-          />
-        )}
+          {selected && (
+            <TodoDetail
+              todo={selected}
+              projects={projects}
+              busy={busyId === selected.id}
+              open={detailOpen}
+              onClose={closeDetail}
+              onSave={(input) => runUpdate(input)}
+              onDelete={() => void removeTodo(selected)}
+              onRun={() => void runWithNova(selected)}
+              onOpenSession={() => onOpenSession(selected)}
+            />
+          )}
+        </div>
       </div>
 
       {error && (
@@ -559,6 +598,7 @@ function TodoDetail({
   todo,
   projects,
   busy,
+  open,
   onClose,
   onSave,
   onDelete,
@@ -568,6 +608,7 @@ function TodoDetail({
   todo: TodoItem;
   projects: TodoPageProps["projects"];
   busy: boolean;
+  open: boolean;
   onClose: () => void;
   onSave: (input: {
     id: string;
@@ -589,6 +630,15 @@ function TodoDetail({
   const [projectPath, setProjectPath] = useState(todo.projectPath ?? "");
   const [dueAt, setDueAt] = useState(todo.dueAt?.slice(0, 10) ?? "");
 
+  useEffect(() => {
+    setTitle(todo.title);
+    setDescription(todo.description);
+    setStatus(todo.status);
+    setPriority(todo.priority);
+    setProjectPath(todo.projectPath ?? "");
+    setDueAt(todo.dueAt?.slice(0, 10) ?? "");
+  }, [todo]);
+
   const dirty =
     title !== todo.title ||
     description !== todo.description ||
@@ -598,14 +648,15 @@ function TodoDetail({
     dueAt !== (todo.dueAt?.slice(0, 10) ?? "");
 
   return (
-    <aside className="todo-detail">
+    <aside className={`todo-detail ${open ? "todo-detail-open" : ""}`} aria-hidden={!open}>
       <header>
         <div className="todo-detail-heading">
           <span className="todo-detail-heading-icon">
             <ListTodo size={16} />
           </span>
           <div>
-            <h2>任务详情</h2>
+            <span className="todo-eyebrow">FOCUS WORKSPACE</span>
+            <h2>任务聚焦</h2>
             <span className={`todo-detail-status todo-detail-status-${status}`}>
               {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
             </span>
@@ -616,28 +667,38 @@ function TodoDetail({
         </button>
       </header>
 
-      <div className="todo-detail-fields">
-        <section className="todo-detail-section">
-          <span className="todo-detail-section-title">任务内容</span>
-          <label>
-            <span>标题</span>
-            <input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} />
-          </label>
-          <label>
-            <span className="todo-field-label">
-              描述 <small>{description.length}/4000</small>
-            </span>
-            <textarea
-              rows={5}
-              maxLength={4000}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="补充目标、要求或验收标准…"
-            />
-          </label>
+      <div className="todo-detail-fields" key={todo.id}>
+        <section className="todo-detail-hero">
+          <span className={`todo-detail-status todo-detail-status-${status}`}>
+            {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
+          </span>
+          <h1>{todo.title}</h1>
+          <p>{todo.description || "还没有添加任务描述。"}</p>
         </section>
 
-        <section className="todo-detail-section">
+        <div className="todo-detail-workspace-grid">
+          <section className="todo-detail-section todo-detail-content-section">
+            <span className="todo-detail-section-title">任务内容</span>
+            <label>
+              <span>标题</span>
+              <input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} />
+            </label>
+            <label>
+              <span className="todo-field-label">
+                描述 <small>{description.length}/4000</small>
+              </span>
+              <textarea
+                rows={8}
+                maxLength={4000}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="补充目标、要求或验收标准…"
+              />
+            </label>
+          </section>
+
+          <div className="todo-detail-side-stack">
+            <section className="todo-detail-section todo-detail-properties">
           <span className="todo-detail-section-title">任务属性</span>
           <div className="todo-detail-grid">
             <label>
@@ -674,9 +735,9 @@ function TodoDetail({
               </select>
             </label>
           </div>
-        </section>
+            </section>
 
-        <section className="todo-detail-section todo-detail-nova-section">
+            <section className="todo-detail-section todo-detail-nova-section">
           <span className="todo-detail-section-title">Nova 协作</span>
           {todo.sessionId ? (
             <button type="button" className="todo-agent-link" onClick={onOpenSession}>
@@ -699,12 +760,16 @@ function TodoDetail({
               </button>
             )
           )}
-        </section>
+            </section>
 
-        <div className="todo-detail-meta">
-          <span>创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}</span>
-          <i />
-          <span>来源：{todo.source === "agent" ? "Nova" : "手动创建"}</span>
+            <div className="todo-detail-meta">
+              <span>
+                创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}
+              </span>
+              <i />
+              <span>来源：{todo.source === "agent" ? "Nova" : "手动创建"}</span>
+            </div>
+          </div>
         </div>
       </div>
 

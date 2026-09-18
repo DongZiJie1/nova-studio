@@ -3673,7 +3673,7 @@ export function AppShell() {
               >
                 {/* Tagline */}
                 <h2
-                  className="hero-title"
+                  className={`hero-title ${agentsLoaded ? "hero-title-ready" : "hero-title-loading"}`}
                   style={{
                     fontSize: "clamp(32px, 3.8vw, 62px)",
                     fontWeight: 720,
