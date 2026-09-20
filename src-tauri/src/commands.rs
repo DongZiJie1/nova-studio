@@ -26,14 +26,651 @@ pub struct ModelConfigurationInput {
     images: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserMemorySection {
+    id: String,
+    title: String,
+    content: String,
+    updated_at: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserMemoryState {
+    version: u8,
+    enabled: bool,
+    sections: Vec<UserMemorySection>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveUserMemoryInput {
+    section_id: Option<String>,
+    title: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    topic: Option<String>,
+    parent_id: Option<String>,
+    #[serde(default)]
+    depends_on: Vec<String>,
+    id: String,
+    title: String,
+    description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    status: String,
+    priority: String,
+    project_path: Option<String>,
+    due_at: Option<String>,
+    source: String,
+    agent_id: Option<String>,
+    session_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+    completed_at: Option<String>,
+    order: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoState {
+    version: u8,
+    items: Vec<TodoItem>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTodoInput {
+    topic: Option<String>,
+    parent_id: Option<String>,
+    #[serde(default)]
+    depends_on: Vec<String>,
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    priority: Option<String>,
+    project_path: Option<String>,
+    due_at: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTodoInput {
+    topic: Option<String>,
+    parent_id: Option<String>,
+    depends_on: Option<Vec<String>>,
+    id: String,
+    title: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
+    status: Option<String>,
+    priority: Option<String>,
+    project_path: Option<String>,
+    due_at: Option<String>,
+    agent_id: Option<String>,
+    session_id: Option<String>,
+}
+
+static TODO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn todo_topic(todo: &TodoItem) -> &str {
+    todo.topic
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| todo.tags.first().map(String::as_str))
+        .unwrap_or("未分类")
+}
+
+fn todo_blockers(todo: &TodoItem, items: &[TodoItem], include_children: bool) -> Vec<String> {
+    let mut ids = todo.depends_on.clone();
+    let mut parent_id = todo.parent_id.as_deref();
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(todo.id.as_str());
+    while let Some(parent) = parent_id.and_then(|id| items.iter().find(|item| item.id == id)) {
+        if !seen.insert(parent.id.as_str()) {
+            break;
+        }
+        ids.extend(parent.depends_on.iter().cloned());
+        parent_id = parent.parent_id.as_deref();
+    }
+    if include_children {
+        ids.extend(
+            items
+                .iter()
+                .filter(|item| item.parent_id.as_deref() == Some(todo.id.as_str()))
+                .map(|item| item.id.clone()),
+        );
+    }
+    ids.sort();
+    ids.dedup();
+    ids.retain(|id| {
+        !items
+            .iter()
+            .any(|item| &item.id == id && item.status == "completed")
+    });
+    ids
+}
+
+fn validate_todo_graph(items: &[TodoItem]) -> Result<(), String> {
+    use std::collections::{HashMap, HashSet};
+    let mut edges: HashMap<&str, Vec<&str>> = items
+        .iter()
+        .map(|item| {
+            (
+                item.id.as_str(),
+                item.depends_on.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect();
+    for item in items {
+        for id in item
+            .depends_on
+            .iter()
+            .map(String::as_str)
+            .chain(item.parent_id.as_deref())
+        {
+            if id == item.id {
+                return Err("任务不能关联自己".into());
+            }
+            if !edges.contains_key(id) {
+                return Err(format!("Todo not found: {id}"));
+            }
+        }
+        if let Some(parent_id) = item.parent_id.as_deref() {
+            let parent = items.iter().find(|other| other.id == parent_id).unwrap();
+            if todo_topic(parent).to_lowercase() != todo_topic(item).to_lowercase() {
+                return Err("父任务和子任务必须属于同一主题".into());
+            }
+            edges.get_mut(parent_id).unwrap().push(&item.id);
+        }
+    }
+    fn visit<'a>(
+        id: &'a str,
+        edges: &HashMap<&'a str, Vec<&'a str>>,
+        visiting: &mut HashSet<&'a str>,
+        done: &mut HashSet<&'a str>,
+    ) -> Result<(), String> {
+        if visiting.contains(id) {
+            return Err("任务关系不能形成循环".into());
+        }
+        if done.contains(id) {
+            return Ok(());
+        }
+        visiting.insert(id);
+        if let Some(next) = edges.get(id) {
+            for other in next {
+                visit(other, edges, visiting, done)?;
+            }
+        }
+        visiting.remove(id);
+        done.insert(id);
+        Ok(())
+    }
+    for item in items {
+        let mut seen = HashSet::from([item.id.as_str()]);
+        let mut parent_id = item.parent_id.as_deref();
+        while let Some(parent) = parent_id.and_then(|id| items.iter().find(|other| other.id == id))
+        {
+            if !seen.insert(parent.id.as_str()) {
+                break;
+            }
+            edges
+                .get_mut(item.id.as_str())
+                .unwrap()
+                .extend(parent.depends_on.iter().map(String::as_str));
+            parent_id = parent.parent_id.as_deref();
+        }
+    }
+    let mut visiting = HashSet::new();
+    let mut done = HashSet::new();
+    for item in items {
+        visit(&item.id, &edges, &mut visiting, &mut done)?;
+    }
+    Ok(())
+}
+
 fn nova_agent_dir() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR") {
+    if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR")
+        .or_else(|| std::env::var_os("CODING_AGENT_DIR"))
+        .or_else(|| std::env::var_os("PI_CODING_AGENT_DIR"))
+    {
         return Ok(PathBuf::from(path));
     }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or("Unable to locate the user home directory")?;
     Ok(PathBuf::from(home).join(".nova").join("agent"))
+}
+
+fn user_memory_path() -> Result<PathBuf, String> {
+    Ok(nova_agent_dir()?.join("user-memory.json"))
+}
+
+fn todo_path() -> Result<PathBuf, String> {
+    Ok(nova_agent_dir()?.join("todos.json"))
+}
+
+fn read_todo_state() -> Result<TodoState, String> {
+    let path = todo_path()?;
+    if !path.exists() {
+        return Ok(TodoState {
+            version: 1,
+            items: Vec::new(),
+        });
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let mut state: TodoState = serde_json::from_str(&content)
+        .map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
+    state.version = 1;
+    Ok(state)
+}
+
+fn write_todo_state(state: &TodoState) -> Result<(), String> {
+    let path = todo_path()?;
+    let directory = path.parent().ok_or("Unable to locate todo directory")?;
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
+    let value = serde_json::to_value(state).map_err(|error| error.to_string())?;
+    write_private_json(&path, &value)
+}
+
+fn normalize_todo_title(value: &str) -> Result<String, String> {
+    let title = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        return Err("Todo title is required".to_string());
+    }
+    if title.chars().count() > 120 {
+        return Err("Todo title must not exceed 120 characters".to_string());
+    }
+    Ok(title)
+}
+
+fn normalize_todo_description(value: &str) -> Result<String, String> {
+    let description = value.trim().to_string();
+    if description.chars().count() > 4000 {
+        return Err("Todo description must not exceed 4000 characters".to_string());
+    }
+    Ok(description)
+}
+
+/// Mirrors `normalizeTodoTags` in nova's `todo-store.ts`: trim, collapse inner
+/// spaces, drop duplicates case-insensitively, cap the list at 5 tags of 24
+/// characters. Keep both sides in sync or the two writers disagree.
+fn normalize_todo_tags(tags: Vec<String>) -> Result<Vec<String>, String> {
+    let mut normalized: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for raw in tags {
+        let tag = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        if tag.is_empty() {
+            continue;
+        }
+        if tag.chars().count() > 24 {
+            return Err("Todo tag must not exceed 24 characters".to_string());
+        }
+        let key = tag.to_lowercase();
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        normalized.push(tag);
+    }
+    if normalized.len() > 5 {
+        return Err("A todo must not have more than 5 tags".to_string());
+    }
+    Ok(normalized)
+}
+
+fn validate_todo_status(value: &str) -> Result<(), String> {
+    if matches!(value, "pending" | "in_progress" | "completed") {
+        Ok(())
+    } else {
+        Err(format!("Invalid todo status: {value}"))
+    }
+}
+
+fn validate_todo_priority(value: &str) -> Result<(), String> {
+    if matches!(value, "low" | "medium" | "high") {
+        Ok(())
+    } else {
+        Err(format!("Invalid todo priority: {value}"))
+    }
+}
+
+fn normalize_optional_todo_value(value: Option<String>) -> Option<String> {
+    value.and_then(|item| {
+        let trimmed = item.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn validate_todo_due_at(value: Option<String>) -> Result<Option<String>, String> {
+    let value = normalize_optional_todo_value(value);
+    if let Some(date) = value.as_deref() {
+        if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err()
+            && chrono::DateTime::parse_from_rfc3339(date).is_err()
+        {
+            return Err("Todo due date must be YYYY-MM-DD or RFC 3339".to_string());
+        }
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub async fn list_todos() -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    read_todo_state()
+}
+
+#[tauri::command]
+pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let title = normalize_todo_title(&input.title)?;
+    let description = normalize_todo_description(&input.description)?;
+    let tags = normalize_todo_tags(input.tags)?;
+    let priority = input.priority.unwrap_or_else(|| "medium".to_string());
+    validate_todo_priority(&priority)?;
+    let due_at = validate_todo_due_at(input.due_at)?;
+    let project_path = normalize_optional_todo_value(input.project_path);
+    let mut state = read_todo_state()?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let next_order = state
+        .items
+        .iter()
+        .map(|item| item.order)
+        .max()
+        .unwrap_or(-1)
+        + 1;
+    state.items.push(TodoItem {
+        topic: normalize_todo_tags(input.topic.into_iter().collect())?
+            .into_iter()
+            .next(),
+        parent_id: normalize_optional_todo_value(input.parent_id),
+        depends_on: input.depends_on,
+        id: format!("todo_{}", uuid::Uuid::new_v4()),
+        title,
+        description,
+        tags,
+        status: "pending".to_string(),
+        priority,
+        project_path,
+        due_at,
+        source: "user".to_string(),
+        agent_id: None,
+        session_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+        completed_at: None,
+        order: next_order,
+    });
+    validate_todo_graph(&state.items)?;
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let todo = state
+        .items
+        .iter_mut()
+        .find(|todo| todo.id == input.id)
+        .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    if let Some(topic) = input.topic {
+        todo.topic = normalize_todo_tags(vec![topic])?.into_iter().next();
+    }
+    if input.parent_id.is_some() {
+        todo.parent_id = normalize_optional_todo_value(input.parent_id);
+    }
+    if let Some(ids) = input.depends_on {
+        todo.depends_on = ids;
+    }
+    if let Some(title) = input.title.as_deref() {
+        todo.title = normalize_todo_title(title)?;
+    }
+    if let Some(description) = input.description.as_deref() {
+        todo.description = normalize_todo_description(description)?;
+    }
+    if let Some(tags) = input.tags {
+        todo.tags = normalize_todo_tags(tags)?;
+    }
+    if let Some(status) = input.status.as_deref() {
+        validate_todo_status(status)?;
+        todo.status = status.to_string();
+        todo.completed_at = if status == "completed" {
+            Some(chrono::Utc::now().to_rfc3339())
+        } else {
+            None
+        };
+    }
+    if let Some(priority) = input.priority.as_deref() {
+        validate_todo_priority(priority)?;
+        todo.priority = priority.to_string();
+    }
+    if input.project_path.is_some() {
+        todo.project_path = normalize_optional_todo_value(input.project_path);
+    }
+    if input.due_at.is_some() {
+        todo.due_at = validate_todo_due_at(input.due_at)?;
+    }
+    if input.agent_id.is_some() {
+        todo.agent_id = normalize_optional_todo_value(input.agent_id);
+    }
+    if input.session_id.is_some() {
+        todo.session_id = normalize_optional_todo_value(input.session_id);
+    }
+    todo.updated_at = chrono::Utc::now().to_rfc3339();
+    validate_todo_graph(&state.items)?;
+    if let Some(status) = input.status.as_deref() {
+        if status != "pending" {
+            let todo = state.items.iter().find(|item| item.id == input.id).unwrap();
+            let blockers = todo_blockers(todo, &state.items, status == "completed");
+            if !blockers.is_empty() {
+                return Err(format!("请先完成前置任务或子任务：{}", blockers.join(", ")));
+            }
+        }
+    }
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn delete_todo(id: String) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let before = state.items.len();
+    state.items.retain(|todo| todo.id != id);
+    if before == state.items.len() {
+        return Err(format!("Todo not found: {id}"));
+    }
+    for todo in &mut state.items {
+        todo.depends_on.retain(|dependency| dependency != &id);
+        if todo.parent_id.as_deref() == Some(&id) {
+            todo.parent_id = None;
+        }
+    }
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+fn read_user_memory_state() -> Result<UserMemoryState, String> {
+    let path = user_memory_path()?;
+    if !path.exists() {
+        return Ok(UserMemoryState {
+            version: 3,
+            enabled: true,
+            sections: Vec::new(),
+        });
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
+    if matches!(
+        value.get("version").and_then(serde_json::Value::as_u64),
+        Some(2 | 3)
+    ) {
+        let mut state: UserMemoryState =
+            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        state.version = 3;
+        return Ok(state);
+    }
+    let enabled = value
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let memories = value
+        .get("memories")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let now = chrono::Utc::now().to_rfc3339();
+    let join_category = |category: &str| {
+        memories
+            .iter()
+            .filter(|item| {
+                item.get("category").and_then(serde_json::Value::as_str) == Some(category)
+            })
+            .filter_map(|item| item.get("content").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join("；")
+    };
+    let mut sections = Vec::new();
+    let overview = join_category("identity");
+    if !overview.is_empty() {
+        sections.push(UserMemorySection {
+            id: format!("section_{}", uuid::Uuid::new_v4()),
+            title: "概览".into(),
+            content: overview,
+            updated_at: now.clone(),
+        });
+    }
+    let preferences = join_category("preference");
+    if !preferences.is_empty() {
+        sections.push(UserMemorySection {
+            id: format!("section_{}", uuid::Uuid::new_v4()),
+            title: "协作偏好".into(),
+            content: preferences,
+            updated_at: now,
+        });
+    }
+    Ok(UserMemoryState {
+        version: 3,
+        enabled,
+        sections,
+    })
+}
+
+fn write_user_memory_state(state: &UserMemoryState) -> Result<(), String> {
+    let path = user_memory_path()?;
+    let directory = path
+        .parent()
+        .ok_or("Unable to locate user-memory directory")?;
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
+    let value = serde_json::to_value(state).map_err(|error| error.to_string())?;
+    write_private_json(&path, &value)
+}
+
+fn is_sensitive_memory(content: &str) -> bool {
+    let normalized = content.to_ascii_lowercase();
+    [
+        "api key",
+        "api_key",
+        "access token",
+        "access_token",
+        "password",
+        "passwd",
+        "private key",
+        "secret",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+#[tauri::command]
+pub async fn get_user_memory() -> Result<UserMemoryState, String> {
+    read_user_memory_state()
+}
+
+#[tauri::command]
+pub async fn save_user_memory(input: SaveUserMemoryInput) -> Result<UserMemoryState, String> {
+    let title = input.title.trim();
+    let content = input
+        .content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() {
+        return Err("Memory section title is required".to_string());
+    }
+    if content.is_empty() {
+        return Err("Memory content is required".to_string());
+    }
+    if is_sensitive_memory(&content) {
+        return Err("Sensitive information must not be saved to memory".to_string());
+    }
+
+    let mut state = read_user_memory_state()?;
+    if !state.enabled {
+        return Err("User memory is disabled".to_string());
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Some(section_id) = input.section_id.as_deref() {
+        let memory = state
+            .sections
+            .iter_mut()
+            .find(|memory| memory.id == section_id)
+            .ok_or_else(|| format!("User memory section not found: {section_id}"))?;
+        memory.title = title.to_string();
+        memory.content = content;
+        memory.updated_at = now;
+    } else {
+        state.sections.push(UserMemorySection {
+            id: format!("section_{}", uuid::Uuid::new_v4()),
+            title: title.to_string(),
+            content,
+            updated_at: now,
+        });
+    }
+    write_user_memory_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn delete_user_memory(id: String) -> Result<UserMemoryState, String> {
+    let mut state = read_user_memory_state()?;
+    let before = state.sections.len();
+    state.sections.retain(|memory| memory.id != id);
+    if state.sections.len() == before {
+        return Err("User memory section not found".to_string());
+    }
+    write_user_memory_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn set_user_memory_enabled(enabled: bool) -> Result<UserMemoryState, String> {
+    let mut state = read_user_memory_state()?;
+    state.enabled = enabled;
+    write_user_memory_state(&state)?;
+    Ok(state)
 }
 
 fn read_json_object(path: &Path, root_key: &str) -> Result<serde_json::Value, String> {
@@ -74,14 +711,22 @@ fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<(), Stri
 #[tauri::command]
 pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<(), String> {
     let provider_id = input.provider_id.trim();
-    let model_id = input.model_id.as_deref().map(str::trim).filter(|model| !model.is_empty());
+    let model_id = input
+        .model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
     let previous_model_id = input
         .previous_model_id
         .as_deref()
         .map(str::trim)
         .filter(|model| !model.is_empty());
     let base_url = input.base_url.trim().trim_end_matches('/');
-    let api_key = input.api_key.as_deref().map(str::trim).filter(|key| !key.is_empty());
+    let api_key = input
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
     if provider_id.is_empty() {
         return Err("Provider ID is required".to_string());
     }
@@ -104,7 +749,9 @@ pub async fn save_model_configuration(input: ModelConfigurationInput) -> Result<
         if !SUPPORTED_APIS.contains(&input.api.as_str()) {
             return Err("Unsupported API type".to_string());
         }
-        if input.context_window == 0 || input.max_tokens == 0 || input.max_tokens > input.context_window
+        if input.context_window == 0
+            || input.max_tokens == 0
+            || input.max_tokens > input.context_window
         {
             return Err("Token limits are invalid".to_string());
         }
@@ -235,15 +882,24 @@ pub async fn get_model_configurations() -> Result<Vec<ProviderConfiguration>, St
         let (api_key, api_key_source) = if let Some(key) = auth_key {
             (Some(key), Some("auth".to_string()))
         } else {
-            match provider_object.get("apiKey").and_then(serde_json::Value::as_str) {
+            match provider_object
+                .get("apiKey")
+                .and_then(serde_json::Value::as_str)
+            {
                 Some(key) => (Some(key.to_string()), Some("models".to_string())),
                 None => (None, None),
             }
         };
         configurations.push(ProviderConfiguration {
             provider_id: provider_id.clone(),
-            base_url: provider_object.get("baseUrl").and_then(serde_json::Value::as_str).map(str::to_string),
-            api: provider_object.get("api").and_then(serde_json::Value::as_str).map(str::to_string),
+            base_url: provider_object
+                .get("baseUrl")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            api: provider_object
+                .get("api")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             api_key,
             api_key_source,
         });
@@ -259,7 +915,10 @@ pub async fn get_model_configurations() -> Result<Vec<ProviderConfiguration>, St
                 provider_id: provider_id.clone(),
                 base_url: None,
                 api: None,
-                api_key: entry.get("key").and_then(serde_json::Value::as_str).map(str::to_string),
+                api_key: entry
+                    .get("key")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
                 api_key_source: Some("auth".to_string()),
             });
         }
@@ -285,7 +944,10 @@ fn remove_auth_entry(agent_dir: &Path, provider_id: &str) -> Result<bool, String
 }
 
 #[tauri::command]
-pub async fn delete_model_configuration(provider_id: String, model_id: String) -> Result<(), String> {
+pub async fn delete_model_configuration(
+    provider_id: String,
+    model_id: String,
+) -> Result<(), String> {
     let agent_dir = nova_agent_dir()?;
     let models_path = agent_dir.join("models.json");
     let mut config = read_json_object(&models_path, "providers")?;
@@ -303,9 +965,13 @@ pub async fn delete_model_configuration(provider_id: String, model_id: String) -
         .and_then(serde_json::Value::as_array_mut)
         .ok_or_else(|| format!("Provider {provider_id} has no models array"))?;
     let before = models.len();
-    models.retain(|model| model.get("id").and_then(serde_json::Value::as_str) != Some(model_id.as_str()));
+    models.retain(|model| {
+        model.get("id").and_then(serde_json::Value::as_str) != Some(model_id.as_str())
+    });
     if models.len() == before {
-        return Err(format!("Model {model_id} not found for provider {provider_id}"));
+        return Err(format!(
+            "Model {model_id} not found for provider {provider_id}"
+        ));
     }
     // Removing a model never removes the provider or its credentials: the
     // provider stays connected so the user can add models back.
@@ -825,7 +1491,9 @@ pub async fn revert_file_change(
 }
 
 #[tauri::command]
-pub async fn get_model_catalog(state: State<'_, AgentManagerState>) -> Result<serde_json::Value, String> {
+pub async fn get_model_catalog(
+    state: State<'_, AgentManagerState>,
+) -> Result<serde_json::Value, String> {
     state.0.get_model_catalog().await
 }
 
@@ -859,4 +1527,210 @@ pub async fn respond_tool_permission(
         .0
         .respond_tool_permission(&agent_id, tool_call_id, allowed)
         .await
+}
+
+#[cfg(test)]
+mod todo_tests {
+    fn graph_item(id: &str) -> super::TodoItem {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "title": id, "description": "", "tags": ["实验"],
+            "status": "pending", "priority": "medium", "source": "user",
+            "createdAt": "2026-09-20T00:00:00Z", "updatedAt": "2026-09-20T00:00:00Z", "order": 0
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn task_graph_rejects_cycles_and_missing_references() {
+        let mut a = graph_item("a");
+        let mut b = graph_item("b");
+        b.depends_on = vec!["a".into()];
+        assert!(super::validate_todo_graph(&[a.clone(), b.clone()]).is_ok());
+        a.depends_on = vec!["b".into()];
+        assert!(super::validate_todo_graph(&[a.clone(), b.clone()]).is_err());
+        a.depends_on = vec!["missing".into()];
+        assert!(super::validate_todo_graph(&[a.clone(), b.clone()]).is_err());
+        a.depends_on.clear();
+        b.parent_id = Some("a".into());
+        assert!(super::validate_todo_graph(&[a, b]).is_err());
+    }
+
+    #[test]
+    fn task_graph_rejects_inherited_dependency_deadlock() {
+        let mut a = graph_item("a");
+        let mut b = graph_item("b");
+        let mut a1 = graph_item("a1");
+        let mut b1 = graph_item("b1");
+        a1.parent_id = Some("a".into());
+        b1.parent_id = Some("b".into());
+        a.depends_on = vec!["b1".into()];
+        b.depends_on = vec!["a1".into()];
+        assert!(super::validate_todo_graph(&[a, b, a1, b1]).is_err());
+    }
+
+    #[test]
+    fn task_graph_join_waits_for_all_branches() {
+        let mut a = graph_item("a");
+        let mut b = graph_item("b");
+        let mut join = graph_item("join");
+        join.depends_on = vec!["a".into(), "b".into()];
+        a.status = "completed".into();
+        assert_eq!(
+            super::todo_blockers(&join, &[a.clone(), b.clone(), join.clone()], false),
+            vec!["b"]
+        );
+        b.status = "completed".into();
+        assert!(super::todo_blockers(&join, &[a, b, join.clone()], false).is_empty());
+    }
+
+    #[test]
+    fn task_graph_children_inherit_prerequisites_and_gate_parent_completion() {
+        let prep = graph_item("prep");
+        let mut parent = graph_item("parent");
+        parent.depends_on = vec!["prep".into()];
+        let mut child = graph_item("child");
+        child.parent_id = Some("parent".into());
+        let items = vec![prep, parent.clone(), child.clone()];
+        assert!(super::validate_todo_graph(&items).is_ok());
+        assert_eq!(super::todo_blockers(&child, &items, false), vec!["prep"]);
+        assert_eq!(
+            super::todo_blockers(&parent, &items, true),
+            vec!["child", "prep"]
+        );
+        child.topic = Some("其他主题".into());
+        assert!(super::validate_todo_graph(&[parent, child]).is_err());
+    }
+
+    #[test]
+    fn task_graph_roundtrips_relations_and_legacy_tags() {
+        let mut item = graph_item("child");
+        assert_eq!(super::todo_topic(&item), "实验");
+        assert!(item.depends_on.is_empty());
+        item.topic = Some("RL".into());
+        item.parent_id = Some("parent".into());
+        item.depends_on = vec!["prep".into()];
+        let value = serde_json::to_value(&item).unwrap();
+        assert_eq!(value["parentId"], "parent");
+        assert_eq!(value["dependsOn"][0], "prep");
+        let parsed: super::TodoItem = serde_json::from_value(value).unwrap();
+        assert_eq!(super::todo_topic(&parsed), "RL");
+        assert_eq!(parsed.parent_id.as_deref(), Some("parent"));
+    }
+    use super::*;
+
+    #[test]
+    fn normalizes_todo_title_and_description() {
+        assert_eq!(
+            normalize_todo_title("  ship   Nova  ").unwrap(),
+            "ship Nova"
+        );
+        assert_eq!(
+            normalize_todo_description("  first line\nsecond line  ").unwrap(),
+            "first line\nsecond line"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_todo_values() {
+        assert!(normalize_todo_title("   ").is_err());
+        assert!(validate_todo_status("cancelled").is_err());
+        assert!(validate_todo_priority("urgent").is_err());
+        assert!(validate_todo_due_at(Some("tomorrow".to_string())).is_err());
+    }
+
+    #[test]
+    fn accepts_supported_todo_dates() {
+        assert_eq!(
+            validate_todo_due_at(Some("2026-09-18".to_string())).unwrap(),
+            Some("2026-09-18".to_string())
+        );
+        assert!(validate_todo_due_at(Some("2026-09-18T08:00:00Z".to_string())).is_ok());
+        assert_eq!(validate_todo_due_at(Some("  ".to_string())).unwrap(), None);
+    }
+
+    /// The agent's `todo` tool writes this file from TypeScript
+    /// (`packages/nova/src/core/todo-store.ts`). Both writers must agree on the
+    /// exact shape, so this pins the payload the tool produces.
+    #[test]
+    fn reads_todos_written_by_the_agent_tool() {
+        let content = r#"{
+            "version": 1,
+            "items": [
+                {
+                    "id": "todo_c66e90eb-31e8-4571-9d96-467e5fe21bd7",
+                    "title": "整理 v1.7 发布说明",
+                    "description": "",
+                    "status": "pending",
+                    "priority": "high",
+                    "projectPath": "/Users/dongzj1102/Desktop/Pi-Agent/nova",
+                    "dueAt": "2026-09-30",
+                    "source": "agent",
+                    "agentId": "agent-1234",
+                    "sessionId": "agent-1234",
+                    "createdAt": "2026-09-17T16:50:03.218Z",
+                    "updatedAt": "2026-09-17T16:50:03.218Z",
+                    "order": 0
+                }
+            ]
+        }"#;
+
+        let state: TodoState =
+            serde_json::from_str(content).expect("agent-written todos must parse");
+
+        assert_eq!(state.version, 1);
+        assert_eq!(state.items.len(), 1);
+        let todo = &state.items[0];
+        assert_eq!(todo.title, "整理 v1.7 发布说明");
+        assert_eq!(todo.status, "pending");
+        assert_eq!(todo.priority, "high");
+        assert_eq!(
+            todo.project_path.as_deref(),
+            Some("/Users/dongzj1102/Desktop/Pi-Agent/nova")
+        );
+        assert_eq!(todo.due_at.as_deref(), Some("2026-09-30"));
+        assert_eq!(todo.source, "agent");
+        assert_eq!(todo.agent_id.as_deref(), Some("agent-1234"));
+        assert_eq!(todo.completed_at, None);
+        assert_eq!(todo.order, 0);
+    }
+
+    /// The reverse direction: the UI writes the file the agent tool reads.
+    #[test]
+    fn writes_todos_the_agent_tool_can_read() {
+        let state = TodoState {
+            version: 1,
+            items: vec![TodoItem {
+                tags: vec![],
+                topic: None,
+                parent_id: None,
+                depends_on: vec![],
+                id: "todo_1".to_string(),
+                title: "Ship the todo tool".to_string(),
+                description: "Wire the agent tool to the 待办 page.".to_string(),
+                status: "pending".to_string(),
+                priority: "medium".to_string(),
+                project_path: Some("/tmp/project".to_string()),
+                due_at: None,
+                source: "user".to_string(),
+                agent_id: None,
+                session_id: None,
+                created_at: "2026-09-17T00:00:00Z".to_string(),
+                updated_at: "2026-09-17T00:00:00Z".to_string(),
+                completed_at: None,
+                order: 4,
+            }],
+        };
+
+        let value = serde_json::to_value(&state).unwrap();
+        let item = &value["items"][0];
+
+        // Field names the TypeScript store reads.
+        assert_eq!(value["version"], 1);
+        assert_eq!(item["projectPath"], "/tmp/project");
+        assert_eq!(item["createdAt"], "2026-09-17T00:00:00Z");
+        assert_eq!(item["updatedAt"], "2026-09-17T00:00:00Z");
+        assert_eq!(item["order"], 4);
+        assert!(item.get("dueAt").is_some());
+        assert!(item.get("completedAt").is_some());
+    }
 }

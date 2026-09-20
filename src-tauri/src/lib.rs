@@ -217,6 +217,14 @@ pub fn run() {
             commands::get_model_configurations,
             commands::delete_model_configuration,
             commands::delete_provider_configuration,
+            commands::get_user_memory,
+            commands::save_user_memory,
+            commands::delete_user_memory,
+            commands::set_user_memory_enabled,
+            commands::list_todos,
+            commands::create_todo,
+            commands::update_todo,
+            commands::delete_todo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

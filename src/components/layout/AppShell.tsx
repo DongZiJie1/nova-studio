@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
@@ -36,6 +36,7 @@ import {
   getWorktreeDiff,
   acceptWorktree,
   rejectWorktree,
+  type TodoItem,
 } from "../../lib/tauri-bridge";
 import { common, createLowlight } from "lowlight";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -62,6 +63,8 @@ import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMess
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
+import { PersonalizationSettings } from "../settings/PersonalizationSettings";
+import { TodoPage } from "../todos/TodoPage";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
 import { Markdown } from "../chat/Markdown";
@@ -81,6 +84,7 @@ import {
   ArrowDown,
   Square,
   FolderOpen,
+  Folder,
   Pencil,
   ChevronDown,
   ChevronLeft,
@@ -108,9 +112,11 @@ import {
   LoaderCircle,
   RotateCcw,
   Bot,
+  UserRound,
   GitBranch,
   GitMerge,
   Trash2,
+  ListTodo,
 } from "lucide-react";
 
 const PROJECT_NAMES_KEY = "nova-studio.project-names";
@@ -125,6 +131,8 @@ function GithubMark({ size = 16 }: { size?: number }) {
 }
 const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
 const CONVERSATION_MINIMAP_PAIR_THRESHOLD = 6;
+/** Sessions shown per project before the list collapses behind 展开显示. */
+const SIDEBAR_SESSION_PREVIEW = 6;
 
 function isTemporaryRuntimeProject(cwd: string): boolean {
   const directoryName = cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
@@ -509,6 +517,7 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
   const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
   const role = typeof data.role === "string" ? data.role : typeof data.type === "string" ? data.type : entry.label.toLowerCase();
   const timestamp = data.timestamp;
+  const memorySections = role === "context_user_memory" && typeof data.content === "string" ? parseUserMemorySections(data.content) : [];
   const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls as Array<Record<string, unknown>> : [];
   const entryId = typeof data.entryId === "string" ? data.entryId : undefined;
   const toolCallIds = new Set(toolCalls.map((tool) => tool.id).filter((id): id is string => typeof id === "string"));
@@ -541,8 +550,10 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
             ? "系统提示词"
             : role === "context_tools"
               ? "工具定义集合"
-              : role === "context_skills"
-                ? "Skill 声明集合"
+            : role === "context_skills"
+              ? "Skill 声明集合"
+              : role === "context_user_memory"
+                ? "长期记忆集合"
                 : role === "context_instructions"
                   ? "项目指令集合"
           : role;
@@ -553,6 +564,7 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
       <dl className="trajectory-execution-summary">
         <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
         {isContextEntry && Array.isArray(data.items) && <div><dt>资源数量</dt><dd>{data.items.length}</dd></div>}
+        {role === "context_user_memory" && <div><dt>记忆数量</dt><dd>{memorySections.length}</dd></div>}
         {isContextEntry && typeof data.name === "string" && <div><dt>资源名称</dt><dd>{data.name}</dd></div>}
         {isContextEntry && typeof data.path === "string" && <div><dt>来源路径</dt><dd>{data.path}</dd></div>}
         <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
@@ -636,6 +648,28 @@ function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
     );
   }
 
+  if (type === "context_user_memory") {
+    const content = typeof data.content === "string" ? data.content : "";
+    const sections = parseUserMemorySections(content);
+    return (
+      <div className="trajectory-memory-details">
+        <div className="trajectory-memory-summary">
+          <span>{sections.length}</span>
+          <div><strong>条长期记忆</strong><p>已注入当前会话的上下文</p></div>
+        </div>
+        <div className="trajectory-memory-list">
+          {sections.map((section, index) => (
+            <section className="trajectory-memory-section" key={section.id || `${section.title}-${index}`}>
+              <header><span>{String(index + 1).padStart(2, "0")}</span><strong>{section.title}</strong></header>
+              <p>{section.content}</p>
+            </section>
+          ))}
+          {sections.length === 0 && <p className="trajectory-detail-empty">当前会话没有加载长期记忆</p>}
+        </div>
+      </div>
+    );
+  }
+
   if (type === "context_instructions") {
     const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
     return (
@@ -656,6 +690,21 @@ function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
   }
 
   return <pre className="trajectory-detail-json">{JSON.stringify(entry.data, null, 2)}</pre>;
+}
+
+function parseUserMemorySections(content: string): Array<{ id: string; title: string; content: string }> {
+  const headings = [...content.matchAll(/^##\s+(.+)$/gm)];
+  return headings.map((heading, index) => {
+    const start = (heading.index ?? 0) + heading[0].length;
+    const end = headings[index + 1]?.index ?? content.length;
+    const body = content.slice(start, end).trim();
+    const idMatch = body.match(/<section_id>(.*?)<\/section_id>/);
+    return {
+      id: idMatch?.[1]?.trim() ?? "",
+      title: heading[1].trim(),
+      content: body.replace(/<section_id>.*?<\/section_id>\s*/s, "").trim(),
+    };
+  });
 }
 
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
@@ -1017,6 +1066,12 @@ function toolEditedPath(args: unknown): string {
   return "";
 }
 
+/** Folder glyph matching the project row's expanded/collapsed state. */
+function FolderIcon({ open }: { open: boolean }) {
+  const Icon = open ? FolderOpen : Folder;
+  return <Icon size={16} strokeWidth={1.75} />;
+}
+
 function agentDisplayName(agent: AgentState, agentNames: Record<string, string> = {}): string {
   if (agentNames[agent.id]) return agentNames[agent.id];
   if (agent.name) return agent.name;
@@ -1032,6 +1087,17 @@ function agentSubtitle(agent: AgentState): string {
   if (agent.status === "starting") return "Starting delegated agent";
   if (agent.status === "error") return "Delegated task needs attention";
   return agent.cwd;
+}
+
+/**
+ * The sidebar only marks sessions that are actually doing something. Idle and
+ * stopped are the normal resting states — marking them would put a dot on every
+ * historical session and turn the marker into decoration.
+ */
+function agentStatusMark(agent: AgentState): "running" | "error" | null {
+  if (agent.status === "streaming" || agent.status === "starting") return "running";
+  if (agent.status === "error") return "error";
+  return null;
 }
 
 interface AgentTreeNodeProps {
@@ -1068,6 +1134,14 @@ const AgentTreeNode = memo(function AgentTreeNode({
         onClick={() => onSelect(agent.id)}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
       >
+        {agentStatusMark(agent) && (
+          <span
+            className="agent-status-dot"
+            data-status={agentStatusMark(agent)}
+            title={agentStatusMark(agent) === "running" ? "会话正在运行" : "会话执行出错"}
+            aria-hidden="true"
+          />
+        )}
         <span className="agent-text">
           <span className="agent-name">{agentDisplayName(agent, agentNames)}</span>
           {!isChild && (
@@ -1089,7 +1163,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
           role="button"
           tabIndex={0}
           className="agent-action"
-          title="Rename agent"
+          title="重命名会话"
           onClick={(event) => {
             event.stopPropagation();
             onEdit(agent);
@@ -1102,7 +1176,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             role="button"
             tabIndex={0}
             className="agent-action"
-            title="Cancel delegated task"
+            title="取消子任务"
             onClick={(event) => {
               event.stopPropagation();
               void cancelAgent(agent.id, "cancelled from parent task");
@@ -1116,7 +1190,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             role="button"
             tabIndex={0}
             className="agent-action"
-            title="Retry delegated task"
+            title="重试子任务"
             onClick={(event) => {
               event.stopPropagation();
               void retryAgent(agent.id);
@@ -1129,7 +1203,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
           role="button"
           tabIndex={0}
           className="agent-action"
-          title="Hide agent"
+          title="隐藏会话"
           onClick={(event) => {
             event.stopPropagation();
             onHide(agent);
@@ -1142,7 +1216,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             role="button"
             tabIndex={0}
             className="agent-expand"
-            title={childrenExpanded ? "Collapse child agents" : "Expand child agents"}
+            title={childrenExpanded ? "收起子 Agent" : "展开子 Agent"}
             onClick={(event) => {
               event.stopPropagation();
               setChildrenExpanded((expanded) => !expanded);
@@ -1774,7 +1848,8 @@ export function AppShell() {
   // Whether the project staged for the next agent is a git repo (worktrees need one).
   const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "activity">("appearance");
+  const [todosOpen, setTodosOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -1792,6 +1867,10 @@ export function AppShell() {
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Projects whose session list has been expanded past the preview cap. */
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
+    () => new Set(),
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
@@ -1801,7 +1880,15 @@ export function AppShell() {
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const conversationThreadRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
+  /**
+   * 刚切到某个会话时置位，直到它的历史消息渲染出来。历史是异步补进来的，
+   * 而滚动事件会改写 isNearBottomRef：上一个会话的惯性滚动、内容变矮时浏览器
+   * 夹断 scrollTop 产生的 scroll 事件，都会把它置成 false，于是历史到达时我们
+   * 停在顶部。这个标记让「刚打开的会话」无视这些噪声，直接落到最新一条消息。
+   */
+  const followLatestRef = useRef(false);
   const lastConversationScrollTopRef = useRef(0);
   const isComposingRef = useRef(false);
 
@@ -2014,7 +2101,9 @@ export function AppShell() {
   const trajectoryContextEntries = useMemo(() => {
     const snapshot = activeAgent?.contextSnapshot;
     if (!snapshot) return [];
-    return [
+    const userMemoryMatch = snapshot.systemPrompt.match(/<user_memory>\n([\s\S]*?)\n<\/user_memory>/);
+    const userMemories = userMemoryMatch ? parseUserMemorySections(userMemoryMatch[1]) : [];
+    const entries = [
       {
         id: "context-system",
         role: "SYSTEM",
@@ -2050,6 +2139,16 @@ export function AppShell() {
         data: { type: "context_instructions", items: snapshot.contextFiles },
       },
     ];
+    if (userMemoryMatch) {
+      entries.splice(1, 0, {
+        id: "context-user-memory",
+        role: "MEMORY",
+        className: "instruction",
+        preview: userMemories.length > 0 ? `${userMemories.length} 个 Section · ${userMemories.map((memory) => memory.title).join(" · ")}` : "未加载用户记忆",
+        data: { type: "context_user_memory", content: userMemoryMatch[1] },
+      });
+    }
+    return entries;
   }, [activeAgent?.contextSnapshot]);
   const chatMessages = useMemo(() => {
     const grouped: AgentState["messages"] = [];
@@ -2316,31 +2415,55 @@ export function AppShell() {
     lastConversationScrollTopRef.current = container.scrollTop;
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    followLatestRef.current = true;
     isNearBottomRef.current = true;
+    lastConversationScrollTopRef.current = 0;
     setShowScrollToBottom(false);
-    const frame = window.requestAnimationFrame(scrollConversationToBottom);
-    return () => window.cancelAnimationFrame(frame);
+    scrollConversationToBottom();
+    // A session with no history must not keep the flag forever: after this
+    // window the normal follow rules take over again.
+    const timer = window.setTimeout(() => {
+      followLatestRef.current = false;
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, [activeId, scrollConversationToBottom]);
 
-  useEffect(() => {
-    if (conversationView !== "chat" || settingsOpen || activeAgent?.status !== "streaming") return;
-    if (!isNearBottomRef.current) return;
-    const frame = window.requestAnimationFrame(() => {
-      const container = scrollRef.current;
-      if (container) container.scrollTop = container.scrollHeight;
-    });
-    return () => window.cancelAnimationFrame(frame);
+  useLayoutEffect(() => {
+    if (conversationView !== "chat" || settingsOpen) return;
+    // A freshly opened session always lands on its newest message, even when a
+    // stray scroll event (previous session's momentum, scrollTop clamping)
+    // flipped the follow flag while the history was still loading.
+    if (!isNearBottomRef.current && !followLatestRef.current) return;
+    // History arrives after activation, including for idle sessions. Position
+    // each committed update before paint instead of only following live output.
+    scrollConversationToBottom();
+    if ((activeAgent?.messages.length ?? 0) > 0) followLatestRef.current = false;
   }, [
     activeId,
     conversationView,
     settingsOpen,
     activeAgent?.status,
-    activeAgent?.messages.length,
+    activeAgent?.messages,
     activeAgent?.streamingThinking,
     activeAgent?.activeToolCalls.size,
     streamingText,
+    scrollConversationToBottom,
   ]);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    const thread = conversationThreadRef.current;
+    if (conversationView !== "chat" || settingsOpen || !container || !thread) return;
+    // Images, Markdown and viewport resizing can change height after the
+    // messages commit. Observe the content as well as the scroll viewport.
+    const observer = new ResizeObserver(() => {
+      if (isNearBottomRef.current) scrollConversationToBottom();
+    });
+    observer.observe(thread);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [activeId, conversationView, settingsOpen, hasMessages, scrollConversationToBottom]);
 
   useEffect(() => {
     setSelectedTrajectoryEntry(null);
@@ -2797,6 +2920,70 @@ export function AppShell() {
     }
   };
 
+  const handleRunTodo = async (todo: TodoItem): Promise<{ agentId: string; sessionId: string }> => {
+    const cwd = todo.projectPath || welcomeProjectCwd;
+    const canUseWorktree = worktreeEnabled ? await checkWorktreeAvailable(cwd).catch(() => false) : false;
+    const info = await spawnAgent(
+      cwd,
+      defaultModel || undefined,
+      defaultProvider || undefined,
+      worktreeEnabled && canUseWorktree ? true : undefined,
+    );
+    await setToolPermissionMode(info.id, defaultToolPermissionMode);
+    const newAgent: AgentState = {
+      id: info.id,
+      parentAgentId: info.parent_agent_id,
+      createdBy: info.created_by,
+      name: todo.title,
+      avatarId: getOrAssignAgentAvatar(info.id),
+      status: info.status,
+      cwd: info.cwd,
+      projectCwd: info.project_cwd ?? null,
+      worktree: info.worktree ?? null,
+      model: info.model,
+      messages: [],
+      createdAt: info.created_at,
+      messageCount: info.message_count,
+      streamingText: "",
+      streamingThinking: "",
+      activeToolCalls: new Map(),
+      modelMeta: null,
+      contextUsage: null,
+      lastTurnUsage: null,
+      sessionUsage: null,
+      executionTraces: [],
+      contextSnapshot: null,
+      autoCompactionEnabled: true,
+      toolPermissionMode: defaultToolPermissionMode,
+      pendingPermission: null,
+      liveUsage: null,
+      outputSinceLastUserInput: 0,
+    };
+    addAgent(newAgent);
+    setActiveAgent(info.id);
+    setAgentNames((names) => {
+      const next = { ...names, [info.id]: todo.title };
+      localStorage.setItem(AGENT_NAMES_KEY, JSON.stringify(next));
+      return next;
+    });
+    await setSessionName(info.id, todo.title).catch(() => undefined);
+    const prompt = [
+      "请处理以下 Nova 待办。",
+      `标题：${todo.title}`,
+      `待办 id：${todo.id}`,
+      todo.description ? `描述：${todo.description}` : "描述：无",
+      todo.dueAt ? `截止日期：${todo.dueAt.slice(0, 10)}` : "截止日期：未设置",
+      "完成后请总结实际完成的内容、验证结果和仍需处理的问题。不要在缺少证据时声称任务已经完成。",
+      // Keeps the 待办 page truthful after the run instead of leaving it stuck on 进行中.
+      "处理结束后用 todo 工具（todo_id 用上面这个 id）更新这条待办：确实完成并验证过就设为 completed；只推进了一部分则保持 in_progress。",
+    ].join("\n\n");
+    addUserMessage(info.id, prompt);
+    await sendPrompt(info.id, prompt);
+    setTodosOpen(false);
+    setConversationView("chat");
+    return { agentId: info.id, sessionId: info.id };
+  };
+
   const selectSlashCommand = useCallback((command: SlashCommand) => {
     setInput(`/${command.name} `);
     setSlashCommandMenuDismissed(true);
@@ -2846,6 +3033,7 @@ export function AppShell() {
   }, [activeAgent?.status, handleAbort]);
 
   const handleSelectAgent = useCallback((agentId: string) => {
+    setTodosOpen(false);
     setSettingsOpen(false);
     setConversationView("chat");
     setActiveAgent(agentId);
@@ -2876,6 +3064,20 @@ export function AppShell() {
     handleSelectAgent(agentId);
     setConversationView(view);
   }, [handleSelectAgent]);
+
+  /**
+   * Every "new session" entry point has to do the same two things: leave any
+   * full-page surface (待办 / 设置 covers the whole content area) and show the
+   * composer, optionally scoped to a project. Missing the first half is what
+   * made the per-project + button look dead while 待办 was open.
+   */
+  const openNewSessionComposer = useCallback((projectCwd: string | null = null) => {
+    setPendingProjectCwd(projectCwd);
+    setActiveAgent(null);
+    setSettingsOpen(false);
+    setTodosOpen(false);
+    setConversationView("chat");
+  }, [setActiveAgent]);
 
   const handleEditAgent = useCallback((agent: AgentState) => {
     setEditingAgent({
@@ -2999,7 +3201,7 @@ export function AppShell() {
         <div className="relative flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside
-          className={`studio-sidebar glass-panel relative z-20 mb-3 ml-3 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
+          className={`studio-sidebar glass-panel relative z-20 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
         >
           {sidebarCollapsed ? (
             <nav className="sidebar-collapsed-nav" aria-label="折叠侧边栏">
@@ -3018,6 +3220,7 @@ export function AppShell() {
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" title="模型设置"><Bot size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" title="个性化设置"><UserRound size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" title="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
               ) : (
@@ -3025,20 +3228,16 @@ export function AppShell() {
                   <button
                     type="button"
                     className="sidebar-collapsed-action"
-                    onClick={() => {
-                      setPendingProjectCwd(null);
-                      setActiveAgent(null);
-                      setSettingsOpen(false);
-                      setConversationView("chat");
-                    }}
+                    onClick={() => openNewSessionComposer()}
                     aria-label="新会话"
                     title="新会话"
                   >
                     <Plus size={20} />
                   </button>
+                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => setSettingsOpen(true)} aria-label="设置" title="设置"><Settings size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSettingsOpen(true); }} aria-label="设置" title="设置"><Settings size={19} /></button>
                 </>
               )}
             </nav>
@@ -3069,10 +3268,14 @@ export function AppShell() {
                   <Palette size={16} />
                   <span>外观</span>
                 </button>
-                <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
-                  <Bot size={16} />
-                  <span>模型</span>
-                </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
+                    <Bot size={16} />
+                    <span>模型</span>
+                  </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "personalization" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("personalization")}>
+                    <UserRound size={16} />
+                    <span>个性化</span>
+                  </button>
                 <button type="button" className={`settings-category-button ${settingsSection === "activity" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("activity")}>
                   <ChartNoAxesColumnIncreasing size={16} />
                   <span>活跃度</span>
@@ -3086,7 +3289,7 @@ export function AppShell() {
                   <span className="sidebar-brand-mark">
                     <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
                   </span>
-                  <span>Nova</span>
+                  <span className="sidebar-brand-name">Nova</span>
                   <span className="sidebar-brand-badge">STUDIO</span>
                   <button
                     type="button"
@@ -3095,22 +3298,27 @@ export function AppShell() {
                     aria-label="收起侧边栏"
                     title="收起侧边栏"
                   >
-                    <PanelLeftClose size={18} />
+                    <PanelLeftClose size={16} />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  className="sidebar-new-session"
-                  onClick={() => {
-                    setPendingProjectCwd(null);
-                    setActiveAgent(null);
-                    setSettingsOpen(false);
-                    setConversationView("chat");
-                  }}
-                >
-                  <Plus size={16} />
-                  <span>新会话</span>
-                </button>
+                <nav className="sidebar-nav" aria-label="快捷入口">
+                  <button
+                    type="button"
+                    className="sidebar-nav-row"
+                    onClick={() => openNewSessionComposer()}
+                  >
+                    <Plus size={15} />
+                    <span>新会话</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-nav-row ${todosOpen ? "sidebar-nav-row-active" : ""}`}
+                    onClick={() => { setSettingsOpen(false); setTodosOpen(true); }}
+                  >
+                    <ListTodo size={15} />
+                    <span>待办</span>
+                  </button>
+                </nav>
               </header>
 
               <div className="sidebar-workspace-heading">
@@ -3118,6 +3326,9 @@ export function AppShell() {
                 <span className="sidebar-project-count">{rootsByProject.size}</span>
               </div>
               <div className="agent-tree flex-1 overflow-y-auto">
+                {rootsByProject.size === 0 && (
+                  <p className="sidebar-empty-hint">还没有会话。点击「新会话」开始。</p>
+                )}
                 {Array.from(rootsByProject.entries()).map(([cwd, projectAgents]) => (
                   <section key={cwd} className="project-group">
                     <button
@@ -3133,7 +3344,7 @@ export function AppShell() {
                       }
                     >
                       <span className="project-group-icon">
-                        <FolderOpen size={17} />
+                        <FolderIcon open={!collapsedProjects.has(cwd)} />
                       </span>
                       <span className="project-group-text">
                         <span className="project-group-name">
@@ -3141,46 +3352,55 @@ export function AppShell() {
                         </span>
                         <span className="project-group-path">{cwd}</span>
                       </span>
-                      <span className="project-agent-count">
-                        {projectAgents.length}
+                      <span className="project-group-meta">
+                        <span
+                          className="project-agent-count"
+                          title={`${projectAgents.length} 个会话`}
+                        >
+                          {projectAgents.length}
+                        </span>
+                        <span className="project-group-actions">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="project-action"
+                            title="新建会话"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openNewSessionComposer(cwd);
+                            }}
+                          >
+                            <Plus size={13} />
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="project-action"
+                            title="重命名项目"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setEditingProject({
+                                cwd,
+                                name: projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd,
+                              });
+                            }}
+                          >
+                            <Pencil size={12} />
+                          </span>
+                        </span>
                       </span>
                       <span
-                        role="button"
-                        tabIndex={0}
-                        className="project-action"
-                        title="Add agent"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setPendingProjectCwd(cwd);
-                          setActiveAgent(null);
-                        }}
+                        className={`project-group-caret ${collapsedProjects.has(cwd) ? "project-group-caret-collapsed" : ""}`}
                       >
-                        <Plus size={14} />
-                      </span>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        className="project-action"
-                        title="Edit project"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setEditingProject({
-                            cwd,
-                            name: projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd,
-                          });
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </span>
-                      {collapsedProjects.has(cwd) ? (
-                        <ChevronRight size={13} />
-                      ) : (
                         <ChevronDown size={13} />
-                      )}
+                      </span>
                     </button>
                     {!collapsedProjects.has(cwd) && (
                       <div className="project-agents">
-                        {projectAgents.map((agent) => (
+                        {(expandedProjects.has(cwd)
+                          ? projectAgents
+                          : projectAgents.slice(0, SIDEBAR_SESSION_PREVIEW)
+                        ).map((agent) => (
                           <AgentTreeNode
                             key={agent.id}
                             agent={agent}
@@ -3193,6 +3413,22 @@ export function AppShell() {
                             onHide={setHidingAgent}
                           />
                         ))}
+                        {projectAgents.length > SIDEBAR_SESSION_PREVIEW && (
+                          <button
+                            type="button"
+                            className="project-agents-toggle"
+                            onClick={() =>
+                              setExpandedProjects((current) => {
+                                const next = new Set(current);
+                                if (next.has(cwd)) next.delete(cwd);
+                                else next.add(cwd);
+                                return next;
+                              })
+                            }
+                          >
+                            {expandedProjects.has(cwd) ? "收起" : "展开显示"}
+                          </button>
+                        )}
                       </div>
                     )}
                   </section>
@@ -3205,15 +3441,15 @@ export function AppShell() {
                   onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")}
                   title="在浏览器中打开 Nova Agent GitHub"
                 >
-                  <GithubMark size={16} />
+                  <GithubMark size={15} />
                   <span>GitHub</span>
                 </button>
                 <button
                   type="button"
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
-                  onClick={() => setSettingsOpen(true)}
+                  onClick={() => { setTodosOpen(false); setSettingsOpen(true); }}
                 >
-                  <Settings size={16} />
+                  <Settings size={15} />
                   <span>设置</span>
                 </button>
               </footer>
@@ -3223,6 +3459,7 @@ export function AppShell() {
 
         {/* Main */}
         <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} relative w-full flex flex-col overflow-hidden`}>
+          {todosOpen && <TodoPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onRunTodo={handleRunTodo} onOpenSession={(todo) => { if (todo.agentId) handleSelectAgent(todo.agentId); }} />}
           {settingsOpen && (
             <section className="settings-page">
               <div className={`settings-page-inner ${settingsSection === "activity" ? "settings-page-inner-activity" : ""}`}>
@@ -3299,6 +3536,8 @@ export function AppShell() {
                     models={availableModels}
                     onSaved={refreshModelCatalog}
                   />
+                ) : settingsSection === "personalization" ? (
+                  <PersonalizationSettings />
                 ) : (
                   <ActivityHeatmap />
                 )}
@@ -3517,11 +3756,13 @@ export function AppShell() {
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "execution"} className={trajectoryDetailView === "execution" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("execution")}>执行信息</button>
                       <button type="button" role="tab" aria-selected={trajectoryDetailView === "json"} className={trajectoryDetailView === "json" ? "trajectory-detail-tab-active" : ""} onClick={() => setTrajectoryDetailView("json")}>完整信息</button>
                     </div>
-                    {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
-                      <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
-                    ) : (
-                      selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
-                    )}
+                    <div className="trajectory-detail-body">
+                      {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
+                        <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                      ) : (
+                        selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
+                      )}
+                    </div>
                   </aside>
               </div>
             ) : !hasMessages ? (
@@ -3532,7 +3773,7 @@ export function AppShell() {
               >
                 {/* Tagline */}
                 <h2
-                  className="hero-title"
+                  className={`hero-title ${agentsLoaded ? "hero-title-ready" : "hero-title-loading"}`}
                   style={{
                     fontSize: "clamp(32px, 3.8vw, 62px)",
                     fontWeight: 720,
@@ -3593,6 +3834,7 @@ export function AppShell() {
             ) : (
               /* Messages view */
               <div
+                ref={conversationThreadRef}
                 className="conversation-thread w-full pt-6"
                 style={{ paddingBottom: 48 }}
               >

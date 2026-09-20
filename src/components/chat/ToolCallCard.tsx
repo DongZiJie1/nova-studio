@@ -1,13 +1,17 @@
 import { useState } from "react";
 import {
   CheckCircle2,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
+  Circle,
+  Clock3,
   FilePlus2,
   FileText,
   Database,
   FolderSearch,
   FolderKanban,
+  ListTodo,
   Loader2,
   PenLine,
   Search,
@@ -30,6 +34,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   glob: FolderSearch,
   ls: FolderSearch,
   nova_data: Database,
+  todo: ListTodo,
   ask_user_question: MessageCircleQuestion,
 };
 
@@ -71,6 +76,14 @@ function toolSummary(name: string, args: unknown): string {
     }
     case "ask_user_question":
       return pick("question") || "等待用户选择";
+    case "todo": {
+      const action = pick("action");
+      const title = pick("title");
+      if (action === "create") return title || "新建待办";
+      if (action === "update") return title || "更新待办状态";
+      if (action === "list") return "查看待办列表";
+      return "待办";
+    }
     case "bash":
     case "shell":
       return pick("command", "cmd");
@@ -90,6 +103,7 @@ function toolSummary(name: string, args: unknown): string {
 
 function displayToolName(name: string): string {
   if (name.toLowerCase() === "nova_data") return "Nova 数据";
+  if (name.toLowerCase() === "todo") return "待办";
   if (name.toLowerCase() === "ask_user_question") return "询问用户";
   return name ? name[0].toUpperCase() + name.slice(1) : "Tool";
 }
@@ -224,10 +238,121 @@ function AskUserQuestionDetail({ args, result }: { args?: unknown; result?: unkn
   );
 }
 
+const TODO_STATUS_LABELS: Record<string, string> = {
+  pending: "待处理",
+  in_progress: "进行中",
+  completed: "已完成",
+};
+
+function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) {
+  const details = objectValue(result, "details");
+  const action = objectString(args, "action") || objectString(details, "action");
+  const error = objectString(details, "error");
+  const total = objectValue(details, "total");
+  const single = objectValue(details, "todo");
+  const listed = objectValue(details, "todos");
+  const todos: unknown[] = [
+    ...(single && typeof single === "object" ? [single] : []),
+    ...(Array.isArray(listed) ? listed : []),
+  ];
+  // While the call is still running there is no result yet; show what the agent
+  // is about to write instead of an empty card.
+  if (todos.length === 0 && !error && result === undefined && objectString(args, "title")) {
+    todos.push({
+      title: objectString(args, "title"),
+      status: objectString(args, "status") || "pending",
+      topic: objectString(args, "topic"),
+      tags: objectValue(args, "tags"),
+      dependsOn: objectValue(args, "depends_on"),
+      parentId: objectString(args, "parent_id"),
+      dueAt: objectString(args, "due_at"),
+      projectPath: objectString(args, "project_path"),
+    });
+  }
+  const actionMeta =
+    action === "create"
+      ? { icon: ListTodo, label: "新建待办" }
+      : action === "update"
+        ? { icon: CheckCircle2, label: "更新待办" }
+        : { icon: ListTodo, label: "待办列表" };
+  const ActionIcon = actionMeta.icon;
+
+  if (error) {
+    return (
+      <div className="activity-detail todo-tool-detail">
+        <div className="nova-data-heading">
+          <span className="nova-data-action nova-data-action-delete_session">
+            <XCircle size={13} />
+            待办操作失败
+          </span>
+        </div>
+        <pre className="tool-card-detail-pre">{error}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="activity-detail todo-tool-detail">
+      <div className="todo-tool-heading">
+        <span className={`todo-tool-action todo-tool-action-${action || "unknown"}`}>
+          <ActionIcon size={13} />
+          {actionMeta.label}
+        </span>
+        {typeof total === "number" ? <span className="todo-tool-count">{total} 项</span> : null}
+        {typeof total === "number" && Array.isArray(listed) && listed.length < total ? (
+          <span className="todo-tool-count">已显示 {listed.length} 项</span>
+        ) : null}
+      </div>
+      {todos.length > 0 ? (
+        <div className="todo-tool-list">
+          {todos.map((todo, index) => {
+            const status = objectString(todo, "status") || "pending";
+            const tags = objectValue(todo, "tags");
+            const topic = objectString(todo, "topic") || (Array.isArray(tags) && typeof tags[0] === "string" ? tags[0] : "未分类");
+            const dependencies = objectValue(todo, "dependsOn");
+            const parentId = objectString(todo, "parentId");
+            const title = objectString(todo, "title", "id") || "未命名待办";
+            const dueAt = objectString(todo, "dueAt", "due_at").slice(0, 10);
+            const projectPath = objectString(todo, "projectPath", "project_path");
+            const project = projectPath ? projectPath.split(/[\\/]/).filter(Boolean).pop() : "";
+            const StatusIcon = status === "completed" ? CheckCircle2 : status === "in_progress" ? Clock3 : Circle;
+            return (
+              <div
+                className={`todo-tool-item todo-tool-item-${status}`}
+                key={objectString(todo, "id") || index}
+              >
+                <span className="todo-tool-status-icon"><StatusIcon size={14} /></span>
+                <div className="todo-tool-item-body">
+                  <div className="todo-tool-title-row">
+                    <strong>{title}</strong>
+                    <span className="todo-tool-count">{topic}</span>
+                  </div>
+                  <div className="todo-tool-meta">
+                    <span className={`todo-tool-status todo-tool-status-${status}`}>
+                      {TODO_STATUS_LABELS[status] ?? status}
+                    </span>
+                    {dueAt && <span><CalendarDays size={11} />{dueAt}</span>}
+                    {project && <span>{project}</span>}
+                    {parentId && <span>子任务</span>}
+                    {Array.isArray(dependencies) && dependencies.length > 0 && <span>{dependencies.length} 项前置任务</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <pre className="tool-card-detail-pre">{resultText(result) || prettyJson(args)}</pre>
+      )}
+    </div>
+  );
+}
+
 function ToolDetail({ name, args, result }: { name: string; args?: unknown; result?: unknown }) {
   const normalizedName = name.toLowerCase();
 
   if (normalizedName === "nova_data") return <NovaDataDetail args={args} result={result} />;
+  if (normalizedName === "todo") return <TodoToolDetail args={args} result={result} />;
   if (normalizedName === "ask_user_question") return <AskUserQuestionDetail args={args} result={result} />;
 
   if (normalizedName === "bash" || normalizedName === "shell") {
