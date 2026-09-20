@@ -1,8 +1,11 @@
 import { useState } from "react";
 import {
   CheckCircle2,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
+  Circle,
+  Clock3,
   FilePlus2,
   FileText,
   Database,
@@ -241,28 +244,6 @@ const TODO_STATUS_LABELS: Record<string, string> = {
   completed: "已完成",
 };
 
-const TODO_PRIORITY_LABELS: Record<string, string> = {
-  low: "低优先级",
-  medium: "中优先级",
-  high: "高优先级",
-};
-
-function todoItemMeta(todo: unknown): string {
-  const status = objectString(todo, "status");
-  const priority = objectString(todo, "priority");
-  const dueAt = objectString(todo, "dueAt").slice(0, 10);
-  const projectPath = objectString(todo, "projectPath");
-  const project = projectPath ? projectPath.split(/[\\/]/).filter(Boolean).pop() : "";
-  return [
-    TODO_STATUS_LABELS[status] ?? "待处理",
-    TODO_PRIORITY_LABELS[priority] ?? "",
-    dueAt ? `截止 ${dueAt}` : "",
-    project ?? "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) {
   const details = objectValue(result, "details");
   const action = objectString(args, "action") || objectString(details, "action");
@@ -279,8 +260,11 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
   if (todos.length === 0 && !error && result === undefined && objectString(args, "title")) {
     todos.push({
       title: objectString(args, "title"),
-      status: "pending",
-      priority: objectString(args, "priority") || "medium",
+      status: objectString(args, "status") || "pending",
+      topic: objectString(args, "topic"),
+      tags: objectValue(args, "tags"),
+      dependsOn: objectValue(args, "depends_on"),
+      parentId: objectString(args, "parent_id"),
       dueAt: objectString(args, "due_at"),
       projectPath: objectString(args, "project_path"),
     });
@@ -295,7 +279,7 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
 
   if (error) {
     return (
-      <div className="activity-detail nova-data-detail todo-tool-detail">
+      <div className="activity-detail todo-tool-detail">
         <div className="nova-data-heading">
           <span className="nova-data-action nova-data-action-delete_session">
             <XCircle size={13} />
@@ -308,31 +292,50 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
   }
 
   return (
-    <div className="activity-detail nova-data-detail todo-tool-detail">
-      <div className="nova-data-heading">
-        <span className={`nova-data-action todo-tool-action-${action || "unknown"}`}>
+    <div className="activity-detail todo-tool-detail">
+      <div className="todo-tool-heading">
+        <span className={`todo-tool-action todo-tool-action-${action || "unknown"}`}>
           <ActionIcon size={13} />
           {actionMeta.label}
         </span>
-        {typeof total === "number" ? <span>{total} 项</span> : null}
+        {typeof total === "number" ? <span className="todo-tool-count">{total} 项</span> : null}
         {typeof total === "number" && Array.isArray(listed) && listed.length < total ? (
-          <span>已显示 {listed.length} 项</span>
+          <span className="todo-tool-count">已显示 {listed.length} 项</span>
         ) : null}
       </div>
       {todos.length > 0 ? (
-        <div className="nova-data-list">
+        <div className="todo-tool-list">
           {todos.map((todo, index) => {
             const status = objectString(todo, "status") || "pending";
+            const tags = objectValue(todo, "tags");
+            const topic = objectString(todo, "topic") || (Array.isArray(tags) && typeof tags[0] === "string" ? tags[0] : "未分类");
+            const dependencies = objectValue(todo, "dependsOn");
+            const parentId = objectString(todo, "parentId");
             const title = objectString(todo, "title", "id") || "未命名待办";
+            const dueAt = objectString(todo, "dueAt", "due_at").slice(0, 10);
+            const projectPath = objectString(todo, "projectPath", "project_path");
+            const project = projectPath ? projectPath.split(/[\\/]/).filter(Boolean).pop() : "";
+            const StatusIcon = status === "completed" ? CheckCircle2 : status === "in_progress" ? Clock3 : Circle;
             return (
               <div
-                className={`nova-data-item todo-tool-item todo-tool-item-${status}`}
+                className={`todo-tool-item todo-tool-item-${status}`}
                 key={objectString(todo, "id") || index}
               >
-                {status === "completed" ? <CheckCircle2 size={14} /> : <ListTodo size={14} />}
-                <div>
-                  <strong>{title}</strong>
-                  <span>{todoItemMeta(todo)}</span>
+                <span className="todo-tool-status-icon"><StatusIcon size={14} /></span>
+                <div className="todo-tool-item-body">
+                  <div className="todo-tool-title-row">
+                    <strong>{title}</strong>
+                    <span className="todo-tool-count">{topic}</span>
+                  </div>
+                  <div className="todo-tool-meta">
+                    <span className={`todo-tool-status todo-tool-status-${status}`}>
+                      {TODO_STATUS_LABELS[status] ?? status}
+                    </span>
+                    {dueAt && <span><CalendarDays size={11} />{dueAt}</span>}
+                    {project && <span>{project}</span>}
+                    {parentId && <span>子任务</span>}
+                    {Array.isArray(dependencies) && dependencies.length > 0 && <span>{dependencies.length} 项前置任务</span>}
+                  </div>
                 </div>
               </div>
             );

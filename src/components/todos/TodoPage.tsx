@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
+  Minus,
+  Network,
+  Maximize2,
   CalendarDays,
   Check,
   CheckCircle2,
-  ChevronRight,
+  ChevronDown,
   Circle,
   Clock3,
-  Inbox,
+  FolderKanban,
   ListTodo,
   LoaderCircle,
+  PenLine,
   Plus,
   Search,
   Sparkles,
@@ -28,25 +32,170 @@ import {
   type TodoStatus,
 } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
+import { TodoTreeCanvas, TaskStatusIcon } from "./TodoTreeCanvas";
+import { blockersOf, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import "./task-trees.css";
+import { Markdown } from "../chat/Markdown";
 
-type TodoView = "today" | "in_progress" | "pending" | "completed";
+const TODO_TAG_MAX = 24;
+const TODO_TAGS_MAX = 5;
 
-const EMPTY_STATE: TodoState = { version: 1, items: [] };
+/**
+ * Mirrors normalizeTodoTags in nova's todo-store.ts so the page never sends a
+ * list the agent store would reject.
+ */
+function normalizeTags(tags: readonly string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tags) {
+    const tag = raw.trim().split(/\s+/).join(" ");
+    if (!tag || [...tag].length > TODO_TAG_MAX) continue;
+    const key = tag.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(tag);
+    if (result.length === TODO_TAGS_MAX) break;
+  }
+  return result;
+}
 
-const VIEW_META: Array<{ id: TodoView; label: string; description: string; icon: typeof CalendarDays }> = [
-  { id: "today", label: "今天", description: "今天到期的任务会集中在这里。", icon: CalendarDays },
-  { id: "in_progress", label: "进行中", description: "Nova 正在推进的任务。", icon: Clock3 },
-  { id: "pending", label: "待处理", description: "记录工作，并让 Nova 持续推进。", icon: Inbox },
-  { id: "completed", label: "已完成", description: "完成的任务会归档在这里。", icon: CheckCircle2 },
-];
+/** Accepts “论文, 实验”, “论文、实验” and pasted lists with newlines or tabs. */
+function parseTagInput(value: string): string[] {
+  return normalizeTags(value.split(/[,，、\n\t]+/));
+}
 
-const PRIORITY_LABEL: Record<TodoPriority, string> = { low: "低", medium: "中", high: "高" };
-const PRIORITY_FILTERS: Array<{ value: TodoPriority | "all"; label: string }> = [
-  { value: "all", label: "全部" },
-  { value: "high", label: "高优先级" },
-  { value: "medium", label: "中优先级" },
-  { value: "low", label: "低优先级" },
-];
+/** Stable per-tag hue so the same tag keeps the same colour everywhere. */
+function tagHue(tag: string): number {
+  let hash = 0;
+  for (const char of tag) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 360;
+  return hash;
+}
+
+/**
+ * Chip editor shared by the create dialog and the detail panel: type a tag and
+ * press Enter (or comma) to add it, click the × to drop one. Suggestions come
+ * from the tags already in use so the vocabulary stays small.
+ */
+function TodoTagField({
+  tags,
+  suggestions,
+  onChange,
+}: {
+  tags: string[];
+  suggestions: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const listId = useId();
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const selected = new Set(tags.map((tag) => tag.toLocaleLowerCase()));
+  const options = suggestions.filter(
+    (tag) =>
+      !selected.has(tag.toLocaleLowerCase()) && tag.toLocaleLowerCase().includes(draft.trim().toLocaleLowerCase()),
+  );
+  const showSuggestions = suggestionsOpen && options.length > 0 && tags.length < TODO_TAGS_MAX;
+  const activeOption = showSuggestions ? options[activeIndex] : undefined;
+
+  const commit = (value: string) => {
+    if (value.trim()) onChange(normalizeTags([...tags, ...parseTagInput(value)]));
+    setDraft("");
+    setActiveIndex(-1);
+    setSuggestionsOpen(false);
+  };
+
+  return (
+    <div className="todo-tag-field">
+      <span>标签</span>
+      <div className="todo-tag-editor">
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="todo-tag todo-tag-editable"
+            style={{ "--todo-tag-hue": tagHue(tag) } as CSSProperties}
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => onChange(tags.filter((item) => item !== tag))}
+              aria-label={`移除标签 ${tag}`}
+            >
+              <X size={10} />
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showSuggestions}
+          aria-controls={showSuggestions ? listId : undefined}
+          aria-activedescendant={activeOption ? `${listId}-${activeIndex}` : undefined}
+          autoComplete="off"
+          onFocus={() => setSuggestionsOpen(true)}
+          disabled={tags.length >= TODO_TAGS_MAX}
+          placeholder={tags.length >= TODO_TAGS_MAX ? `最多 ${TODO_TAGS_MAX} 个标签` : "添加标签，回车确认"}
+          aria-label="添加标签"
+          onChange={(event) => {
+            setSuggestionsOpen(true);
+            setActiveIndex(-1);
+            const value = event.target.value;
+            if (/[,，、\n]/.test(value)) commit(value);
+            else setDraft(value);
+          }}
+          onKeyDown={(event) => {
+            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && options.length > 0) {
+              event.preventDefault();
+              setSuggestionsOpen(true);
+              setActiveIndex(
+                event.key === "ArrowDown"
+                  ? (activeIndex + 1) % options.length
+                  : activeIndex <= 0
+                    ? options.length - 1
+                    : activeIndex - 1,
+              );
+            } else if (event.key === "Escape" && showSuggestions) {
+              event.preventDefault();
+              event.stopPropagation();
+              setSuggestionsOpen(false);
+              setActiveIndex(-1);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              commit(activeOption ?? draft);
+            } else if (event.key === "Backspace" && !draft && tags.length > 0) {
+              onChange(tags.slice(0, -1));
+            }
+          }}
+          onBlur={() => commit(draft)}
+        />
+      </div>
+      {showSuggestions && (
+        <div className="todo-tag-suggestions" id={listId} role="listbox" aria-label="已有标签">
+          <div className="todo-tag-suggestions-heading" role="presentation">
+            已有标签
+          </div>
+          {options.map((tag, index) => (
+            <div
+              key={tag}
+              id={`${listId}-${index}`}
+              role="option"
+              aria-selected={activeIndex === index}
+              className="todo-tag-suggestion"
+              onMouseEnter={() => setActiveIndex(index)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => commit(tag)}
+            >
+              <span className="todo-tag" style={{ "--todo-tag-hue": tagHue(tag) } as CSSProperties}>
+                {tag}
+              </span>
+              <Plus size={13} aria-hidden="true" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function localDateKey(date = new Date()): string {
   const year = date.getFullYear();
@@ -55,388 +204,348 @@ function localDateKey(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
-function todoMatchesView(todo: TodoItem, view: TodoView): boolean {
-  if (view === "today") return todo.status !== "completed" && todo.dueAt?.slice(0, 10) === localDateKey();
-  return todo.status === view;
-}
-
-function dueLabel(value?: string): string | null {
-  if (!value) return null;
-  const key = value.slice(0, 10);
-  if (key === localDateKey()) return "今天";
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  if (key === localDateKey(tomorrow)) return "明天";
-  const date = new Date(`${key}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return key;
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(date);
-}
-
 interface TodoPageProps {
   projects: Array<{ path: string; name: string }>;
   onRunTodo: (todo: TodoItem) => Promise<{ agentId: string; sessionId: string }>;
   onOpenSession: (todo: TodoItem) => void;
 }
 
+function useDialogFocus(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const selector =
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]';
+    dialog.querySelector<HTMLElement>(selector)?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const controls = [...dialog.querySelectorAll<HTMLElement>(selector)].filter(
+        (element) => element.getClientRects().length > 0,
+      );
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    dialog.addEventListener("keydown", trap);
+    return () => {
+      dialog.removeEventListener("keydown", trap);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [ref]);
+}
+
 export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) {
-  const [state, setState] = useState<TodoState>(EMPTY_STATE);
-  const [view, setView] = useState<TodoView>("pending");
+  const [state, setState] = useState<TodoState>({ version: 1, items: [] });
   const [query, setQuery] = useState("");
-  const [priority, setPriority] = useState<TodoPriority | "all">("all");
+  const [mode, setMode] = useState<"tree" | "list">("tree");
+  const [filter, setFilter] = useState("all");
+  const [zoom, setZoom] = useState(1);
+  const [collapsed, setCollapsed] = useState(new Set<string>());
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<Partial<CreateTodoInput> | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revision = useTodoStore((store) => store.revision);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const openTodo = useCallback((id: string) => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-    setSelectedId(id);
-    requestAnimationFrame(() => setDetailOpen(true));
-  }, []);
-
-  const closeDetail = useCallback(() => {
-    setDetailOpen(false);
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = setTimeout(() => {
-      setSelectedId(null);
-      closeTimerRef.current = null;
-    }, 400);
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && detailOpen) closeDetail();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeDetail, detailOpen]);
-
-  useEffect(() => () => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-  }, []);
-
+  const detailRef = useRef<HTMLElement>(null);
+  const pageRef = useRef<HTMLElement>(null);
+  const readGeneration = useRef(0);
+  const mutationLock = useRef(false);
   useEffect(() => {
     let cancelled = false;
-    void listTodos()
-      .then((next) => {
-        if (cancelled) return;
-        setState(next);
-        setError(null);
-      })
-      .catch((reason) => {
-        if (!cancelled) setError(String(reason));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const refresh = () => {
+      if (mutationLock.current) return;
+      const generation = ++readGeneration.current;
+      void listTodos()
+        .then((next) => {
+          if (!cancelled && generation === readGeneration.current) setState(next);
+        })
+        .catch((reason) => {
+          if (!cancelled) setError(String(reason));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", refresh);
     };
-    // A new revision means the agent wrote to the same todo store; re-read it so
-    // its items appear without the user reopening the page.
   }, [revision]);
-
-  const counts = useMemo(
-    () =>
-      Object.fromEntries(
-        VIEW_META.map(({ id }) => [id, state.items.filter((todo) => todoMatchesView(todo, id)).length]),
-      ) as Record<TodoView, number>,
-    [state.items],
-  );
-
-  const visibleItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    return state.items
-      .filter((todo) => todoMatchesView(todo, view))
-      .filter((todo) => priority === "all" || todo.priority === priority)
-      .filter(
-        (todo) =>
-          !normalizedQuery ||
-          `${todo.title}\n${todo.description}`.toLocaleLowerCase().includes(normalizedQuery),
-      )
-      .sort((a, b) => a.order - b.order || b.updatedAt.localeCompare(a.updatedAt));
-  }, [priority, query, state.items, view]);
-
-  const selected = state.items.find((todo) => todo.id === selectedId) ?? null;
-  const currentView = VIEW_META.find((item) => item.id === view) ?? VIEW_META[2];
-  const completedCount = counts.completed;
-  const completionRatio = state.items.length ? completedCount / state.items.length : 0;
-  const filtered = Boolean(query.trim()) || priority !== "all";
-
-  const runUpdate = async (input: Parameters<typeof updateTodo>[0]) => {
-    setBusyId(input.id);
+  const mutate = async (operation: () => Promise<TodoState>) => {
+    if (mutationLock.current) return;
+    mutationLock.current = true;
+    ++readGeneration.current;
+    setBusy(true);
     try {
-      setState(await updateTodo(input));
+      setState(await operation());
       setError(null);
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setBusyId(null);
+      mutationLock.current = false;
+      setBusy(false);
     }
   };
-
-  const removeTodo = async (todo: TodoItem) => {
-    if (!window.confirm(`删除待办“${todo.title}”？此操作无法撤销。`)) return;
-    setBusyId(todo.id);
-    try {
-      setState(await deleteTodo(todo.id));
-      closeDetail();
-      setError(null);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const runWithNova = async (todo: TodoItem) => {
-    setBusyId(todo.id);
-    try {
-      const link = await onRunTodo(todo);
-      setState(
-        await updateTodo({
-          id: todo.id,
-          status: "in_progress",
-          agentId: link.agentId,
-          sessionId: link.sessionId,
-        }),
-      );
-      setError(null);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
+  const selected = state.items.find((todo) => todo.id === selectedId);
+  const topics = [...new Map(state.items.map((todo) => [topicOf(todo).toLocaleLowerCase(), topicOf(todo)])).values()];
+  const tagSuggestions = [...new Set(state.items.flatMap((todo) => todo.tags ?? []))];
+  const completed = state.items.filter((todo) => todo.status === "completed").length;
+  const toggleTodo = (todo: TodoItem) =>
+    void mutate(() => updateTodo({ id: todo.id, status: todo.status === "completed" ? "pending" : "completed" }));
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !creating) setSelectedId(null);
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [creating]);
+  const visible = state.items
+    .filter((todo) =>
+      `${todo.title} ${todo.description} ${topicOf(todo)} ${todo.tags.join(" ")}`
+        .toLocaleLowerCase()
+        .includes(query.trim().toLocaleLowerCase()),
+    )
+    .filter(
+      (todo) =>
+        filter === "all" ||
+        (filter === "today"
+          ? todo.dueAt?.slice(0, 10) === localDateKey() && todo.status !== "completed"
+          : taskState(todo, state.items) === filter),
+    );
   return (
-    <section className="todo-page">
-      <div className="todo-layout">
-        <aside className="todo-rail">
-          <header className="todo-rail-header">
-            <span className="todo-eyebrow">NOVA TASKS</span>
-            <h2>待办</h2>
-          </header>
-
-          <nav className="todo-views" aria-label="待办状态">
-            {VIEW_META.map(({ id, label, icon: Icon }) => (
-              <button
-                type="button"
-                key={id}
-                className={view === id ? "todo-view-active" : ""}
-                onClick={() => setView(id)}
-              >
-                <Icon size={15} />
-                <span>{label}</span>
-                <small>{counts[id]}</small>
-              </button>
-            ))}
-          </nav>
-
-          <div className="todo-rail-summary">
-            <div className="todo-rail-summary-row">
-              <strong>{state.items.length}</strong>
-              <span>项任务 · 已完成 {completedCount}</span>
-            </div>
-            <div className="todo-rail-progress" role="presentation">
-              <i style={{ width: `${Math.round(completionRatio * 100)}%` }} />
-            </div>
-          </div>
-        </aside>
-
-        <div className={`todo-workspace ${detailOpen ? "todo-workspace-focus" : ""}`}>
-          <div
-            className="todo-content"
-            onClick={() => {
-              if (detailOpen) closeDetail();
-            }}
-          >
-            <div className="todo-content-inner">
-            <header className="todo-page-header">
-              <div className="todo-page-header-copy">
-                <h1>
-                  {currentView.label}
-                  <span className="todo-header-count">{visibleItems.length}</span>
-                </h1>
-                <p>{currentView.description}</p>
-              </div>
-              <button type="button" className="todo-primary-button" onClick={() => setCreating(true)}>
-                <Plus size={16} />
-                新建待办
-              </button>
-            </header>
-
-            <div className="todo-toolbar">
-              <label className="todo-search">
-                <Search size={15} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索待办…"
-                />
-                {query && (
-                  <button
-                    type="button"
-                    className="todo-search-clear"
-                    onClick={() => setQuery("")}
-                    aria-label="清空搜索"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </label>
-              <div className="todo-priority-filter" role="group" aria-label="优先级筛选">
-                {PRIORITY_FILTERS.map(({ value, label }) => (
-                  <button
-                    type="button"
-                    key={value}
-                    className={priority === value ? "todo-filter-active" : ""}
-                    onClick={() => setPriority(value)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="todo-empty">
-                <LoaderCircle className="todo-spinner" size={22} />
-                <p>正在读取待办…</p>
-              </div>
-            ) : visibleItems.length === 0 ? (
-              <div className="todo-empty">
-                <span className="todo-empty-icon">
-                  {filtered ? <Search size={22} /> : <ListTodo size={22} />}
-                </span>
-                <h3>{filtered ? "没有符合条件的待办" : "这里还没有待办"}</h3>
-                <p>
-                  {filtered
-                    ? "换个关键词或优先级再试试。"
-                    : view === "completed"
-                      ? "完成的任务会归档到这里。"
-                      : "创建一项工作，稍后也可以交给 Nova 处理。"}
-                </p>
-                {!filtered && view !== "completed" && (
-                  <button type="button" className="todo-ghost-button" onClick={() => setCreating(true)}>
-                    <Plus size={14} />
-                    创建待办
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="todo-list">
-                {visibleItems.map((todo) => {
-                  const due = dueLabel(todo.dueAt);
-                  const overdue =
-                    Boolean(todo.dueAt) &&
-                    (todo.dueAt as string).slice(0, 10) < localDateKey() &&
-                    todo.status !== "completed";
-                  const projectName =
-                    projects.find((project) => project.path === todo.projectPath)?.name ??
-                    todo.projectPath?.split(/[\\/]/).filter(Boolean).pop();
-                  return (
-                    <article
-                      key={todo.id}
-                      className={`todo-card ${selectedId === todo.id ? "todo-card-selected" : ""}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openTodo(todo.id);
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className={`todo-check todo-check-${todo.status}`}
-                        disabled={busyId === todo.id}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void runUpdate({
-                            id: todo.id,
-                            status: todo.status === "completed" ? "pending" : "completed",
-                          });
-                        }}
-                        aria-label={todo.status === "completed" ? "重新打开" : "标记完成"}
-                      >
-                        {todo.status === "completed" ? (
-                          <Check size={13} />
-                        ) : todo.status === "in_progress" ? (
-                          <Clock3 size={12} />
-                        ) : (
-                          <Circle size={12} />
-                        )}
-                      </button>
-
-                      <div className="todo-card-content">
-                        <div className="todo-card-title-row">
-                          <h3>{todo.title}</h3>
-                          <span className={`todo-priority todo-priority-${todo.priority}`}>
-                            {PRIORITY_LABEL[todo.priority]}
-                          </span>
-                        </div>
-                        {todo.description && <p>{todo.description}</p>}
-                        <div className="todo-card-meta">
-                          {projectName && <span>{projectName}</span>}
-                          {due && (
-                            <span className={overdue ? "todo-overdue" : ""}>
-                              <CalendarDays size={11} />
-                              {overdue ? `已逾期 · ${due}` : due}
-                            </span>
-                          )}
-                          {todo.status === "in_progress" && (
-                            <span className="todo-running">
-                              <Clock3 size={11} />
-                              Nova 处理中
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <ChevronRight size={15} className="todo-card-arrow" />
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-            </div>
-          </div>
-
-          {selected && (
-            <TodoDetail
-              todo={selected}
-              projects={projects}
-              busy={busyId === selected.id}
-              open={detailOpen}
-              onClose={closeDetail}
-              onSave={(input) => runUpdate(input)}
-              onDelete={() => void removeTodo(selected)}
-              onRun={() => void runWithNova(selected)}
-              onOpenSession={() => onOpenSession(selected)}
-            />
-          )}
+    <section ref={pageRef} className="todo-page task-page">
+      <header className="task-page-header">
+        <div>
+          <span className="todo-eyebrow">NOVA TASKS</span>
+          <h1>
+            待办 <small>{state.items.length}</small>
+          </h1>
+          <p>每个主题，一条清晰的推进路径。</p>
         </div>
+        <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
+          <Plus size={16} />
+          新建主题
+        </button>
+      </header>
+      <div className="task-toolbar">
+        <label className="todo-search">
+          <Search size={16} />
+          <input
+            aria-label="搜索主题或任务"
+            placeholder="搜索主题或任务…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {query && (
+            <button aria-label="清空搜索" onClick={() => setQuery("")}>
+              <X size={14} />
+            </button>
+          )}
+        </label>
+        <span className="task-summary">
+          {topics.length} 个主题 · 已完成 {completed} 项
+        </span>
+        <div className="task-view-switch">
+          <button aria-pressed={mode === "tree"} onClick={() => setMode("tree")}>
+            <Network size={15} />
+            主题树
+          </button>
+          <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>
+            <ListTodo size={15} />
+            列表
+          </button>
+        </div>
+        {mode === "tree" ? (
+          <button
+            className="task-toolbar-button"
+            onClick={() =>
+              setCollapsed(collapsed.size ? new Set() : new Set(topics.map((topic) => topic.toLocaleLowerCase())))
+            }
+          >
+            <Maximize2 size={15} />
+            {collapsed.size ? "展开全部" : "折叠全部"}
+          </button>
+        ) : (
+          <select aria-label="任务状态" value={filter} onChange={(event) => setFilter(event.target.value)}>
+            <option value="all">全部状态</option>
+            <option value="today">今天到期</option>
+            <option value="ready">可开始</option>
+            <option value="in_progress">进行中</option>
+            <option value="blocked">等待前置</option>
+            <option value="completed">已完成</option>
+          </select>
+        )}
       </div>
-
+      {loading ? (
+        <div className="todo-empty">
+          <LoaderCircle className="todo-spinner" />
+          正在读取待办…
+        </div>
+      ) : mode === "tree" ? (
+        <TodoTreeCanvas
+          items={state.items}
+          query={query}
+          zoom={zoom}
+          collapsed={collapsed}
+          onCollapse={(topic) =>
+            setCollapsed((previous) => {
+              const next = new Set(previous);
+              if (next.has(topic)) next.delete(topic);
+              else next.add(topic);
+              return next;
+            })
+          }
+          onOpen={setSelectedId}
+          onCreate={setCreating}
+          onToggle={toggleTodo}
+          busy={busy}
+        />
+      ) : (
+        <div className="task-flat-list">
+          {visible.length === 0 && <div className="todo-empty">没有符合条件的任务</div>}
+          {visible.map((todo) => (
+            <article key={todo.id}>
+              <button
+                className={`task-status task-status-${taskState(todo, state.items)}`}
+                disabled={busy || (todo.status !== "completed" && blockersOf(todo, state.items, true).length > 0)}
+                aria-label={`切换完成状态：${todo.title}`}
+                onClick={() => toggleTodo(todo)}
+              >
+                <TaskStatusIcon state={taskState(todo, state.items)} />
+              </button>
+              <button className="task-flat-title" onClick={() => setSelectedId(todo.id)}>
+                <strong>{todo.title}</strong>
+                <span>
+                  {topicOf(todo)} · {STATE_LABEL[taskState(todo, state.items)]}
+                  {todo.dueAt ? ` · ${todo.dueAt.slice(0, 10)}` : ""}
+                </span>
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+      <footer className="task-canvas-footer">
+        <div className="task-legend">
+          {(["completed", "in_progress", "ready", "blocked"] as const).map((status) => (
+            <span className={`task-status-${status}`} key={status}>
+              <TaskStatusIcon state={status} />
+              {STATE_LABEL[status]}
+            </span>
+          ))}
+        </div>
+        {mode === "tree" && (
+          <div className="task-zoom">
+            <button
+              aria-label="适应画布"
+              title="适应画布"
+              onClick={() => {
+                const viewport = pageRef.current?.querySelector<HTMLElement>(".task-canvas-scroll");
+                const forest = pageRef.current?.querySelector<HTMLElement>(".task-forest");
+                if (viewport && forest)
+                  setZoom(
+                    Math.max(
+                      0.4,
+                      Math.min(
+                        1,
+                        viewport.clientWidth / forest.scrollWidth,
+                        viewport.clientHeight / forest.scrollHeight,
+                      ),
+                    ),
+                  );
+              }}
+            >
+              <Maximize2 size={15} />
+            </button>
+            <button
+              aria-label="缩小画布"
+              disabled={zoom <= 0.4}
+              onClick={() => setZoom((value) => Math.max(0.4, value - 0.1))}
+            >
+              <Minus size={15} />
+            </button>
+            <button aria-label="恢复原始大小" onClick={() => setZoom(1)}>
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              aria-label="放大画布"
+              disabled={zoom >= 1.4}
+              onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}
+            >
+              <Plus size={15} />
+            </button>
+          </div>
+        )}
+      </footer>
+      {selected && (
+        <div
+          className="task-detail-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) setSelectedId(null);
+          }}
+        >
+          <TodoDetail
+            panelRef={detailRef}
+            todo={selected}
+            items={state.items}
+            projects={projects}
+            tagSuggestions={tagSuggestions}
+            busy={busy}
+            open
+            closing={false}
+            onClose={() => setSelectedId(null)}
+            onSave={(input) => mutate(() => updateTodo(input))}
+            onDelete={() => {
+              if (window.confirm(`删除“${selected.title}”？子任务将保留，相关依赖连线将移除。`))
+                void mutate(async () => {
+                  const next = await deleteTodo(selected.id);
+                  setSelectedId(null);
+                  return next;
+                });
+            }}
+            onRun={() => {
+              if (blockersOf(selected, state.items).length) {
+                setError("请先完成前置任务");
+                return;
+              }
+              void mutate(async () => {
+                const link = await onRunTodo(selected);
+                return updateTodo({ id: selected.id, status: "in_progress", ...link });
+              });
+            }}
+            onOpenSession={() => onOpenSession(selected)}
+          />
+        </div>
+      )}
       {error && (
-        <div className="todo-error">
+        <div className="todo-error" role="alert">
           {error}
-          <button type="button" onClick={() => setError(null)}>
-            <X size={13} />
+          <button aria-label="关闭错误提示" onClick={() => setError(null)}>
+            <X size={14} />
           </button>
         </div>
       )}
-
       {creating && (
         <CreateTodoModal
+          seed={creating}
+          items={state.items}
           projects={projects}
-          onClose={() => setCreating(false)}
+          tagSuggestions={tagSuggestions}
+          onClose={() => setCreating(null)}
           onCreated={(next) => {
+            ++readGeneration.current;
             setState(next);
-            setCreating(false);
-            setView("pending");
+            setCreating(null);
+            setError(null);
           }}
           onError={setError}
         />
@@ -445,23 +554,136 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   );
 }
 
+function TaskRelations({
+  items,
+  currentId,
+  topic,
+  parentId,
+  dependsOn,
+  onChange,
+}: {
+  items: TodoItem[];
+  currentId?: string;
+  topic: string;
+  parentId: string;
+  dependsOn: string[];
+  onChange: (values: { topic?: string; parentId?: string; dependsOn?: string[] }) => void;
+}) {
+  const listId = useId();
+  const [search, setSearch] = useState("");
+  const candidates = items.filter((item) => item.id !== currentId);
+  return (
+    <div className="task-relations">
+      <label>
+        <span>主题</span>
+        <input
+          aria-label="主题名称"
+          list={listId}
+          maxLength={24}
+          value={topic}
+          onChange={(event) => onChange({ topic: event.target.value })}
+          placeholder="默认使用第一个标签，无标签则归入未分类"
+        />
+        <datalist id={listId}>
+          {[...new Set(items.map(topicOf))].map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      </label>
+      <label>
+        <span>
+          父任务 <small>拆解关系，不代表先后顺序</small>
+        </span>
+        <select value={parentId} onChange={(event) => onChange({ parentId: event.target.value })}>
+          <option value="">独立任务</option>
+          {candidates
+            .filter(
+              (item) =>
+                topicOf(item).toLocaleLowerCase() === (topic || "未分类").trim().toLocaleLowerCase() ||
+                item.id === parentId,
+            )
+            .map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title}
+              </option>
+            ))}
+        </select>
+      </label>
+      <fieldset>
+        <legend>
+          前置任务 <small>全部完成后，才能开始本任务</small>
+        </legend>
+        <input
+          aria-label="筛选前置任务"
+          placeholder="搜索可关联的任务…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <div className="task-dependency-options">
+          {candidates
+            .filter(
+              (item) =>
+                `${topicOf(item)} ${item.title}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()) ||
+                dependsOn.includes(item.id),
+            )
+            .map((item) => (
+              <label key={item.id}>
+                <input
+                  type="checkbox"
+                  checked={dependsOn.includes(item.id)}
+                  onChange={(event) =>
+                    onChange({
+                      dependsOn: event.target.checked
+                        ? [...dependsOn, item.id]
+                        : dependsOn.filter((id) => id !== item.id),
+                    })
+                  }
+                />
+                <span>
+                  {item.title}
+                  <small>
+                    {topicOf(item)} · {STATE_LABEL[taskState(item, items)]}
+                  </small>
+                </span>
+              </label>
+            ))}
+          {candidates.length === 0 && <p>暂无可关联的任务；独立任务无需设置前置。</p>}
+        </div>
+      </fieldset>
+    </div>
+  );
+}
+
 function CreateTodoModal({
+  seed,
+  items,
   projects,
+  tagSuggestions,
   onClose,
   onCreated,
   onError,
 }: {
+  seed: Partial<CreateTodoInput>;
+  items: TodoItem[];
   projects: TodoPageProps["projects"];
+  tagSuggestions: string[];
   onClose: () => void;
   onCreated: (state: TodoState) => void;
   onError: (error: string) => void;
 }) {
+  const modalRef = useRef<HTMLFormElement>(null);
+  useDialogFocus(modalRef);
   const [form, setForm] = useState<CreateTodoInput>({
     title: "",
     description: "",
+    tags: [],
     priority: "medium",
     projectPath: "",
     dueAt: "",
+    topic: "",
+    parentId: "",
+    dependsOn: [],
+    ...seed,
   });
   const [saving, setSaving] = useState(false);
 
@@ -481,6 +703,7 @@ function CreateTodoModal({
       onCreated(
         await createTodo({
           ...form,
+          tags: form.tags ?? [],
           projectPath: form.projectPath || undefined,
           dueAt: form.dueAt || undefined,
         }),
@@ -499,6 +722,7 @@ function CreateTodoModal({
       }}
     >
       <form
+        ref={modalRef}
         className="todo-modal"
         onSubmit={(event) => void submit(event)}
         onMouseDown={(event) => event.stopPropagation()}
@@ -511,8 +735,10 @@ function CreateTodoModal({
             <Plus size={16} />
           </span>
           <div>
-            <h2 id="todo-modal-title">新建待办</h2>
-            <p>记录下一件需要推进的工作。</p>
+            <h2 id="todo-modal-title">{seed.topic ? "添加任务" : "新建主题与任务"}</h2>
+            <p>
+              {seed.topic ? "设置任务内容，确认它与其他任务的关系。" : "填写主题和首个任务，开始一条新的推进路径。"}
+            </p>
           </div>
           <button type="button" className="todo-icon-button" disabled={saving} onClick={onClose} aria-label="关闭">
             <X size={16} />
@@ -544,17 +770,6 @@ function CreateTodoModal({
           </label>
           <div className="todo-modal-grid">
             <label>
-              <span>优先级</span>
-              <select
-                value={form.priority}
-                onChange={(event) => setForm({ ...form, priority: event.target.value as TodoPriority })}
-              >
-                <option value="low">低</option>
-                <option value="medium">中</option>
-                <option value="high">高</option>
-              </select>
-            </label>
-            <label>
               <span>截止日期</span>
               <input
                 type="date"
@@ -563,6 +778,18 @@ function CreateTodoModal({
               />
             </label>
           </div>
+          <TaskRelations
+            items={items}
+            topic={form.topic || form.tags?.[0] || ""}
+            parentId={form.parentId ?? ""}
+            dependsOn={form.dependsOn ?? []}
+            onChange={(values) => setForm({ ...form, ...values })}
+          />
+          <TodoTagField
+            tags={form.tags ?? []}
+            suggestions={tagSuggestions}
+            onChange={(tags) => setForm({ ...form, tags })}
+          />
           <label>
             <span>所属项目</span>
             <select
@@ -595,20 +822,28 @@ function CreateTodoModal({
 }
 
 function TodoDetail({
+  panelRef,
   todo,
+  items,
   projects,
+  tagSuggestions,
   busy,
   open,
+  closing,
   onClose,
   onSave,
   onDelete,
   onRun,
   onOpenSession,
 }: {
+  panelRef: RefObject<HTMLElement | null>;
   todo: TodoItem;
+  items: TodoItem[];
   projects: TodoPageProps["projects"];
+  tagSuggestions: string[];
   busy: boolean;
   open: boolean;
+  closing: boolean;
   onClose: () => void;
   onSave: (input: {
     id: string;
@@ -616,160 +851,193 @@ function TodoDetail({
     description: string;
     status: TodoStatus;
     priority: TodoPriority;
+    tags: string[];
     projectPath: string;
     dueAt: string;
+    topic: string;
+    parentId: string;
+    dependsOn: string[];
   }) => Promise<void>;
   onDelete: () => void;
   onRun: () => void;
   onOpenSession: () => void;
 }) {
+  useDialogFocus(panelRef);
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(todo.description);
   const [status, setStatus] = useState(todo.status);
-  const [priority, setPriority] = useState(todo.priority);
+  const priority = todo.priority;
+  const [topic, setTopic] = useState(topicOf(todo));
+  const [parentId, setParentId] = useState(todo.parentId ?? "");
+  const [dependsOn, setDependsOn] = useState(todo.dependsOn ?? []);
+  const [tags, setTags] = useState<string[]>(todo.tags ?? []);
   const [projectPath, setProjectPath] = useState(todo.projectPath ?? "");
   const [dueAt, setDueAt] = useState(todo.dueAt?.slice(0, 10) ?? "");
+  const [editingDescription, setEditingDescription] = useState(false);
 
   useEffect(() => {
     setTitle(todo.title);
     setDescription(todo.description);
     setStatus(todo.status);
-    setPriority(todo.priority);
+    setTopic(topicOf(todo));
+    setParentId(todo.parentId ?? "");
+    setDependsOn(todo.dependsOn ?? []);
+    setTags(todo.tags ?? []);
     setProjectPath(todo.projectPath ?? "");
     setDueAt(todo.dueAt?.slice(0, 10) ?? "");
+    setEditingDescription(false);
   }, [todo]);
 
   const dirty =
     title !== todo.title ||
     description !== todo.description ||
     status !== todo.status ||
-    priority !== todo.priority ||
+    topic !== topicOf(todo) ||
+    parentId !== (todo.parentId ?? "") ||
+    dependsOn.join("\0") !== (todo.dependsOn ?? []).join("\0") ||
+    tags.join("\u0000") !== (todo.tags ?? []).join("\u0000") ||
     projectPath !== (todo.projectPath ?? "") ||
     dueAt !== (todo.dueAt?.slice(0, 10) ?? "");
+  const DetailStatusIcon = status === "completed" ? CheckCircle2 : status === "in_progress" ? Clock3 : Circle;
 
   return (
-    <aside className={`todo-detail ${open ? "todo-detail-open" : ""}`} aria-hidden={!open}>
-      <header>
-        <div className="todo-detail-heading">
-          <span className="todo-detail-heading-icon">
-            <ListTodo size={16} />
-          </span>
-          <div>
-            <span className="todo-eyebrow">FOCUS WORKSPACE</span>
-            <h2>任务聚焦</h2>
+    <aside
+      ref={panelRef}
+      className={`todo-detail ${open ? "todo-detail-open" : ""} ${closing ? "todo-detail-closing" : ""}`}
+      aria-hidden={!open}
+      role="dialog"
+      aria-modal="true"
+      aria-label={todo.title}
+    >
+      <button type="button" className="todo-icon-button todo-detail-close" onClick={onClose} aria-label="关闭">
+        <X size={16} />
+      </button>
+
+      <div className="todo-detail-fields" key={todo.id}>
+        <section className="todo-detail-hero">
+          <div className="todo-detail-hero-meta">
             <span className={`todo-detail-status todo-detail-status-${status}`}>
               {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
             </span>
           </div>
-        </div>
-        <button type="button" className="todo-icon-button" onClick={onClose} aria-label="关闭">
-          <X size={16} />
-        </button>
-      </header>
-
-      <div className="todo-detail-fields" key={todo.id}>
-        <section className="todo-detail-hero">
-          <span className={`todo-detail-status todo-detail-status-${status}`}>
-            {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
-          </span>
           <h1>{todo.title}</h1>
-          <p>{todo.description || "还没有添加任务描述。"}</p>
         </section>
 
-        <div className="todo-detail-workspace-grid">
-          <section className="todo-detail-section todo-detail-content-section">
-            <span className="todo-detail-section-title">任务内容</span>
-            <label>
-              <span>标题</span>
-              <input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} />
-            </label>
-            <label>
-              <span className="todo-field-label">
-                描述 <small>{description.length}/4000</small>
-              </span>
-              <textarea
-                rows={8}
-                maxLength={4000}
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="补充目标、要求或验收标准…"
-              />
-            </label>
-          </section>
-
-          <div className="todo-detail-side-stack">
-            <section className="todo-detail-section todo-detail-properties">
+        <section className="todo-detail-section todo-detail-properties">
           <span className="todo-detail-section-title">任务属性</span>
-          <div className="todo-detail-grid">
-            <label>
+          <div className="todo-detail-properties-grid">
+            <label className="todo-property-field">
               <span>状态</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value as TodoStatus)}>
-                <option value="pending">待处理</option>
-                <option value="in_progress">进行中</option>
-                <option value="completed">已完成</option>
-              </select>
-            </label>
-            <label>
-              <span>优先级</span>
-              <select value={priority} onChange={(event) => setPriority(event.target.value as TodoPriority)}>
-                <option value="low">低</option>
-                <option value="medium">中</option>
-                <option value="high">高</option>
-              </select>
-            </label>
-          </div>
-          <div className="todo-detail-grid">
-            <label>
-              <span>截止日期</span>
-              <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
-            </label>
-            <label>
-              <span>所属项目</span>
-              <select value={projectPath} onChange={(event) => setProjectPath(event.target.value)}>
-                <option value="">不关联项目</option>
-                {projects.map((project) => (
-                  <option key={project.path} value={project.path}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-            </section>
-
-            <section className="todo-detail-section todo-detail-nova-section">
-          <span className="todo-detail-section-title">Nova 协作</span>
-          {todo.sessionId ? (
-            <button type="button" className="todo-agent-link" onClick={onOpenSession}>
-              <span className="todo-nova-icon"><Sparkles size={15} /></span>
-              <div>
-                <strong>打开 Nova 会话</strong>
-                <span>查看处理过程与结果</span>
+              <div className={`todo-property-control todo-property-status-${status}`}>
+                <DetailStatusIcon className="todo-property-leading-icon" size={14} />
+                <select value={status} onChange={(event) => setStatus(event.target.value as TodoStatus)}>
+                  <option value="pending">待处理</option>
+                  <option value="in_progress">进行中</option>
+                  <option value="completed">已完成</option>
+                </select>
+                <ChevronDown className="todo-property-chevron" size={14} />
               </div>
-              <ChevronRight size={15} />
-            </button>
-          ) : (
-            todo.status !== "completed" && (
-              <button type="button" className="todo-run-button" disabled={busy || dirty} onClick={onRun}>
-                <span className="todo-nova-icon"><Sparkles size={15} /></span>
-                <div>
-                  <strong>交给 Nova 处理</strong>
-                  <span>{dirty ? "请先保存当前更改" : "Nova 将创建会话并开始执行"}</span>
-                </div>
-                <ChevronRight size={15} />
-              </button>
-            )
-          )}
-            </section>
-
-            <div className="todo-detail-meta">
-              <span>
-                创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}
-              </span>
-              <i />
-              <span>来源：{todo.source === "agent" ? "Nova" : "手动创建"}</span>
+            </label>
+            <label className="todo-property-field">
+              <span>截止日期</span>
+              <div className="todo-property-control todo-property-date">
+                <CalendarDays className="todo-property-leading-icon" size={14} />
+                <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
+              </div>
+            </label>
+            <label className="todo-property-field">
+              <span>所属项目</span>
+              <div className="todo-property-control todo-property-project">
+                <FolderKanban className="todo-property-leading-icon" size={14} />
+                <select value={projectPath} onChange={(event) => setProjectPath(event.target.value)}>
+                  <option value="">不关联项目</option>
+                  {projects.map((project) => (
+                    <option key={project.path} value={project.path}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="todo-property-chevron" size={14} />
+              </div>
+            </label>
+            <div className="todo-property-field todo-property-field-wide">
+              <TodoTagField tags={tags} suggestions={tagSuggestions} onChange={setTags} />
             </div>
           </div>
+        </section>
+
+        <section className="todo-detail-section">
+          <TaskRelations
+            items={items}
+            currentId={todo.id}
+            topic={topic}
+            parentId={parentId}
+            dependsOn={dependsOn}
+            onChange={(values) => {
+              if (values.topic !== undefined) setTopic(values.topic);
+              if (values.parentId !== undefined) setParentId(values.parentId);
+              if (values.dependsOn !== undefined) setDependsOn(values.dependsOn);
+            }}
+          />
+        </section>
+        <section className="todo-detail-section todo-detail-content-section">
+          <span className="todo-detail-section-title">任务内容</span>
+          <label>
+            <span>标题</span>
+            <input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+          <div className="todo-description-field">
+            <div className="todo-description-heading">
+              <span>描述</span>
+              <div>
+                <small>{description.length}/4000 · Markdown</small>
+                <button type="button" onClick={() => setEditingDescription((value) => !value)}>
+                  {editingDescription ? <Check size={12} /> : <PenLine size={12} />}
+                  {editingDescription ? "完成编辑" : "编辑"}
+                </button>
+              </div>
+            </div>
+            {editingDescription ? (
+              <div className="todo-description-editor">
+                <textarea
+                  autoFocus
+                  rows={10}
+                  maxLength={4000}
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="使用 Markdown 补充目标、要求或验收标准…"
+                />
+                <span>支持标题、列表、引用、链接、表格与代码块</span>
+              </div>
+            ) : (
+              <div
+                className={`todo-description-preview ${description ? "" : "todo-description-preview-empty"}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setEditingDescription(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") setEditingDescription(true);
+                }}
+              >
+                {description ? (
+                  <Markdown content={description} />
+                ) : (
+                  <span>
+                    <PenLine size={15} />
+                    点击添加任务描述，支持 Markdown
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <div className="todo-detail-meta">
+          <span>
+            创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}
+          </span>
+          <i />
+          <span>来源：{todo.source === "agent" ? "Nova" : "手动创建"}</span>
         </div>
       </div>
 
@@ -778,15 +1046,50 @@ function TodoDetail({
           <Trash2 size={14} />
           删除
         </button>
-        <button
-          type="button"
-          className="todo-primary-button"
-          disabled={busy || !dirty || !title.trim()}
-          onClick={() => void onSave({ id: todo.id, title, description, status, priority, projectPath, dueAt })}
-        >
-          {busy ? <LoaderCircle className="todo-spinner" size={15} /> : <Check size={15} />}
-          保存更改
-        </button>
+        <div className="todo-detail-footer-actions">
+          {todo.sessionId ? (
+            <button type="button" className="todo-nova-button" disabled={busy} onClick={onOpenSession}>
+              <Sparkles size={14} />
+              Nova 会话
+            </button>
+          ) : (
+            todo.status !== "completed" && (
+              <button
+                type="button"
+                className="todo-nova-button"
+                disabled={busy || dirty || blockersOf(todo, items).length > 0}
+                title={dirty ? "请先保存当前更改" : "交给 Nova 处理"}
+                onClick={onRun}
+              >
+                <Sparkles size={14} />
+                Nova 协作
+              </button>
+            )
+          )}
+          <button
+            type="button"
+            className="todo-primary-button"
+            disabled={busy || !dirty || !title.trim()}
+            onClick={() =>
+              void onSave({
+                id: todo.id,
+                title,
+                description,
+                status,
+                priority,
+                tags,
+                projectPath,
+                dueAt,
+                topic,
+                parentId,
+                dependsOn,
+              })
+            }
+          >
+            {busy ? <LoaderCircle className="todo-spinner" size={15} /> : <Check size={15} />}
+            保存更改
+          </button>
+        </div>
       </footer>
     </aside>
   );

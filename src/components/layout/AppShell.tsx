@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Background } from "./Background";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
@@ -84,6 +84,7 @@ import {
   ArrowDown,
   Square,
   FolderOpen,
+  Folder,
   Pencil,
   ChevronDown,
   ChevronLeft,
@@ -130,6 +131,8 @@ function GithubMark({ size = 16 }: { size?: number }) {
 }
 const HIDDEN_AGENTS_KEY = "nova-studio.hidden-agents";
 const CONVERSATION_MINIMAP_PAIR_THRESHOLD = 6;
+/** Sessions shown per project before the list collapses behind 展开显示. */
+const SIDEBAR_SESSION_PREVIEW = 6;
 
 function isTemporaryRuntimeProject(cwd: string): boolean {
   const directoryName = cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
@@ -1063,6 +1066,12 @@ function toolEditedPath(args: unknown): string {
   return "";
 }
 
+/** Folder glyph matching the project row's expanded/collapsed state. */
+function FolderIcon({ open }: { open: boolean }) {
+  const Icon = open ? FolderOpen : Folder;
+  return <Icon size={16} strokeWidth={1.75} />;
+}
+
 function agentDisplayName(agent: AgentState, agentNames: Record<string, string> = {}): string {
   if (agentNames[agent.id]) return agentNames[agent.id];
   if (agent.name) return agent.name;
@@ -1078,6 +1087,17 @@ function agentSubtitle(agent: AgentState): string {
   if (agent.status === "starting") return "Starting delegated agent";
   if (agent.status === "error") return "Delegated task needs attention";
   return agent.cwd;
+}
+
+/**
+ * The sidebar only marks sessions that are actually doing something. Idle and
+ * stopped are the normal resting states — marking them would put a dot on every
+ * historical session and turn the marker into decoration.
+ */
+function agentStatusMark(agent: AgentState): "running" | "error" | null {
+  if (agent.status === "streaming" || agent.status === "starting") return "running";
+  if (agent.status === "error") return "error";
+  return null;
 }
 
 interface AgentTreeNodeProps {
@@ -1114,6 +1134,14 @@ const AgentTreeNode = memo(function AgentTreeNode({
         onClick={() => onSelect(agent.id)}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
       >
+        {agentStatusMark(agent) && (
+          <span
+            className="agent-status-dot"
+            data-status={agentStatusMark(agent)}
+            title={agentStatusMark(agent) === "running" ? "会话正在运行" : "会话执行出错"}
+            aria-hidden="true"
+          />
+        )}
         <span className="agent-text">
           <span className="agent-name">{agentDisplayName(agent, agentNames)}</span>
           {!isChild && (
@@ -1135,7 +1163,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
           role="button"
           tabIndex={0}
           className="agent-action"
-          title="Rename agent"
+          title="重命名会话"
           onClick={(event) => {
             event.stopPropagation();
             onEdit(agent);
@@ -1148,7 +1176,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             role="button"
             tabIndex={0}
             className="agent-action"
-            title="Cancel delegated task"
+            title="取消子任务"
             onClick={(event) => {
               event.stopPropagation();
               void cancelAgent(agent.id, "cancelled from parent task");
@@ -1162,7 +1190,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             role="button"
             tabIndex={0}
             className="agent-action"
-            title="Retry delegated task"
+            title="重试子任务"
             onClick={(event) => {
               event.stopPropagation();
               void retryAgent(agent.id);
@@ -1175,7 +1203,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
           role="button"
           tabIndex={0}
           className="agent-action"
-          title="Hide agent"
+          title="隐藏会话"
           onClick={(event) => {
             event.stopPropagation();
             onHide(agent);
@@ -1188,7 +1216,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             role="button"
             tabIndex={0}
             className="agent-expand"
-            title={childrenExpanded ? "Collapse child agents" : "Expand child agents"}
+            title={childrenExpanded ? "收起子 Agent" : "展开子 Agent"}
             onClick={(event) => {
               event.stopPropagation();
               setChildrenExpanded((expanded) => !expanded);
@@ -1839,6 +1867,10 @@ export function AppShell() {
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Projects whose session list has been expanded past the preview cap. */
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
+    () => new Set(),
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
@@ -1848,7 +1880,15 @@ export function AppShell() {
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const conversationThreadRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
+  /**
+   * 刚切到某个会话时置位，直到它的历史消息渲染出来。历史是异步补进来的，
+   * 而滚动事件会改写 isNearBottomRef：上一个会话的惯性滚动、内容变矮时浏览器
+   * 夹断 scrollTop 产生的 scroll 事件，都会把它置成 false，于是历史到达时我们
+   * 停在顶部。这个标记让「刚打开的会话」无视这些噪声，直接落到最新一条消息。
+   */
+  const followLatestRef = useRef(false);
   const lastConversationScrollTopRef = useRef(0);
   const isComposingRef = useRef(false);
 
@@ -2375,31 +2415,55 @@ export function AppShell() {
     lastConversationScrollTopRef.current = container.scrollTop;
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    followLatestRef.current = true;
     isNearBottomRef.current = true;
+    lastConversationScrollTopRef.current = 0;
     setShowScrollToBottom(false);
-    const frame = window.requestAnimationFrame(scrollConversationToBottom);
-    return () => window.cancelAnimationFrame(frame);
+    scrollConversationToBottom();
+    // A session with no history must not keep the flag forever: after this
+    // window the normal follow rules take over again.
+    const timer = window.setTimeout(() => {
+      followLatestRef.current = false;
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, [activeId, scrollConversationToBottom]);
 
-  useEffect(() => {
-    if (conversationView !== "chat" || settingsOpen || activeAgent?.status !== "streaming") return;
-    if (!isNearBottomRef.current) return;
-    const frame = window.requestAnimationFrame(() => {
-      const container = scrollRef.current;
-      if (container) container.scrollTop = container.scrollHeight;
-    });
-    return () => window.cancelAnimationFrame(frame);
+  useLayoutEffect(() => {
+    if (conversationView !== "chat" || settingsOpen) return;
+    // A freshly opened session always lands on its newest message, even when a
+    // stray scroll event (previous session's momentum, scrollTop clamping)
+    // flipped the follow flag while the history was still loading.
+    if (!isNearBottomRef.current && !followLatestRef.current) return;
+    // History arrives after activation, including for idle sessions. Position
+    // each committed update before paint instead of only following live output.
+    scrollConversationToBottom();
+    if ((activeAgent?.messages.length ?? 0) > 0) followLatestRef.current = false;
   }, [
     activeId,
     conversationView,
     settingsOpen,
     activeAgent?.status,
-    activeAgent?.messages.length,
+    activeAgent?.messages,
     activeAgent?.streamingThinking,
     activeAgent?.activeToolCalls.size,
     streamingText,
+    scrollConversationToBottom,
   ]);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    const thread = conversationThreadRef.current;
+    if (conversationView !== "chat" || settingsOpen || !container || !thread) return;
+    // Images, Markdown and viewport resizing can change height after the
+    // messages commit. Observe the content as well as the scroll viewport.
+    const observer = new ResizeObserver(() => {
+      if (isNearBottomRef.current) scrollConversationToBottom();
+    });
+    observer.observe(thread);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [activeId, conversationView, settingsOpen, hasMessages, scrollConversationToBottom]);
 
   useEffect(() => {
     setSelectedTrajectoryEntry(null);
@@ -3001,6 +3065,20 @@ export function AppShell() {
     setConversationView(view);
   }, [handleSelectAgent]);
 
+  /**
+   * Every "new session" entry point has to do the same two things: leave any
+   * full-page surface (待办 / 设置 covers the whole content area) and show the
+   * composer, optionally scoped to a project. Missing the first half is what
+   * made the per-project + button look dead while 待办 was open.
+   */
+  const openNewSessionComposer = useCallback((projectCwd: string | null = null) => {
+    setPendingProjectCwd(projectCwd);
+    setActiveAgent(null);
+    setSettingsOpen(false);
+    setTodosOpen(false);
+    setConversationView("chat");
+  }, [setActiveAgent]);
+
   const handleEditAgent = useCallback((agent: AgentState) => {
     setEditingAgent({
       id: agent.id,
@@ -3150,13 +3228,7 @@ export function AppShell() {
                   <button
                     type="button"
                     className="sidebar-collapsed-action"
-                    onClick={() => {
-                      setPendingProjectCwd(null);
-                      setActiveAgent(null);
-                      setSettingsOpen(false);
-                      setTodosOpen(false);
-                      setConversationView("chat");
-                    }}
+                    onClick={() => openNewSessionComposer()}
                     aria-label="新会话"
                     title="新会话"
                   >
@@ -3217,7 +3289,7 @@ export function AppShell() {
                   <span className="sidebar-brand-mark">
                     <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
                   </span>
-                  <span>Nova</span>
+                  <span className="sidebar-brand-name">Nova</span>
                   <span className="sidebar-brand-badge">STUDIO</span>
                   <button
                     type="button"
@@ -3226,27 +3298,27 @@ export function AppShell() {
                     aria-label="收起侧边栏"
                     title="收起侧边栏"
                   >
-                    <PanelLeftClose size={18} />
+                    <PanelLeftClose size={16} />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  className="sidebar-new-session"
-                  onClick={() => {
-                    setPendingProjectCwd(null);
-                    setActiveAgent(null);
-                    setSettingsOpen(false);
-                    setTodosOpen(false);
-                    setConversationView("chat");
-                  }}
-                >
-                  <Plus size={16} />
-                  <span>新会话</span>
-                </button>
-                <button type="button" className={`sidebar-todo-button ${todosOpen ? "sidebar-todo-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }}>
-                  <ListTodo size={16} />
-                  <span>待办</span>
-                </button>
+                <nav className="sidebar-nav" aria-label="快捷入口">
+                  <button
+                    type="button"
+                    className="sidebar-nav-row"
+                    onClick={() => openNewSessionComposer()}
+                  >
+                    <Plus size={15} />
+                    <span>新会话</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-nav-row ${todosOpen ? "sidebar-nav-row-active" : ""}`}
+                    onClick={() => { setSettingsOpen(false); setTodosOpen(true); }}
+                  >
+                    <ListTodo size={15} />
+                    <span>待办</span>
+                  </button>
+                </nav>
               </header>
 
               <div className="sidebar-workspace-heading">
@@ -3254,6 +3326,9 @@ export function AppShell() {
                 <span className="sidebar-project-count">{rootsByProject.size}</span>
               </div>
               <div className="agent-tree flex-1 overflow-y-auto">
+                {rootsByProject.size === 0 && (
+                  <p className="sidebar-empty-hint">还没有会话。点击「新会话」开始。</p>
+                )}
                 {Array.from(rootsByProject.entries()).map(([cwd, projectAgents]) => (
                   <section key={cwd} className="project-group">
                     <button
@@ -3269,7 +3344,7 @@ export function AppShell() {
                       }
                     >
                       <span className="project-group-icon">
-                        <FolderOpen size={17} />
+                        <FolderIcon open={!collapsedProjects.has(cwd)} />
                       </span>
                       <span className="project-group-text">
                         <span className="project-group-name">
@@ -3277,46 +3352,55 @@ export function AppShell() {
                         </span>
                         <span className="project-group-path">{cwd}</span>
                       </span>
-                      <span className="project-agent-count">
-                        {projectAgents.length}
+                      <span className="project-group-meta">
+                        <span
+                          className="project-agent-count"
+                          title={`${projectAgents.length} 个会话`}
+                        >
+                          {projectAgents.length}
+                        </span>
+                        <span className="project-group-actions">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="project-action"
+                            title="新建会话"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openNewSessionComposer(cwd);
+                            }}
+                          >
+                            <Plus size={13} />
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="project-action"
+                            title="重命名项目"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setEditingProject({
+                                cwd,
+                                name: projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd,
+                              });
+                            }}
+                          >
+                            <Pencil size={12} />
+                          </span>
+                        </span>
                       </span>
                       <span
-                        role="button"
-                        tabIndex={0}
-                        className="project-action"
-                        title="Add agent"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setPendingProjectCwd(cwd);
-                          setActiveAgent(null);
-                        }}
+                        className={`project-group-caret ${collapsedProjects.has(cwd) ? "project-group-caret-collapsed" : ""}`}
                       >
-                        <Plus size={14} />
-                      </span>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        className="project-action"
-                        title="Edit project"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setEditingProject({
-                            cwd,
-                            name: projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd,
-                          });
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </span>
-                      {collapsedProjects.has(cwd) ? (
-                        <ChevronRight size={13} />
-                      ) : (
                         <ChevronDown size={13} />
-                      )}
+                      </span>
                     </button>
                     {!collapsedProjects.has(cwd) && (
                       <div className="project-agents">
-                        {projectAgents.map((agent) => (
+                        {(expandedProjects.has(cwd)
+                          ? projectAgents
+                          : projectAgents.slice(0, SIDEBAR_SESSION_PREVIEW)
+                        ).map((agent) => (
                           <AgentTreeNode
                             key={agent.id}
                             agent={agent}
@@ -3329,6 +3413,22 @@ export function AppShell() {
                             onHide={setHidingAgent}
                           />
                         ))}
+                        {projectAgents.length > SIDEBAR_SESSION_PREVIEW && (
+                          <button
+                            type="button"
+                            className="project-agents-toggle"
+                            onClick={() =>
+                              setExpandedProjects((current) => {
+                                const next = new Set(current);
+                                if (next.has(cwd)) next.delete(cwd);
+                                else next.add(cwd);
+                                return next;
+                              })
+                            }
+                          >
+                            {expandedProjects.has(cwd) ? "收起" : "展开显示"}
+                          </button>
+                        )}
                       </div>
                     )}
                   </section>
@@ -3341,7 +3441,7 @@ export function AppShell() {
                   onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")}
                   title="在浏览器中打开 Nova Agent GitHub"
                 >
-                  <GithubMark size={16} />
+                  <GithubMark size={15} />
                   <span>GitHub</span>
                 </button>
                 <button
@@ -3349,7 +3449,7 @@ export function AppShell() {
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
                   onClick={() => { setTodosOpen(false); setSettingsOpen(true); }}
                 >
-                  <Settings size={16} />
+                  <Settings size={15} />
                   <span>设置</span>
                 </button>
               </footer>
@@ -3734,6 +3834,7 @@ export function AppShell() {
             ) : (
               /* Messages view */
               <div
+                ref={conversationThreadRef}
                 className="conversation-thread w-full pt-6"
                 style={{ paddingBottom: 48 }}
               >

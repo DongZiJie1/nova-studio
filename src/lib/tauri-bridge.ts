@@ -339,9 +339,13 @@ export type TodoStatus = "pending" | "in_progress" | "completed";
 export type TodoPriority = "low" | "medium" | "high";
 
 export interface TodoItem {
+  topic?: string;
+  parentId?: string;
+  dependsOn?: string[];
   id: string;
   title: string;
   description: string;
+  tags: string[];
   status: TodoStatus;
   priority: TodoPriority;
   projectPath?: string;
@@ -361,14 +365,18 @@ export interface TodoState {
 }
 
 export interface CreateTodoInput {
+  topic?: string;
+  parentId?: string;
+  dependsOn?: string[];
   title: string;
   description: string;
+  tags?: string[];
   priority: TodoPriority;
   projectPath?: string;
   dueAt?: string;
 }
 
-export type UpdateTodoInput = Partial<Pick<TodoItem, "title" | "description" | "status" | "priority" | "projectPath" | "dueAt" | "agentId" | "sessionId">> & { id: string };
+export type UpdateTodoInput = Partial<Pick<TodoItem, "topic" | "parentId" | "dependsOn" | "title" | "description" | "tags" | "status" | "priority" | "projectPath" | "dueAt" | "agentId" | "sessionId">> & { id: string };
 
 export async function listTodos(): Promise<TodoState> {
   return invoke<TodoState>("list_todos");

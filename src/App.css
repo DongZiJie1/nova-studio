@@ -46,6 +46,9 @@
   --stats-tooltip-border: rgba(129, 140, 248, 0.26);
   --stats-tooltip-text: #e8eaff;
   --stats-tooltip-shadow: 0 10px 30px rgba(0, 0, 0, 0.42), 0 0 20px rgba(129, 140, 248, 0.1);
+  --todo-tone-high: #ff7b8c;
+  --todo-tone-medium: #ffc45c;
+  --todo-tone-low: #7eafff;
   --danger-solid: #e5484d;
   --danger-on-solid: #ffffff;
 }
@@ -77,6 +80,9 @@
   --stats-tooltip-border: rgba(79, 125, 243, 0.24);
   --stats-tooltip-text: #263b5d;
   --stats-tooltip-shadow: 0 10px 30px rgba(58, 91, 145, 0.16), 0 0 18px rgba(79, 125, 243, 0.08);
+  --todo-tone-high: #d02e49;
+  --todo-tone-medium: #a66208;
+  --todo-tone-low: #326ac4;
   --danger-solid: #c2414b;
   --danger-on-solid: #ffffff;
 }
@@ -1928,20 +1934,174 @@ body {
   gap: 7px;
 }
 
-/* Todo tool calls reuse the Nova-data card material; only the status colour of
-   the row icon and the action chip differ. */
+/* Todo tool output follows the same compact hierarchy as the file and shell
+   tools, while exposing task-specific state without turning the whole row into
+   a status colour. */
+.todo-tool-detail {
+  padding: 10px;
+}
+
+.todo-tool-heading {
+  display: flex;
+  min-height: 28px;
+  margin-bottom: 8px;
+  align-items: center;
+  gap: 7px;
+}
+
+.todo-tool-action {
+  display: inline-flex;
+  height: 24px;
+  padding: 0 8px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 22%, transparent);
+  border-radius: 7px;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 8%, transparent);
+  font-size: 10.5px;
+  font-weight: 680;
+}
+
 .todo-tool-action-list {
-  border-color: color-mix(in srgb, var(--color-border-glass) 92%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-glass) 84%, transparent);
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--surface-control) 56%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
 }
 
-.todo-tool-item-in_progress > svg {
-  color: var(--color-warning);
+.todo-tool-count {
+  color: var(--color-text-muted);
+  font-size: 10px;
 }
 
-.todo-tool-item-completed > svg {
-  color: var(--color-success);
+.todo-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-tool-item {
+  --todo-tool-tone: var(--color-text-muted);
+  position: relative;
+  display: grid;
+  min-height: 48px;
+  padding: 9px 11px 9px 10px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 62%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-control) 36%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--scene-panel-highlight, rgba(255, 255, 255, 0.08)) 66%, transparent);
+}
+
+.todo-tool-item::before {
+  position: absolute;
+  inset: 9px auto 9px 0;
+  width: 2px;
+  border-radius: 0 999px 999px 0;
+  background: var(--todo-tool-tone);
+  content: "";
+  opacity: 0.72;
+}
+
+.todo-tool-status-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--todo-tool-tone);
+  background: color-mix(in srgb, var(--todo-tool-tone) 9%, transparent);
+}
+
+.todo-tool-item-in_progress {
+  --todo-tool-tone: var(--todo-tone-medium);
+}
+
+.todo-tool-item-completed {
+  --todo-tool-tone: var(--color-success);
+}
+
+.todo-tool-item-completed .todo-tool-title-row strong {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+}
+
+.todo-tool-item-body {
+  min-width: 0;
+}
+
+.todo-tool-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.todo-tool-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: 11.5px;
+  font-weight: 630;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-tool-priority {
+  --todo-tool-priority-tone: var(--color-text-muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--todo-tool-priority-tone) 20%, transparent);
+  border-radius: 999px;
+  color: var(--todo-tool-priority-tone);
+  background: color-mix(in srgb, var(--todo-tool-priority-tone) 8%, transparent);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.todo-tool-priority-high {
+  --todo-tool-priority-tone: var(--todo-tone-high);
+}
+
+.todo-tool-priority-medium {
+  --todo-tool-priority-tone: var(--todo-tone-medium);
+}
+
+.todo-tool-priority-low {
+  --todo-tool-priority-tone: var(--todo-tone-low);
+}
+
+.todo-tool-meta {
+  display: flex;
+  min-width: 0;
+  margin-top: 4px;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+}
+
+.todo-tool-meta > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-tool-status {
+  color: var(--todo-tool-tone);
+  font-weight: 620;
 }
 
 .nova-session-meta {
@@ -4933,11 +5093,20 @@ body {
   min-height: 0;
   overflow: hidden;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
-  transition: grid-template-columns 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: grid-template-columns 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.todo-workspace-measuring-return {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) !important;
+  transition: none !important;
 }
 
 .todo-workspace-focus {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 4fr);
+  /* The strip is a dock with a floor width rather than a squeezed share of the
+     row, so card titles keep a readable measure next to the focus panel. The
+     track keeps the same shape as the collapsed state so the open/close
+     animation still interpolates instead of snapping. */
+  grid-template-columns: minmax(194px, 1fr) minmax(0, 5.2fr);
 }
 
 .todo-eyebrow {
@@ -5087,15 +5256,16 @@ body {
   margin: 0 auto;
   padding: 34px clamp(28px, 4vw, 52px) 56px;
   transform-origin: left center;
-  transition: filter 380ms cubic-bezier(0.22, 1, 0.36, 1), opacity 380ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: filter 340ms cubic-bezier(0.22, 1, 0.36, 1), opacity 280ms ease,
+    transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Keep the card switcher crisp and readable while detail is open. The dock is
+   navigation, not decorative background, so it must never inherit scene blur. */
 .todo-workspace-focus .todo-content-inner {
-  filter: saturate(86%) brightness(0.98);
-  opacity: 0.8;
-  transform: scale(0.97);
-  user-select: none;
+  filter: none;
+  opacity: 1;
+  transform: none;
 }
 
 .todo-workspace-focus .todo-page-header p,
@@ -5105,48 +5275,164 @@ body {
 .todo-workspace-focus .todo-card-meta,
 .todo-workspace-focus .todo-card-arrow,
 .todo-workspace-focus .todo-priority {
-  visibility: hidden;
-  opacity: 0;
+  display: none;
 }
 
+/* The strip keeps its own material instead of being scaled and faded as a
+   whole: translucent thumbnails read better than a washed-out screenshot of
+   the list, and every card stays sharp and clickable. */
 .todo-workspace-focus .todo-content-inner {
-  min-width: 210px;
-  padding-inline: 22px;
+  /* Cap the dock so ultra-wide windows keep a strip, not a second column. */
+  max-width: 236px;
+  margin: 0;
+  min-width: 0;
+  padding: 28px 18px 44px 14px;
+  user-select: none;
+}
+
+.todo-workspace-collapsing .todo-content-inner {
+  filter: blur(0);
+  opacity: 1;
+  transform: scale(1);
+}
+
+.todo-workspace-collapsing .todo-card-selected .todo-card-content,
+.todo-workspace-collapsing .todo-card-selected .todo-check,
+.todo-workspace-collapsing .todo-card-selected .todo-card-arrow {
+  opacity: 0;
+  animation: todo-real-card-handoff 100ms ease 280ms forwards;
+}
+
+@keyframes todo-real-card-handoff {
+  to {
+    opacity: 1;
+  }
+}
+
+.todo-workspace-focus .todo-content {
+  border-right: 1px solid color-mix(in srgb, var(--todo-border) 62%, transparent);
 }
 
 .todo-workspace-focus .todo-page-header {
-  min-width: 170px;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .todo-workspace-focus .todo-page-header h1 {
-  font-size: 20px;
+  gap: 7px;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+
+.todo-workspace-focus .todo-header-count {
+  min-width: 24px;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 10.5px;
 }
 
 .todo-workspace-focus .todo-list {
-  min-width: 166px;
+  min-width: 0;
   margin-top: 24px;
+  gap: 9px;
+  perspective: 1100px;
+  perspective-origin: 118% 50%;
 }
 
 .todo-workspace-focus .todo-card {
-  grid-template-columns: 26px minmax(0, 1fr);
-  min-height: 60px;
-  padding: 14px 12px;
-  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  min-height: 76px;
+  padding: 13px 14px 13px 12px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  gap: 8px;
+  border-radius: 14px;
   cursor: pointer;
-  transition: opacity 170ms ease, border-color 170ms ease, background 170ms ease, transform 170ms ease;
+  transform: rotateY(9deg) translateX(0) scale(0.985);
+  transform-origin: right center;
+  backface-visibility: hidden;
+  box-shadow: 7px 12px 24px rgba(20, 29, 52, 0.09), inset 0 1px 0 var(--todo-highlight);
+  transition: opacity 260ms ease, border-color 220ms ease, background 220ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 280ms ease;
+}
+
+/* Thumbnails that are not on stage sit back a touch, like the windows waiting
+   in the macOS strip. */
+.todo-workspace-focus .todo-card:not(.todo-card-selected) {
+  opacity: 0.88;
+}
+
+.todo-workspace-focus .todo-card:not(.todo-card-selected):hover {
+  opacity: 1;
+}
+
+.todo-workspace-focus .todo-card h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 620;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* The completion control becomes a plain status glyph: nothing inside the
+   strip should look clickable while the focus panel owns the interaction. */
+.todo-workspace-focus .todo-check {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  opacity: 0.7;
+}
+
+.todo-workspace-focus .todo-check-in_progress {
+  color: var(--color-warning);
+  opacity: 1;
+}
+
+.todo-workspace-focus .todo-check-completed {
+  color: var(--color-success);
+  background: transparent;
+  opacity: 1;
 }
 
 .todo-workspace-focus .todo-card:hover {
-  border-color: color-mix(in srgb, var(--color-accent-start) 36%, var(--todo-border));
-  opacity: 1;
-  transform: translateX(3px);
+  border-color: color-mix(in srgb, var(--color-accent-start) 32%, var(--todo-border));
+  transform: rotateY(2deg) translateX(6px) scale(1.028);
+  box-shadow: 12px 18px 34px rgba(20, 29, 52, 0.15), inset 0 1px 0 var(--todo-highlight);
 }
 
 .todo-workspace-focus .todo-card-selected,
 .todo-workspace-focus .todo-card-selected:hover {
-  border-color: color-mix(in srgb, var(--color-accent-start) 52%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent-start) 48%, transparent);
   opacity: 1;
-  transform: translateX(3px);
+  /* The card on stage leans out of the strip toward the panel it belongs to. */
+  transform: rotateY(5deg) translateX(5px) scale(1.012);
+  box-shadow: 13px 20px 38px rgba(20, 29, 52, 0.17), inset 0 1px 0 var(--todo-highlight);
+  animation: todo-card-take-stage 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Handing the stage to another card: the newcomer swings forward while the
+   outgoing card settles back into the strip. */
+@keyframes todo-card-take-stage {
+  from {
+    opacity: 0.9;
+    transform: rotateY(14deg) translateX(-6px) scale(0.955);
+    box-shadow: 4px 8px 16px rgba(20, 29, 52, 0.07), inset 0 1px 0 var(--todo-highlight);
+  }
+
+  to {
+    opacity: 1;
+    transform: rotateY(5deg) translateX(5px) scale(1.012);
+    box-shadow: 13px 20px 38px rgba(20, 29, 52, 0.17), inset 0 1px 0 var(--todo-highlight);
+  }
 }
 
 .todo-workspace-focus .todo-card button,
@@ -5188,7 +5474,7 @@ body {
   color: var(--color-accent-start);
   background: color-mix(in srgb, var(--color-accent-start) 14%, transparent);
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 750;
   letter-spacing: 0;
 }
 
@@ -5295,8 +5581,8 @@ body {
 
 .todo-priority-filter {
   display: flex;
-  padding: 3px;
-  gap: 2px;
+  padding: 4px;
+  gap: 3px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
   background: rgba(20, 26, 38, 0.42);
@@ -5319,18 +5605,47 @@ body {
 }
 
 .todo-priority-filter button {
-  height: 32px;
-  padding: 0 12px;
+  --todo-filter-tone: var(--color-accent-start);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
   white-space: nowrap;
-  border: 0;
-  border-radius: 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--color-text-secondary);
   background: transparent;
   font: inherit;
   font-size: 12px;
   font-weight: 560;
   cursor: pointer;
-  transition: color 160ms ease, background 160ms ease;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.todo-priority-filter .todo-filter-high {
+  --todo-filter-tone: var(--todo-tone-high);
+}
+
+.todo-priority-filter .todo-filter-medium {
+  --todo-filter-tone: var(--todo-tone-medium);
+}
+
+.todo-priority-filter .todo-filter-low {
+  --todo-filter-tone: var(--todo-tone-low);
+}
+
+.todo-priority-filter .todo-filter-high::before,
+.todo-priority-filter .todo-filter-medium::before,
+.todo-priority-filter .todo-filter-low::before {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0;
+  border-radius: 50%;
+  background: var(--todo-filter-tone);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--todo-filter-tone) 13%, transparent);
+  content: "";
 }
 
 .todo-priority-filter button:hover {
@@ -5340,9 +5655,10 @@ body {
 
 .todo-priority-filter .todo-filter-active,
 .todo-priority-filter .todo-filter-active:hover {
-  color: var(--color-accent-start);
-  background: color-mix(in srgb, var(--color-accent-start) 15%, transparent);
-  box-shadow: inset 0 1px 0 var(--todo-highlight);
+  color: var(--todo-filter-tone);
+  border-color: color-mix(in srgb, var(--todo-filter-tone) 18%, transparent);
+  background: color-mix(in srgb, var(--todo-filter-tone) 11%, var(--surface-control));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--todo-filter-tone) 9%, transparent), inset 0 1px 0 var(--todo-highlight);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-priority-filter button:hover {
@@ -5352,9 +5668,127 @@ body {
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-priority-filter .todo-filter-active,
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-priority-filter .todo-filter-active:hover {
-  color: #2c4a86;
-  background: rgba(79, 125, 243, 0.13);
+  color: var(--todo-filter-tone);
+  background: color-mix(in srgb, var(--todo-filter-tone) 13%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+/* ── Tags ─────────────────────────────────────────────────────────────────
+   One hue per tag (hashed from the name, so 论文 is always the same colour).
+   Chips are readable on both the smoked and the pale scene because the tone
+   is mixed into the current surface instead of being a fixed colour. */
+
+.todo-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.todo-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid hsl(var(--todo-tag-hue, 215) 58% 58% / 0.34);
+  border-radius: 999px;
+  background: hsl(var(--todo-tag-hue, 215) 62% 55% / 0.15);
+  color: hsl(var(--todo-tag-hue, 215) 44% 34%);
+  font-size: 10.5px;
+  font-weight: 620;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+:root[data-theme="midnight"] .todo-tag {
+  border-color: hsl(var(--todo-tag-hue, 215) 62% 68% / 0.32);
+  background: hsl(var(--todo-tag-hue, 215) 62% 62% / 0.18);
+  color: hsl(var(--todo-tag-hue, 215) 72% 82%);
+}
+
+.todo-tag-muted {
+  --todo-tag-hue: 215;
+  border-color: color-mix(in srgb, var(--todo-border) 90%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 70%, transparent);
+  color: var(--color-text-muted);
+}
+
+.todo-tag-editable {
+  padding-right: 3px;
+}
+
+.todo-tag-editable button {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  place-items: center;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 140ms ease, background 140ms ease;
+}
+
+.todo-tag-editable button:hover {
+  background: hsl(var(--todo-tag-hue, 215) 60% 50% / 0.24);
+  opacity: 1;
+}
+
+.todo-tag-filter {
+  display: flex;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-tag-chip {
+  display: inline-flex;
+  padding: 4px 11px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid hsl(var(--todo-tag-hue, 215) 55% 60% / 0.3);
+  border-radius: 999px;
+  color: hsl(var(--todo-tag-hue, 215) 40% 38%);
+  background: hsl(var(--todo-tag-hue, 215) 58% 58% / 0.12);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+:root[data-theme="midnight"] .todo-tag-chip {
+  color: hsl(var(--todo-tag-hue, 215) 70% 84%);
+  background: hsl(var(--todo-tag-hue, 215) 60% 60% / 0.16);
+}
+
+.todo-tag-chip small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.68;
+}
+
+.todo-tag-chip:hover {
+  border-color: hsl(var(--todo-tag-hue, 215) 58% 55% / 0.52);
+}
+
+.todo-tag-chip-active,
+.todo-tag-chip-active:hover {
+  border-color: hsl(var(--todo-tag-hue, 215) 60% 50% / 0.6);
+  background: hsl(var(--todo-tag-hue, 215) 62% 55% / 0.26);
+  color: hsl(var(--todo-tag-hue, 215) 52% 30%);
+  box-shadow: 0 1px 3px hsl(var(--todo-tag-hue, 215) 60% 40% / 0.14);
+}
+
+:root[data-theme="midnight"] .todo-tag-chip-active,
+:root[data-theme="midnight"] .todo-tag-chip-active:hover {
+  color: hsl(var(--todo-tag-hue, 215) 78% 90%);
+  background: hsl(var(--todo-tag-hue, 215) 62% 62% / 0.3);
 }
 
 /* ── Task cards ── */
@@ -5367,19 +5801,54 @@ body {
 }
 
 .todo-card {
+  --todo-priority-tone: var(--color-text-muted);
+  --todo-priority-rail: 4px;
+  --todo-priority-wash: 6%;
+  position: relative;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 22px;
   padding: 15px 16px;
   align-items: start;
   gap: 13px;
+  overflow: hidden;
   border: 1px solid var(--todo-border);
   border-radius: 16px;
-  background: linear-gradient(135deg, var(--todo-highlight), transparent 46%), var(--todo-film);
+  background:
+    linear-gradient(105deg, color-mix(in srgb, var(--todo-priority-tone) var(--todo-priority-wash), transparent), transparent 70%),
+    linear-gradient(135deg, var(--todo-highlight), transparent 46%), var(--todo-film);
   box-shadow: 0 12px 30px rgba(20, 29, 52, 0.08), inset 0 1px 0 var(--todo-highlight);
   backdrop-filter: blur(22px) saturate(140%);
   -webkit-backdrop-filter: blur(22px) saturate(140%);
   cursor: pointer;
   transition: border-color 170ms ease, background 170ms ease, transform 170ms ease, box-shadow 170ms ease;
+}
+
+.todo-card::before {
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: var(--todo-priority-rail);
+  border-radius: 0 999px 999px 0;
+  background: var(--todo-priority-tone);
+  box-shadow: none;
+  content: "";
+  opacity: 0.9;
+}
+
+.todo-card-priority-high {
+  --todo-priority-rail: 6px;
+  --todo-priority-wash: 17%;
+  --todo-priority-tone: var(--todo-tone-high);
+}
+
+.todo-card-priority-medium {
+  --todo-priority-wash: 9%;
+  --todo-priority-tone: var(--todo-tone-medium);
+}
+
+.todo-card-priority-low {
+  --todo-priority-rail: 3px;
+  --todo-priority-wash: 4%;
+  --todo-priority-tone: var(--todo-tone-low);
 }
 
 .todo-card:hover {
@@ -5392,6 +5861,7 @@ body {
 .todo-card-selected:hover {
   border-color: color-mix(in srgb, var(--color-accent-start) 44%, transparent);
   background:
+    linear-gradient(105deg, color-mix(in srgb, var(--todo-priority-tone) var(--todo-priority-wash), transparent), transparent 70%),
     linear-gradient(135deg, color-mix(in srgb, var(--color-accent-start) 13%, transparent), transparent 52%),
     var(--todo-film);
   box-shadow: 0 18px 42px rgba(20, 29, 52, 0.16), inset 0 1px 0 var(--todo-highlight);
@@ -5433,6 +5903,7 @@ body {
 
 .todo-card-title-row {
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 9px;
 }
@@ -5442,21 +5913,21 @@ body {
   margin: 1px 0 0;
   overflow: hidden;
   color: var(--text-heading);
-  font-size: 13.5px;
-  font-weight: 640;
+  font-size: 15px;
+  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .todo-card p {
-  display: -webkit-box;
+  display: block;
   margin: 6px 0 0;
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 12.5px;
   line-height: 1.6;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .todo-card-arrow {
@@ -5473,26 +5944,44 @@ body {
 }
 
 .todo-priority {
+  display: inline-flex;
   flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 700;
+  min-height: 28px;
+  padding: 3px 9px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--todo-badge-tone) 13%, var(--color-bg-secondary));
+  color: var(--todo-badge-tone);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.todo-priority svg {
+  flex: 0 0 auto;
 }
 
 .todo-priority-low {
-  color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-text-secondary) 14%, transparent);
+  --todo-badge-tone: var(--todo-tone-low);
+  background: var(--color-bg-secondary);
+  border-color: color-mix(in srgb, var(--todo-badge-tone) 48%, transparent);
 }
 
 .todo-priority-medium {
-  color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  --todo-badge-tone: var(--todo-tone-medium);
+  background: color-mix(in srgb, var(--todo-badge-tone) 22%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--todo-badge-tone) 48%, transparent);
 }
 
 .todo-priority-high {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  --todo-badge-tone: var(--todo-tone-high);
+  color: #fff;
+  background: #d02e49;
+  border-color: #d02e49;
+  box-shadow: 0 3px 9px rgba(208, 46, 73, 0.22);
 }
 
 .todo-card-meta {
@@ -5516,6 +6005,85 @@ body {
 
 .todo-card-meta .todo-running {
   color: var(--color-warning);
+}
+
+.todo-card-meta .todo-tag {
+  padding: 1px 7px;
+  font-size: 10px;
+}
+
+/* ── Tag editor (create dialog + detail panel) ── */
+
+.todo-tag-field {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.todo-tag-editor {
+  display: flex;
+  min-height: 38px;
+  padding: 5px 9px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  border-radius: 10px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+/* The detail panel follows the app theme, like the other property controls. */
+.todo-detail-fields .todo-tag-editor {
+  border: 1px solid color-mix(in srgb, var(--todo-border) 76%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 40%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 70%, transparent);
+}
+
+.todo-detail-fields .todo-tag-editor:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent-start) 52%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 12%, transparent);
+}
+
+/* Portal dialogs inherit the active theme from the document root. */
+.todo-modal-fields .todo-tag-editor {
+  border: 1px solid var(--input-border);
+  background: var(--surface-control);
+  box-shadow: none;
+}
+
+.todo-modal-fields .todo-tag-editor:focus-within {
+  border-color: var(--color-accent-start);
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 16%, transparent);
+}
+
+.todo-modal-fields .todo-tag-editor input {
+  color: var(--color-text-primary);
+}
+
+.todo-modal-fields .todo-tag-editor input,
+.todo-detail-fields .todo-tag-editor input {
+  width: auto;
+  min-width: 110px;
+  height: auto;
+  flex: 1 1 110px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.todo-tag-editor input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.todo-property-field-wide {
+  grid-column: 1 / -1;
 }
 
 /* ── Empty and loading states ── */
@@ -5597,6 +6165,7 @@ body {
 /* ── Detail panel ── */
 
 .todo-detail {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -5613,31 +6182,146 @@ body {
   -webkit-backdrop-filter: blur(28px) saturate(145%);
   opacity: 0;
   pointer-events: none;
-  transform: translateX(24px);
-  transition: opacity 340ms cubic-bezier(0.22, 1, 0.36, 1), transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateX(34px) scale(0.988);
+  transform-origin: right center;
+  will-change: opacity, transform;
+  transition: opacity 150ms ease-in, transform 170ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 .todo-detail-open {
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(0);
+  transform: translateX(0) scale(1);
+  transition: opacity 220ms ease-out, transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.todo-detail > header {
-  display: flex;
-  min-height: 72px;
-  padding: 18px 22px;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--todo-border);
+.todo-detail-closing {
+  visibility: hidden;
+  pointer-events: none;
 }
 
-.todo-detail > header h2 {
-  margin: 4px 0 0;
+/* Fixed glass proxy used for the reverse shared-element transition. Keeping
+   width/height constant and animating an FLIP transform avoids layout work on
+   every frame while still landing exactly on the expanded card rectangle. */
+.todo-return-overlay {
+  --todo-return-panel: var(--scene-panel-film, rgba(18, 24, 35, 0.88));
+  --todo-return-film: var(--scene-local-film, rgba(255, 255, 255, 0.08));
+  --todo-return-highlight: var(--scene-panel-highlight, rgba(255, 255, 255, 0.1));
+  --todo-return-border: var(--scene-local-border, rgba(255, 255, 255, 0.14));
+  position: fixed;
+  z-index: 120;
+  top: var(--todo-return-top);
+  left: var(--todo-return-left);
+  width: var(--todo-return-width);
+  height: var(--todo-return-height);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--todo-return-border) 84%, transparent);
+  border-radius: 20px;
+  background:
+    radial-gradient(120% 58% at 8% 0%, color-mix(in srgb, var(--color-accent-start) 8%, transparent), transparent 62%),
+    color-mix(in srgb, var(--todo-return-panel) 94%, var(--color-bg-primary));
+  box-shadow: 0 24px 70px rgba(6, 10, 20, 0.24), inset 0 1px 0 var(--todo-return-highlight);
+  backdrop-filter: blur(28px) saturate(145%);
+  -webkit-backdrop-filter: blur(28px) saturate(145%);
+  pointer-events: none;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: top left;
+  will-change: transform, border-radius, box-shadow, background-color;
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1) 40ms,
+    border-radius 300ms cubic-bezier(0.22, 1, 0.36, 1) 40ms,
+    box-shadow 300ms cubic-bezier(0.22, 1, 0.36, 1) 40ms,
+    background-color 300ms ease 40ms;
+}
+
+.todo-return-overlay-active {
+  border-radius: 16px;
+  background-color: var(--todo-return-film);
+  box-shadow: 0 12px 30px rgba(20, 29, 52, 0.08), inset 0 1px 0 var(--todo-return-highlight);
+  transform: translate3d(var(--todo-return-x), var(--todo-return-y), 0)
+    scale(var(--todo-return-scale-x), var(--todo-return-scale-y));
+}
+
+.todo-return-detail-content {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 70px;
+  opacity: 1;
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+
+.todo-return-overlay-active .todo-return-detail-content {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.todo-return-detail-footer {
+  border-top: 1px solid var(--todo-return-border);
+}
+
+.todo-return-detail-body {
+  padding: clamp(24px, 3vw, 44px);
+  overflow: hidden;
+}
+
+.todo-return-detail-body > span {
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+}
+
+.todo-return-detail-body h1 {
+  margin: 14px 0 0;
   color: var(--text-heading);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: clamp(25px, 3vw, 38px);
+  line-height: 1.16;
+}
+
+.todo-return-detail-body p {
+  max-width: 720px;
+  margin: 14px 0 28px;
+  color: var(--color-text-secondary);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+
+.todo-return-detail-body i {
+  display: block;
+  height: 92px;
+  margin-top: 18px;
+  border: 1px solid var(--todo-return-border);
+  border-radius: 16px;
+  background: var(--todo-return-film);
+}
+
+.todo-return-card-content {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: grid;
+  width: calc(100% / var(--todo-return-scale-x));
+  padding: 15px 16px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  color: var(--text-heading);
+  opacity: 0;
+  transform: translateY(-50%) scale(calc(1 / var(--todo-return-scale-x)), calc(1 / var(--todo-return-scale-y)));
+  transform-origin: left center;
+  animation: todo-overlay-card-handoff 90ms ease 275ms forwards;
+}
+
+.todo-return-card-content strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 640;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes todo-overlay-card-handoff {
+  to {
+    opacity: 1;
+  }
 }
 
 .todo-detail-heading {
@@ -5703,22 +6387,81 @@ body {
   background: var(--surface-control);
 }
 
+.todo-detail-close {
+  position: absolute;
+  z-index: 3;
+  top: 15px;
+  right: 16px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--todo-panel) 62%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.todo-detail-close:hover {
+  border-color: color-mix(in srgb, var(--todo-border) 72%, transparent);
+}
+
 .todo-detail-fields {
   display: grid;
   min-height: 0;
-  padding: clamp(24px, 3.4vw, 48px);
+  padding: clamp(30px, 3cqw, 44px);
+  padding-right: clamp(48px, 4cqw, 62px);
   overflow-y: auto;
   align-content: start;
   gap: 30px;
-  animation: todo-focus-content-in 190ms 80ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: todo-focus-content-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .todo-detail-hero {
   max-width: 760px;
 }
 
+.todo-detail-hero-meta {
+  display: flex;
+  margin-bottom: 13px;
+  align-items: center;
+  gap: 12px;
+}
+
 .todo-detail-hero .todo-detail-status {
-  margin: 0 0 13px;
+  margin: 0;
+}
+
+.todo-detail-priority-label {
+  --todo-detail-label-tone: var(--color-accent-start);
+  display: inline-flex;
+  min-height: 23px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--todo-detail-label-tone) 22%, transparent);
+  border-radius: 999px;
+  color: var(--todo-detail-label-tone);
+  background: color-mix(in srgb, var(--todo-detail-label-tone) 10%, transparent);
+  font-size: 10.5px;
+  font-weight: 680;
+}
+
+.todo-detail-priority-label-high {
+  --todo-detail-label-tone: var(--todo-tone-high);
+}
+
+.todo-detail-priority-label-medium {
+  --todo-detail-label-tone: var(--todo-tone-medium);
+}
+
+.todo-detail-priority-label-low {
+  --todo-detail-label-tone: var(--todo-tone-low);
+}
+
+.todo-detail-priority-label::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+  content: "";
 }
 
 .todo-detail-hero h1 {
@@ -5728,19 +6471,6 @@ body {
   font-weight: 730;
   letter-spacing: -0.035em;
   line-height: 1.16;
-}
-
-.todo-detail-hero p {
-  display: -webkit-box;
-  max-width: 720px;
-  margin: 14px 0 0;
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 13.5px;
-  line-height: 1.75;
-  white-space: pre-wrap;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
 }
 
 .todo-detail-workspace-grid {
@@ -5793,6 +6523,163 @@ body {
   font-weight: 500;
 }
 
+.todo-description-field {
+  display: grid;
+  min-height: 220px;
+  gap: 8px;
+}
+
+.todo-description-heading {
+  display: flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.todo-description-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.todo-description-heading small {
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.todo-description-heading button {
+  display: inline-flex;
+  height: 26px;
+  padding: 0 8px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 76%, transparent);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-control) 42%, transparent);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.todo-description-heading button:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 28%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 8%, transparent);
+}
+
+.todo-description-preview {
+  min-height: 190px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 58%, transparent);
+  border-radius: 13px;
+  outline: none;
+  color: var(--color-text-secondary);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--todo-highlight) 64%, transparent), transparent 42%),
+    color-mix(in srgb, var(--todo-film) 38%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 74%, transparent);
+  cursor: text;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.todo-description-preview:hover,
+.todo-description-preview:focus-visible {
+  border-color: color-mix(in srgb, var(--color-accent-start) 26%, var(--todo-border));
+  background: color-mix(in srgb, var(--todo-film) 58%, transparent);
+}
+
+.todo-description-preview .md-body {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.72;
+}
+
+.todo-description-preview .md-body > :first-child {
+  margin-top: 0;
+}
+
+.todo-description-preview .md-body > :last-child {
+  margin-bottom: 0;
+}
+
+.todo-description-preview .md-body h1,
+.todo-description-preview .md-body h2,
+.todo-description-preview .md-body h3,
+.todo-description-preview .md-body h4 {
+  color: var(--text-heading);
+  letter-spacing: -0.015em;
+}
+
+.todo-description-preview .md-body h1 {
+  font-size: 20px;
+}
+
+.todo-description-preview .md-body h2 {
+  font-size: 16px;
+}
+
+.todo-description-preview .md-body h3,
+.todo-description-preview .md-body h4 {
+  font-size: 13.5px;
+}
+
+.todo-description-preview-empty {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  cursor: pointer;
+}
+
+.todo-description-preview-empty > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.todo-description-editor {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 30%, var(--todo-border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-control) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 8%, transparent);
+}
+
+.todo-detail-fields .todo-description-editor textarea {
+  min-height: 210px;
+  padding: 16px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  resize: vertical;
+  line-height: 1.7;
+}
+
+.todo-detail-fields .todo-description-editor textarea:focus {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.todo-description-editor > span {
+  display: block;
+  padding: 7px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--todo-border) 58%, transparent);
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  text-align: right;
+}
+
 .todo-detail-fields input,
 .todo-detail-fields textarea,
 .todo-detail-fields select,
@@ -5832,7 +6719,138 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 12%, transparent);
 }
 
-.todo-detail-grid,
+.todo-detail-properties {
+  padding: 18px 20px;
+  gap: 14px;
+}
+
+/* Four properties live on a single row so the focus panel keeps its vertical
+   space for the task content. Auto-fit lets them wrap gracefully instead of
+   squeezing the date and project controls on narrower windows. */
+.todo-detail-properties-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 12px 14px;
+}
+
+.todo-property-field {
+  min-width: 0;
+}
+
+.todo-property-control {
+  --todo-property-tone: var(--color-text-muted);
+  position: relative;
+  display: flex;
+  height: 40px;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 76%, transparent);
+  border-radius: 11px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--todo-highlight) 52%, transparent), transparent 55%),
+    color-mix(in srgb, var(--surface-control) 40%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 70%, transparent);
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.todo-property-control:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 24%, var(--todo-border));
+  background: color-mix(in srgb, var(--surface-control) 58%, transparent);
+}
+
+.todo-property-control:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent-start) 54%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 68%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 10%, transparent),
+    inset 0 1px 0 var(--todo-highlight);
+}
+
+.todo-property-leading-icon,
+.todo-property-chevron {
+  position: absolute;
+  z-index: 1;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.todo-property-leading-icon {
+  left: 11px;
+  color: var(--todo-property-tone);
+}
+
+.todo-property-chevron {
+  right: 10px;
+  color: var(--color-text-muted);
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.todo-property-control:focus-within .todo-property-chevron {
+  color: var(--color-accent-start);
+  transform: rotate(180deg);
+}
+
+.todo-detail-fields .todo-property-control select,
+.todo-detail-fields .todo-property-control input {
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 32px 0 34px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  color: var(--color-text-primary);
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 12px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.todo-detail-fields .todo-property-control select:focus,
+.todo-detail-fields .todo-property-control input:focus {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.todo-detail-fields .todo-property-date input {
+  padding-right: 11px;
+}
+
+.todo-property-date input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.todo-property-status-in_progress,
+.todo-property-priority-medium {
+  --todo-property-tone: var(--todo-tone-medium);
+}
+
+.todo-property-status-completed {
+  --todo-property-tone: var(--color-success);
+}
+
+.todo-property-priority-high {
+  --todo-property-tone: var(--todo-tone-high);
+}
+
+.todo-property-priority-low {
+  --todo-property-tone: var(--todo-tone-low);
+}
+
 .todo-modal-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5944,10 +6962,43 @@ body {
   background: color-mix(in srgb, var(--color-bg-primary) 24%, transparent);
 }
 
+.todo-detail-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.todo-nova-button {
+  display: inline-flex;
+  height: 38px;
+  padding: 0 13px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 30%, transparent);
+  border-radius: 10px;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, opacity 150ms ease;
+}
+
+.todo-nova-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-accent-start) 44%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 16%, transparent);
+}
+
+.todo-nova-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 @keyframes todo-focus-content-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -6015,20 +7066,19 @@ body {
   padding: 24px;
   align-items: center;
   justify-content: center;
-  background: rgba(4, 7, 14, 0.38);
-  backdrop-filter: blur(22px) saturate(84%) brightness(0.76);
-  -webkit-backdrop-filter: blur(22px) saturate(84%) brightness(0.76);
+  background: color-mix(in srgb, var(--color-bg-primary) 38%, transparent);
+  backdrop-filter: blur(22px) saturate(84%) brightness(0.92);
+  -webkit-backdrop-filter: blur(22px) saturate(84%) brightness(0.92);
   animation: personalization-modal-in 160ms ease-out both;
 }
 
 .todo-modal {
   width: min(476px, calc(100vw - 40px));
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--color-border-glass);
   border-radius: 22px;
-  /* Modals keep the app's always-dark glass material. */
-  background: rgba(18, 21, 33, 0.88);
-  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.48), 0 8px 30px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  background: var(--sidebar-solid-bg);
+  box-shadow: var(--input-shadow);
   backdrop-filter: blur(32px) saturate(130%);
   -webkit-backdrop-filter: blur(32px) saturate(130%);
   animation: personalization-modal-card-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -6040,12 +7090,12 @@ body {
   padding: 19px 20px 17px;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid var(--color-border-glass);
 }
 
 .todo-modal header h2 {
   margin: 0;
-  color: #f5f6fa;
+  color: var(--text-heading);
   font-size: 15px;
   font-weight: 680;
   letter-spacing: -0.01em;
@@ -6053,7 +7103,7 @@ body {
 
 .todo-modal header p {
   margin: 4px 0 0;
-  color: #7e879b;
+  color: var(--color-text-secondary);
   font-size: 11.5px;
 }
 
@@ -6061,21 +7111,21 @@ body {
   display: grid;
   width: 36px;
   height: 36px;
-  border: 1px solid rgba(119, 142, 255, 0.2);
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 24%, transparent);
   border-radius: 11px;
   place-items: center;
-  color: #aab8ff;
-  background: linear-gradient(145deg, rgba(98, 119, 230, 0.2), rgba(72, 87, 175, 0.1));
+  color: var(--accent-soft);
+  background: var(--surface-control-hover);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .todo-modal header .todo-icon-button {
-  color: #747d92;
+  color: var(--color-text-muted);
 }
 
 .todo-modal header .todo-icon-button:hover {
-  color: #eef1f8;
-  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-primary);
+  background: var(--color-border-glass);
 }
 
 .todo-modal-fields {
@@ -6085,7 +7135,7 @@ body {
 }
 
 .todo-modal-fields label {
-  color: #a7aebd;
+  color: var(--color-text-secondary);
 }
 
 .todo-modal-fields label > span {
@@ -6095,7 +7145,7 @@ body {
 }
 
 .todo-modal-fields label small {
-  color: #626b7d;
+  color: var(--color-text-muted);
   font-size: 10px;
   font-weight: 500;
 }
@@ -6103,10 +7153,10 @@ body {
 .todo-modal-fields input,
 .todo-modal-fields textarea,
 .todo-modal-fields select {
-  border-color: rgba(255, 255, 255, 0.09);
-  color: #eef0f6;
-  background: rgba(6, 9, 17, 0.46);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.14);
+  border-color: var(--input-border);
+  color: var(--color-text-primary);
+  background: var(--surface-control);
+  box-shadow: none;
 }
 
 .todo-modal-fields input,
@@ -6127,15 +7177,15 @@ body {
 
 .todo-modal-fields input::placeholder,
 .todo-modal-fields textarea::placeholder {
-  color: #626b80;
+  color: var(--text-placeholder);
 }
 
 .todo-modal-fields input:focus,
 .todo-modal-fields textarea:focus,
 .todo-modal-fields select:focus {
-  border-color: rgba(112, 137, 255, 0.56);
-  background: rgba(5, 8, 16, 0.62);
-  box-shadow: 0 0 0 3px rgba(91, 116, 235, 0.1);
+  border-color: var(--color-accent-start);
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 16%, transparent);
 }
 
 .todo-modal footer {
@@ -6145,7 +7195,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid var(--color-border-glass);
 }
 
 .todo-secondary-button {
@@ -6153,7 +7203,7 @@ body {
   padding: 0 13px;
   border: 0;
   border-radius: 10px;
-  color: #a7aebd;
+  color: var(--color-text-secondary);
   background: transparent;
   font: inherit;
   font-size: 12px;
@@ -6162,8 +7212,8 @@ body {
 }
 
 .todo-secondary-button:hover:not(:disabled) {
-  color: #eef1f8;
-  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-primary);
+  background: var(--color-border-glass);
 }
 
 .todo-secondary-button:disabled {
@@ -6202,7 +7252,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .todo-workspace,
   .todo-content-inner,
-  .todo-detail {
+  .todo-detail,
+  .todo-return-overlay,
+  .todo-return-detail-content,
+  .todo-workspace-focus .todo-card {
     transition-duration: 1ms !important;
   }
 
@@ -11946,3 +12999,647 @@ body {
    兜底已经不需要了：宽度只变一次，那些面板也就只重新栅格化一次。
    如果以后要把 width 过渡加回来，必须同时恢复这段兜底，否则每帧重新模糊的老问题
    会立刻回来（BUGS.md #2）。 */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Sidebar — consolidated visual pass
+
+   一次重写侧边栏的整套排版，取代此前分散在文件各处的侧边栏规则（旧的
+   .sidebar-new-session / .sidebar-todo-button / .project-group-title 卡片式外观
+   等）。全部使用主题令牌，因此在 arctic-dawn 与 midnight 下表现一致。
+
+   排版原则（对齐 Codex / VS Code 一类桌面应用的密度）：
+     · 入口行是扁平的 icon + 文字行，不用填充胶囊按钮——按钮越重，越像临时堆出来的
+     · 分组靠留白和字号区分，不靠边框和徽章
+     · 会话行与项目名左对齐，并用一条引导线表明归属
+     · 所有可点区域高度一致（32px），圆角一致（8px）
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Header ────────────────────────────────────────────────────────────── */
+
+.studio-sidebar .sidebar-header {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px 8px 10px;
+  border-bottom: 0;
+}
+
+.studio-sidebar .sidebar-brand {
+  gap: 8px;
+  padding: 0 2px;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.studio-sidebar .sidebar-brand-name {
+  min-width: 0;
+}
+
+.studio-sidebar .sidebar-brand-mark img {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+}
+
+.studio-sidebar .sidebar-brand-badge {
+  padding: 1px 5px;
+  border: 1px solid var(--color-border-glass);
+  border-radius: 5px;
+  color: var(--color-text-secondary);
+  background: var(--surface-control);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+}
+
+.studio-sidebar .sidebar-collapse-button {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+/* ─── Flat entry rows ───────────────────────────────────────────────────── */
+
+.studio-sidebar .sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.studio-sidebar .sidebar-nav-row,
+.studio-sidebar .sidebar-settings-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  transition: color 130ms ease, background 130ms ease;
+}
+
+.studio-sidebar .sidebar-nav-row svg,
+.studio-sidebar .sidebar-settings-button svg {
+  flex: 0 0 auto;
+}
+
+.studio-sidebar .sidebar-nav-row:hover,
+.studio-sidebar .sidebar-settings-button:hover {
+  color: var(--text-heading);
+  background: var(--surface-control-hover);
+}
+
+.studio-sidebar .sidebar-nav-row-active,
+.studio-sidebar .sidebar-settings-button-active {
+  color: var(--text-heading);
+  background: var(--surface-control);
+}
+
+/* ─── Section label ─────────────────────────────────────────────────────── */
+
+.studio-sidebar .sidebar-workspace-heading {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  /* right padding clears the tree's 6px scrollbar so the section count lines up
+     with the project row's caret column */
+  padding: 14px 16px 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.studio-sidebar .sidebar-project-count {
+  min-width: 0;
+  height: auto;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.studio-sidebar .sidebar-empty-hint {
+  margin: 0;
+  padding: 6px 16px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ─── Project tree ──────────────────────────────────────────────────────── */
+
+.studio-sidebar .agent-tree {
+  padding: 0 8px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-muted) 34%, transparent) transparent;
+}
+
+.studio-sidebar .agent-tree::-webkit-scrollbar {
+  width: 6px;
+}
+
+.studio-sidebar .agent-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.studio-sidebar .agent-tree::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-text-muted) 34%, transparent);
+}
+
+.studio-sidebar .agent-tree::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+}
+
+.studio-sidebar .project-group + .project-group {
+  margin-top: 6px;
+}
+
+.studio-sidebar .project-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-heading);
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 130ms ease;
+}
+
+.studio-sidebar .project-group-title:hover {
+  border: 0;
+  background: var(--surface-control-hover);
+}
+
+.studio-sidebar .project-group-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.studio-sidebar .project-group-title:hover .project-group-icon {
+  color: var(--color-text-secondary);
+}
+
+.studio-sidebar .project-group-text {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.studio-sidebar .project-group-name {
+  display: block;
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-sidebar .project-group-path {
+  display: none;
+}
+
+/* The count is context, the +/rename controls are actions. They share one slot
+   and cross-fade, so hovering never reflows the project name. */
+.studio-sidebar .project-group-meta {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 20px;
+}
+
+.studio-sidebar .project-group-actions {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.studio-sidebar .project-group-title:hover .project-group-actions,
+.studio-sidebar .project-group-title:focus-within .project-group-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.studio-sidebar .project-agent-count {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 120ms ease;
+}
+
+.studio-sidebar .project-group-title:hover .project-agent-count,
+.studio-sidebar .project-group-title:focus-within .project-agent-count {
+  opacity: 0;
+}
+
+.studio-sidebar .project-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: transparent;
+  opacity: 1;
+}
+
+.studio-sidebar .project-action:hover {
+  color: var(--text-heading);
+  background: var(--surface-control);
+}
+
+.studio-sidebar .project-group-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-muted);
+  transition: transform 150ms ease;
+}
+
+.studio-sidebar .project-group-caret-collapsed {
+  transform: rotate(-90deg);
+}
+
+/* The rail hangs off the folder icon and ties sessions to their project. */
+.studio-sidebar .project-agents {
+  position: relative;
+  margin: 1px 0 0;
+  padding: 0;
+}
+
+.studio-sidebar .project-agents::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 8px;
+  left: 16px;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-text-muted) 30%, transparent);
+  pointer-events: none;
+}
+
+.studio-sidebar .project-agents > .agent-tree-node::before,
+.studio-sidebar .project-agents > .agent-tree-node::after {
+  display: none;
+}
+
+.studio-sidebar .agent-tree-node + .agent-tree-node {
+  margin-top: 1px;
+}
+
+/* ─── Session rows ──────────────────────────────────────────────────────── */
+
+.studio-sidebar .agent-card,
+.studio-sidebar .agent-card-child {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px 0 32px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+/* A row highlight that starts left of the group rail reads as a misaligned box,
+   so project-level rows begin just right of the line. Text still lands on the
+   same 40px rail as the project name and the footer. */
+.studio-sidebar .project-agents > .agent-tree-node > .agent-card {
+  width: calc(100% - 20px);
+  margin-left: 20px;
+  padding-left: 12px;
+}
+
+.studio-sidebar .agent-card:hover {
+  border: 0;
+  background: var(--surface-control-hover);
+}
+
+.studio-sidebar .agent-card-active,
+.studio-sidebar .agent-card-active:hover {
+  border: 0;
+  background: color-mix(in srgb, var(--color-accent-start) 13%, transparent);
+}
+
+.studio-sidebar .agent-card-active::before {
+  display: none;
+}
+
+.studio-sidebar .agent-text {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  gap: 0;
+}
+
+.studio-sidebar .agent-name {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  text-shadow: none;
+  white-space: nowrap;
+}
+
+.studio-sidebar .agent-card:hover .agent-name {
+  color: var(--text-heading);
+}
+
+.studio-sidebar .agent-card-active .agent-name {
+  color: var(--text-heading);
+  font-weight: 550;
+  text-shadow: none;
+}
+
+.studio-sidebar .agent-sub {
+  display: none;
+}
+
+/* Status node sitting on the rail. Only running/failed sessions get one, so the
+   marker stays a signal instead of turning into a bullet on every row. */
+.studio-sidebar .agent-status-dot {
+  position: absolute;
+  top: 50%;
+  left: 12.5px;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+}
+
+.studio-sidebar .agent-status-dot[data-status="running"] {
+  background: var(--color-accent-start);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-start) 22%, transparent);
+  animation: sidebar-status-pulse 1.6s ease-in-out infinite;
+}
+
+.studio-sidebar .agent-status-dot[data-status="error"] {
+  background: var(--color-error);
+}
+
+/* Nested rows have their own rail: line the dot up with it, not with the text. */
+.studio-sidebar .agent-children .agent-status-dot {
+  left: -10.5px;
+}
+
+@keyframes sidebar-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.studio-sidebar .agent-worktree-badge {
+  display: inline-flex;
+  margin-top: 1px;
+  border-color: color-mix(in srgb, var(--color-accent-start) 30%, transparent);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+}
+
+.studio-sidebar .agent-action {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: transparent;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.studio-sidebar .agent-card:hover .agent-action,
+.studio-sidebar .agent-card-active .agent-action,
+.studio-sidebar .agent-action:focus-visible {
+  opacity: 1;
+}
+
+.studio-sidebar .agent-action:hover {
+  color: var(--text-heading);
+  background: var(--surface-control);
+}
+
+.studio-sidebar .agent-expand {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+}
+
+.studio-sidebar .agent-expand:hover {
+  color: var(--text-heading);
+  background: var(--surface-control);
+}
+
+.studio-sidebar .agent-children {
+  position: relative;
+  margin: 1px 0 2px 26px;
+  padding: 1px 0 0 6px;
+  border-left: 1px solid var(--color-border-glass);
+}
+
+.studio-sidebar .agent-children > .agent-tree-child::before,
+.studio-sidebar .agent-children > .agent-tree-child::after {
+  display: none;
+}
+
+.studio-sidebar .agent-children .agent-card {
+  padding-left: 12px;
+}
+
+/* ─── Show more / show less ─────────────────────────────────────────────── */
+
+.studio-sidebar .project-agents-toggle {
+  display: block;
+  width: calc(100% - 20px);
+  height: 26px;
+  margin-left: 20px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-sidebar .project-agents-toggle:hover {
+  color: var(--text-heading);
+  background: var(--surface-control-hover);
+}
+
+/* ─── Footer ────────────────────────────────────────────────────────────── */
+
+.studio-sidebar .sidebar-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 8px 10px;
+  border-top: 1px solid var(--color-border-glass);
+}
+
+/* ─── Settings panel: same rhythm as the session list ───────────────────── */
+
+.studio-sidebar .settings-sidebar-header {
+  padding: 13px 8px 12px;
+  border-bottom: 0;
+}
+
+.studio-sidebar .settings-sidebar-header > .sidebar-collapse-button {
+  top: 15px;
+  right: 8px;
+}
+
+.studio-sidebar .settings-back-button {
+  height: 28px;
+  margin: 0 0 12px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.studio-sidebar .settings-sidebar-header h1 {
+  margin: 0 8px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.studio-sidebar .settings-sidebar-nav {
+  gap: 1px;
+  padding: 4px 8px;
+}
+
+.studio-sidebar .settings-category-button {
+  gap: 10px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 550;
+  transition: color 130ms ease, background 130ms ease;
+}
+
+.studio-sidebar .settings-category-button:hover {
+  background: var(--surface-control-hover);
+}
+
+.studio-sidebar .settings-category-button-active,
+.studio-sidebar .settings-category-button-active:hover {
+  color: color-mix(in srgb, var(--color-accent-start) 88%, var(--text-heading));
+  background: color-mix(in srgb, var(--color-accent-start) 13%, transparent);
+}
+
+/* Tag suggestions share the active theme instead of the native datalist popup. */
+.todo-tag-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  background: var(--color-bg-secondary);
+  box-shadow: var(--input-shadow);
+}
+
+.todo-tag-suggestions-heading {
+  padding: 5px 8px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.todo-tag-suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.todo-tag-suggestion[aria-selected="true"] {
+  background: var(--surface-control-hover);
+  color: var(--color-accent-start);
+}
+
+.todo-modal-fields .todo-tag-editor input,
+.todo-modal-fields .todo-tag-editor input:focus,
+.todo-detail-fields .todo-tag-editor input,
+.todo-detail-fields .todo-tag-editor input:focus {
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+}
