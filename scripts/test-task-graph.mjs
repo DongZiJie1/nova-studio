@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { blockersOf, layoutTopic, taskState, topicOf } from "../src/components/todos/task-graph.ts";
+import { layoutTopic, taskState, topicOf } from "../src/components/todos/task-graph.ts";
 
 function task(id, overrides = {}) {
   return {
@@ -18,12 +18,41 @@ function task(id, overrides = {}) {
   };
 }
 
-test("legacy tasks keep their first label as topic and never gain invented arrows", () => {
-  const items = Array.from({ length: 21 }, (_, i) => task(String(i), { order: i }));
-  const graph = layoutTopic(items, new Set());
-  assert.equal(topicOf(items[0]), "实验");
+test("a topic falls back to the first tag and then to 未分类", () => {
+  assert.equal(topicOf(task("a", { topic: "论文" })), "论文");
+  assert.equal(topicOf(task("b")), "实验");
+  assert.equal(topicOf(task("c", { tags: [] })), "未分类");
+});
+
+test("state is the stored status", () => {
+  assert.equal(taskState(task("a")), "ready");
+  assert.equal(taskState(task("b", { status: "in_progress" })), "in_progress");
+  assert.equal(taskState(task("c", { status: "completed" })), "completed");
+});
+
+test("cards wrap two per row in list order", () => {
+  const items = [
+    task("five", { order: 5 }),
+    task("six", { order: 6 }),
+    task("seven", { order: 7 }),
+    task("eight", { order: 8 }),
+    task("nine", { order: 9 }),
+  ];
+  const graph = layoutTopic(items);
+  assert.deepEqual(
+    graph.nodes.map((node) => node.todo.id),
+    ["five", "six", "seven", "eight", "nine"],
+  );
+  assert.equal(graph.nodes[0].y, graph.nodes[1].y);
+  assert.ok(graph.nodes[2].y > graph.nodes[0].y);
+  assert.ok(graph.nodes[4].y > graph.nodes[2].y);
+  assert.ok(graph.nodes[0].x < graph.nodes[1].x);
+});
+
+test("layout keeps every card inside the canvas and width never grows with task count", () => {
+  const many = Array.from({ length: 21 }, (_, index) => task(String(index), { order: index }));
+  const graph = layoutTopic(many);
   assert.equal(graph.nodes.length, 21);
-  assert.equal(graph.edges.length, 0);
   assert.equal(graph.width, 524);
   for (const node of graph.nodes) {
     assert.ok(node.x >= 0 && node.x + 236 <= graph.width);
@@ -31,57 +60,8 @@ test("legacy tasks keep their first label as topic and never gain invented arrow
   }
 });
 
-test("parallel nodes share a layer and their join follows both", () => {
-  const items = [
-    task("a"),
-    task("b", { dependsOn: ["a"] }),
-    task("c", { dependsOn: ["a"] }),
-    task("d", { dependsOn: ["b", "c"] }),
-  ];
-  const { nodes, edges } = layoutTopic(items, new Set());
-  const node = (id) => nodes.find((item) => item.todo.id === id);
-  assert.equal(edges.length, 4);
-  assert.equal(node("b").y, node("c").y);
-  assert.ok(node("d").y > node("b").y + node("b").height);
-  assert.notEqual(node("b").x, node("c").x);
-});
-
-test("expanded descendants remain inside a root and move following nodes down", () => {
-  const items = [task("a"), task("b", { parentId: "a" }), task("c", { dependsOn: ["a"] })];
-  const closed = layoutTopic(items, new Set());
-  const open = layoutTopic(items, new Set(["a"]));
-  assert.equal(open.nodes.length, 2);
-  assert.equal(open.nodes[0].children[0].id, "b");
-  assert.equal(open.nodes[1].y - closed.nodes[1].y, 32);
-});
-
-test("blockers include ancestor prerequisites and unlock after completion", () => {
-  const items = [task("prep"), task("parent", { dependsOn: ["prep"] }), task("child", { parentId: "parent" })];
-  assert.deepEqual(
-    blockersOf(items[2], items).map((item) => item.id),
-    ["prep"],
-  );
-  assert.equal(taskState(items[2], items), "blocked");
-  items[0].status = "completed";
-  assert.equal(taskState(items[2], items), "ready");
-  assert.deepEqual(
-    blockersOf(items[1], items, true).map((item) => item.id),
-    ["child"],
-  );
-});
-
-test("missing prerequisites fail closed, and damaged cycles do not crash rendering", () => {
-  const items = [task("a", { dependsOn: ["b"] }), task("b", { dependsOn: ["a"] })];
-  assert.equal(layoutTopic(items, new Set()).nodes.length, 2);
-  assert.equal(taskState(task("c", { dependsOn: ["missing"] }), items), "blocked");
-});
-
-test("dependencies on subtasks do not invent dependencies on their entire parents", () => {
-  const items = [task("a"), task("b"), task("a1", { parentId: "a" }), task("b1", { parentId: "b" })];
-  items[0].dependsOn = ["b1"];
-  items[1].dependsOn = ["a1"];
-  const graph = layoutTopic(items, new Set());
-  assert.deepEqual(graph.edges, []);
-  assert.equal(taskState(items[0], items), "blocked");
-  assert.equal(taskState(items[1], items), "blocked");
+test("a lone card is centred in the canvas", () => {
+  const graph = layoutTopic([task("solo")]);
+  assert.equal(graph.width, 268);
+  assert.equal(graph.nodes[0].x, 16);
 });

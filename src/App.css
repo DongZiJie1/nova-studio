@@ -5061,7 +5061,7 @@ body {
   background: rgba(239, 246, 255, 0.76);
 }
 
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-page {
+[data-custom-background="true"] .todo-page {
   color: #dce3ee;
   background:
     linear-gradient(110deg, rgba(8, 12, 20, 0.3), rgba(8, 12, 20, 0.18) 55%, rgba(8, 12, 20, 0.28)),

@@ -33,7 +33,7 @@ import {
 } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
 import { TodoTreeCanvas, TaskStatusIcon } from "./TodoTreeCanvas";
-import { blockersOf, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { STATE_LABEL, taskState, topicOf } from "./task-graph";
 import "./task-trees.css";
 import { Markdown } from "../chat/Markdown";
 
@@ -320,7 +320,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         filter === "all" ||
         (filter === "today"
           ? todo.dueAt?.slice(0, 10) === localDateKey() && todo.status !== "completed"
-          : taskState(todo, state.items) === filter),
+          : taskState(todo) === filter),
     );
   return (
     <section ref={pageRef} className="todo-page task-page">
@@ -330,7 +330,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           <h1>
             待办 <small>{state.items.length}</small>
           </h1>
-          <p>每个主题，一条清晰的推进路径。</p>
+          <p>每个主题一栏，任务按顺序排开。</p>
         </div>
         <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
           <Plus size={16} />
@@ -358,7 +358,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         <div className="task-view-switch">
           <button aria-pressed={mode === "tree"} onClick={() => setMode("tree")}>
             <Network size={15} />
-            主题树
+            分栏
           </button>
           <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>
             <ListTodo size={15} />
@@ -381,7 +381,6 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
             <option value="today">今天到期</option>
             <option value="ready">可开始</option>
             <option value="in_progress">进行中</option>
-            <option value="blocked">等待前置</option>
             <option value="completed">已完成</option>
           </select>
         )}
@@ -416,17 +415,17 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           {visible.map((todo) => (
             <article key={todo.id}>
               <button
-                className={`task-status task-status-${taskState(todo, state.items)}`}
-                disabled={busy || (todo.status !== "completed" && blockersOf(todo, state.items, true).length > 0)}
+                className={`task-status task-status-${taskState(todo)}`}
+                disabled={busy}
                 aria-label={`切换完成状态：${todo.title}`}
                 onClick={() => toggleTodo(todo)}
               >
-                <TaskStatusIcon state={taskState(todo, state.items)} />
+                <TaskStatusIcon state={taskState(todo)} />
               </button>
               <button className="task-flat-title" onClick={() => setSelectedId(todo.id)}>
                 <strong>{todo.title}</strong>
                 <span>
-                  {topicOf(todo)} · {STATE_LABEL[taskState(todo, state.items)]}
+                  {topicOf(todo)} · {STATE_LABEL[taskState(todo)]}
                   {todo.dueAt ? ` · ${todo.dueAt.slice(0, 10)}` : ""}
                 </span>
               </button>
@@ -436,7 +435,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
       )}
       <footer className="task-canvas-footer">
         <div className="task-legend">
-          {(["completed", "in_progress", "ready", "blocked"] as const).map((status) => (
+          {(["completed", "in_progress", "ready"] as const).map((status) => (
             <span className={`task-status-${status}`} key={status}>
               <TaskStatusIcon state={status} />
               {STATE_LABEL[status]}
@@ -503,9 +502,15 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
             open
             closing={false}
             onClose={() => setSelectedId(null)}
-            onSave={(input) => mutate(() => updateTodo(input))}
+            onSave={(input) =>
+              mutate(async () => {
+                const next = await updateTodo(input);
+                setSelectedId(null);
+                return next;
+              })
+            }
             onDelete={() => {
-              if (window.confirm(`删除“${selected.title}”？子任务将保留，相关依赖连线将移除。`))
+              if (window.confirm(`删除“${selected.title}”？`))
                 void mutate(async () => {
                   const next = await deleteTodo(selected.id);
                   setSelectedId(null);
@@ -513,10 +518,6 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                 });
             }}
             onRun={() => {
-              if (blockersOf(selected, state.items).length) {
-                setError("请先完成前置任务");
-                return;
-              }
               void mutate(async () => {
                 const link = await onRunTodo(selected);
                 return updateTodo({ id: selected.id, status: "in_progress", ...link });
@@ -554,103 +555,33 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   );
 }
 
-function TaskRelations({
+function TopicField({
   items,
-  currentId,
   topic,
-  parentId,
-  dependsOn,
   onChange,
 }: {
   items: TodoItem[];
-  currentId?: string;
   topic: string;
-  parentId: string;
-  dependsOn: string[];
-  onChange: (values: { topic?: string; parentId?: string; dependsOn?: string[] }) => void;
+  onChange: (topic: string) => void;
 }) {
   const listId = useId();
-  const [search, setSearch] = useState("");
-  const candidates = items.filter((item) => item.id !== currentId);
   return (
-    <div className="task-relations">
-      <label>
-        <span>主题</span>
-        <input
-          aria-label="主题名称"
-          list={listId}
-          maxLength={24}
-          value={topic}
-          onChange={(event) => onChange({ topic: event.target.value })}
-          placeholder="默认使用第一个标签，无标签则归入未分类"
-        />
-        <datalist id={listId}>
-          {[...new Set(items.map(topicOf))].map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-      </label>
-      <label>
-        <span>
-          父任务 <small>拆解关系，不代表先后顺序</small>
-        </span>
-        <select value={parentId} onChange={(event) => onChange({ parentId: event.target.value })}>
-          <option value="">独立任务</option>
-          {candidates
-            .filter(
-              (item) =>
-                topicOf(item).toLocaleLowerCase() === (topic || "未分类").trim().toLocaleLowerCase() ||
-                item.id === parentId,
-            )
-            .map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.title}
-              </option>
-            ))}
-        </select>
-      </label>
-      <fieldset>
-        <legend>
-          前置任务 <small>全部完成后，才能开始本任务</small>
-        </legend>
-        <input
-          aria-label="筛选前置任务"
-          placeholder="搜索可关联的任务…"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <div className="task-dependency-options">
-          {candidates
-            .filter(
-              (item) =>
-                `${topicOf(item)} ${item.title}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()) ||
-                dependsOn.includes(item.id),
-            )
-            .map((item) => (
-              <label key={item.id}>
-                <input
-                  type="checkbox"
-                  checked={dependsOn.includes(item.id)}
-                  onChange={(event) =>
-                    onChange({
-                      dependsOn: event.target.checked
-                        ? [...dependsOn, item.id]
-                        : dependsOn.filter((id) => id !== item.id),
-                    })
-                  }
-                />
-                <span>
-                  {item.title}
-                  <small>
-                    {topicOf(item)} · {STATE_LABEL[taskState(item, items)]}
-                  </small>
-                </span>
-              </label>
-            ))}
-          {candidates.length === 0 && <p>暂无可关联的任务；独立任务无需设置前置。</p>}
-        </div>
-      </fieldset>
-    </div>
+    <label>
+      <span>主题</span>
+      <input
+        aria-label="主题名称"
+        list={listId}
+        maxLength={24}
+        value={topic}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="默认使用第一个标签，无标签则归入未分类"
+      />
+      <datalist id={listId}>
+        {[...new Set(items.map(topicOf))].map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
+    </label>
   );
 }
 
@@ -681,8 +612,6 @@ function CreateTodoModal({
     projectPath: "",
     dueAt: "",
     topic: "",
-    parentId: "",
-    dependsOn: [],
     ...seed,
   });
   const [saving, setSaving] = useState(false);
@@ -737,7 +666,7 @@ function CreateTodoModal({
           <div>
             <h2 id="todo-modal-title">{seed.topic ? "添加任务" : "新建主题与任务"}</h2>
             <p>
-              {seed.topic ? "设置任务内容，确认它与其他任务的关系。" : "填写主题和首个任务，开始一条新的推进路径。"}
+              {seed.topic ? "设置任务内容与所属主题。" : "填写主题和第一个任务，开始一栏新的清单。"}
             </p>
           </div>
           <button type="button" className="todo-icon-button" disabled={saving} onClick={onClose} aria-label="关闭">
@@ -778,12 +707,10 @@ function CreateTodoModal({
               />
             </label>
           </div>
-          <TaskRelations
+          <TopicField
             items={items}
             topic={form.topic || form.tags?.[0] || ""}
-            parentId={form.parentId ?? ""}
-            dependsOn={form.dependsOn ?? []}
-            onChange={(values) => setForm({ ...form, ...values })}
+            onChange={(topic) => setForm({ ...form, topic })}
           />
           <TodoTagField
             tags={form.tags ?? []}
@@ -855,8 +782,6 @@ function TodoDetail({
     projectPath: string;
     dueAt: string;
     topic: string;
-    parentId: string;
-    dependsOn: string[];
   }) => Promise<void>;
   onDelete: () => void;
   onRun: () => void;
@@ -868,33 +793,30 @@ function TodoDetail({
   const [status, setStatus] = useState(todo.status);
   const priority = todo.priority;
   const [topic, setTopic] = useState(topicOf(todo));
-  const [parentId, setParentId] = useState(todo.parentId ?? "");
-  const [dependsOn, setDependsOn] = useState(todo.dependsOn ?? []);
   const [tags, setTags] = useState<string[]>(todo.tags ?? []);
   const [projectPath, setProjectPath] = useState(todo.projectPath ?? "");
   const [dueAt, setDueAt] = useState(todo.dueAt?.slice(0, 10) ?? "");
   const [editingDescription, setEditingDescription] = useState(false);
 
+  // Only re-seed the draft when the panel switches to another task. Depending on the
+  // whole object also re-ran this on every background refresh (window focus, agent
+  // writes), which silently discarded unsaved edits and greyed out the save button.
   useEffect(() => {
     setTitle(todo.title);
     setDescription(todo.description);
     setStatus(todo.status);
     setTopic(topicOf(todo));
-    setParentId(todo.parentId ?? "");
-    setDependsOn(todo.dependsOn ?? []);
     setTags(todo.tags ?? []);
     setProjectPath(todo.projectPath ?? "");
     setDueAt(todo.dueAt?.slice(0, 10) ?? "");
     setEditingDescription(false);
-  }, [todo]);
+  }, [todo.id]);
 
   const dirty =
     title !== todo.title ||
     description !== todo.description ||
     status !== todo.status ||
     topic !== topicOf(todo) ||
-    parentId !== (todo.parentId ?? "") ||
-    dependsOn.join("\0") !== (todo.dependsOn ?? []).join("\0") ||
     tags.join("\u0000") !== (todo.tags ?? []).join("\u0000") ||
     projectPath !== (todo.projectPath ?? "") ||
     dueAt !== (todo.dueAt?.slice(0, 10) ?? "");
@@ -967,18 +889,7 @@ function TodoDetail({
         </section>
 
         <section className="todo-detail-section">
-          <TaskRelations
-            items={items}
-            currentId={todo.id}
-            topic={topic}
-            parentId={parentId}
-            dependsOn={dependsOn}
-            onChange={(values) => {
-              if (values.topic !== undefined) setTopic(values.topic);
-              if (values.parentId !== undefined) setParentId(values.parentId);
-              if (values.dependsOn !== undefined) setDependsOn(values.dependsOn);
-            }}
-          />
+          <TopicField items={items} topic={topic} onChange={setTopic} />
         </section>
         <section className="todo-detail-section todo-detail-content-section">
           <span className="todo-detail-section-title">任务内容</span>
@@ -1057,7 +968,7 @@ function TodoDetail({
               <button
                 type="button"
                 className="todo-nova-button"
-                disabled={busy || dirty || blockersOf(todo, items).length > 0}
+                disabled={busy || dirty}
                 title={dirty ? "请先保存当前更改" : "交给 Nova 处理"}
                 onClick={onRun}
               >
@@ -1081,8 +992,6 @@ function TodoDetail({
                 projectPath,
                 dueAt,
                 topic,
-                parentId,
-                dependsOn,
               })
             }
           >

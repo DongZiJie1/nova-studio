@@ -4,6 +4,9 @@
   height: 100%;
   min-width: 0;
   overflow: hidden;
+  /* Status tone comes from the theme so it survives a theme or background switch. */
+  --task-success: var(--color-success);
+  --task-success-fill: #56ae87;
 }
 .task-page-header {
   display: flex;
@@ -151,7 +154,7 @@
 .task-topic-progress i {
   display: block;
   height: 100%;
-  background: #62ae8c;
+  background: var(--task-success);
   transition: width 200ms;
 }
 .task-topic-collapsed .task-topic-progress {
@@ -160,20 +163,6 @@
 .task-graph {
   position: relative;
   margin: 4px auto 0;
-}
-.task-edges {
-  position: absolute;
-  top: 0;
-  left: 0;
-  overflow: visible;
-  color: var(--color-text-muted);
-  pointer-events: none;
-}
-.task-edges > path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.4;
-  opacity: 0.65;
 }
 .task-node {
   position: absolute;
@@ -192,7 +181,7 @@
   box-shadow: 0 3px 16px color-mix(in srgb, var(--color-accent-start) 9%, transparent);
 }
 .task-node-completed {
-  background: color-mix(in srgb, var(--color-bg-primary) 97%, #62ae8c 3%);
+  background: color-mix(in srgb, var(--color-bg-primary) 97%, var(--task-success) 3%);
 }
 .task-node-heading {
   display: flex;
@@ -212,10 +201,10 @@
   cursor: pointer;
 }
 .task-status-completed {
-  color: #4da67d;
+  color: var(--task-success);
 }
 .task-status.task-status-completed {
-  background: #56ae87;
+  background: var(--task-success-fill);
   color: white;
 }
 .task-status-in_progress {
@@ -223,9 +212,6 @@
 }
 .task-status-ready {
   color: var(--color-text-secondary);
-}
-.task-status-blocked {
-  color: var(--color-text-muted);
 }
 .task-node-title {
   padding: 1px 0 0;
@@ -261,7 +247,7 @@
   color: var(--color-accent-start);
 }
 .task-node-completed .task-node-state {
-  color: #4da67d;
+  color: var(--task-success);
 }
 .task-node-meta {
   margin: 0 0 10px 33px;
@@ -292,44 +278,6 @@
 }
 .task-node footer button:hover {
   color: var(--color-accent-start);
-}
-.task-children-toggle {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 0 8px;
-  background: transparent;
-  border: 0;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-.task-children {
-  border-radius: 7px;
-  background: var(--todo-film);
-}
-.task-children button {
-  height: 36px;
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 6px;
-  padding: 5px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  border: 0;
-  font-size: 11px;
-  text-align: left;
-  cursor: pointer;
-}
-.task-children button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.task-children svg {
-  flex: none;
-  width: 13px;
 }
 .task-add {
   display: flex;
@@ -444,69 +392,12 @@
 .task-detail-backdrop .todo-detail-properties-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-.task-relations {
-  display: grid;
-  gap: 14px;
-}
-.task-relations label {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.task-relations small {
-  font-weight: 400;
-  color: var(--color-text-muted);
-  font-size: 10px;
-}
-.task-relations fieldset {
-  min-width: 0;
-  border: 1px solid var(--color-border-glass);
-  border-radius: 9px;
-  padding: 10px;
-}
-.task-relations legend {
-  font-size: 12px;
-  padding: 0 4px;
-}
-.task-dependency-options {
-  max-height: 170px;
-  overflow: auto;
-  margin-top: 8px;
-}
-.task-dependency-options label {
-  display: flex;
-  flex-direction: row;
-  gap: 10px;
-  align-items: center;
-  padding: 7px 3px;
-  cursor: pointer;
-}
-.todo-modal-fields .task-dependency-options input,
-.todo-detail-fields .task-dependency-options input {
-  width: 15px;
-  height: 15px;
-  min-height: 0;
-  padding: 0;
-  flex: none;
-  accent-color: var(--color-accent-start);
-}
-.task-dependency-options span {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.task-dependency-options p {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-.todo-modal:has(.task-relations) {
+.todo-modal {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
 }
-.todo-modal:has(.task-relations) .todo-modal-fields {
+.todo-modal-fields {
   overflow-y: auto;
 }
 @container todo-page (max-width: 900px) {
@@ -543,12 +434,6 @@
 .task-node footer {
   min-height: 28px;
 }
-.task-children button {
-  height: 32px;
-}
-.task-children-toggle {
-  height: 28px;
-}
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-node {
   background: #fafdff;
   box-shadow: 0 4px 12px #34548508;
@@ -562,11 +447,71 @@
 .task-node footer button:focus-visible {
   outline-offset: -2px;
 }
-.task-relations .task-dependency-options label {
-  flex-direction: row;
-  align-items: center;
+
+/* ── Photo background ──────────────────────────────────────────────
+   With a user photo the app flips the text tokens to a light palette
+   (see [data-custom-background="true"] in App.css), but --color-bg-primary
+   keeps its opaque theme value. Anything that painted that colour turned
+   into a light panel with light text on top, and hid the photo. Route the
+   whole tree through the scene films so the backdrop stays visible. */
+[data-custom-background="true"] .task-page {
+  --task-success: #6fd6ac;
+  --task-success-fill: #2f8f6b;
 }
-.task-relations .task-dependency-options label > span {
-  display: flex;
-  flex-direction: column;
+
+[data-custom-background="true"] .task-topic {
+  background:
+    linear-gradient(140deg, var(--todo-highlight), transparent 52%),
+    var(--todo-panel);
+  backdrop-filter: blur(22px) saturate(130%);
+  -webkit-backdrop-filter: blur(22px) saturate(130%);
+}
+
+/* The accent dots and the progress track disappear once the scene turns dark. */
+[data-custom-background="true"] .task-canvas-scroll {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.16) 0.8px, transparent 0.8px);
+}
+
+[data-custom-background="true"] .task-topic-progress {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+[data-custom-background="true"] .task-node {
+  background:
+    linear-gradient(135deg, var(--todo-highlight), transparent 48%),
+    var(--todo-film);
+  box-shadow: 0 6px 18px rgba(6, 10, 20, 0.22), inset 0 1px 0 var(--todo-highlight);
+}
+
+[data-custom-background="true"] .task-node-in_progress {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-accent-start) 18%, transparent), transparent 62%),
+    var(--todo-film);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--color-accent-start) 16%, transparent), inset 0 1px 0 var(--todo-highlight);
+}
+
+[data-custom-background="true"] .task-node-completed {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--task-success) 15%, transparent), transparent 62%),
+    var(--todo-film);
+}
+
+[data-custom-background="true"] .task-toolbar select {
+  border-color: var(--todo-border);
+  background: var(--todo-film);
+  color: var(--color-text-primary);
+}
+
+[data-custom-background="true"] .task-detail-backdrop {
+  background: rgba(6, 10, 20, 0.42);
+}
+
+[data-custom-background="true"] .task-detail-backdrop .todo-detail {
+  border-left-color: var(--todo-border);
+  background:
+    linear-gradient(140deg, var(--todo-highlight), transparent 48%),
+    color-mix(in srgb, var(--todo-panel) 78%, rgba(10, 14, 22, 0.72));
+  backdrop-filter: blur(30px) saturate(140%);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  box-shadow: -24px 0 64px rgba(4, 8, 16, 0.34);
 }
