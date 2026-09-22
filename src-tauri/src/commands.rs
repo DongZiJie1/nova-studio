@@ -174,8 +174,8 @@ fn normalize_todo_title(value: &str) -> Result<String, String> {
 
 fn normalize_todo_description(value: &str) -> Result<String, String> {
     let description = value.trim().to_string();
-    if description.chars().count() > 4000 {
-        return Err("Todo description must not exceed 4000 characters".to_string());
+    if description.chars().count() > 50_000 {
+        return Err("Todo description must not exceed 50000 characters".to_string());
     }
     Ok(description)
 }

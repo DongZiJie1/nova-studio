@@ -6577,23 +6577,55 @@ body {
 
 .todo-description-preview {
   min-height: 190px;
-  padding: 18px 20px;
-  border: 1px solid color-mix(in srgb, var(--todo-border) 58%, transparent);
-  border-radius: 13px;
+  padding: 22px 24px 24px 28px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 62%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-accent-start) 30%, var(--todo-border));
+  border-radius: 14px;
   outline: none;
   color: var(--color-text-secondary);
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--todo-highlight) 64%, transparent), transparent 42%),
-    color-mix(in srgb, var(--todo-film) 38%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--todo-highlight) 86%, transparent), transparent 40%),
+    color-mix(in srgb, var(--todo-film) 58%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 74%, transparent);
   cursor: text;
-  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
-.todo-description-preview:hover,
-.todo-description-preview:focus-visible {
-  border-color: color-mix(in srgb, var(--color-accent-start) 26%, var(--todo-border));
-  background: color-mix(in srgb, var(--todo-film) 58%, transparent);
+/* Accent rail + paper sheen keep the read-only block reading as a document. */
+.todo-description-preview::before {
+  position: absolute;
+  inset: 20px auto 20px 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent-start) 84%, transparent), transparent 88%);
+  content: "";
+}
+
+.todo-description-preview::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 72px;
+  height: 72px;
+  background: linear-gradient(225deg, color-mix(in srgb, var(--color-accent-start) 13%, transparent), transparent 64%);
+  content: "";
+  pointer-events: none;
+}
+
+.todo-description-preview-tag {
+  display: inline-flex;
+  margin-bottom: 14px;
+  padding: 3px 9px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 68%, transparent);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
 }
 
 .todo-description-preview .md-body {
@@ -6633,17 +6665,72 @@ body {
 
 .todo-description-preview-empty {
   display: grid;
-  place-items: center;
+  min-height: 156px;
+  padding: 26px 24px;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
   border-style: dashed;
-  cursor: pointer;
+  border-color: color-mix(in srgb, var(--todo-border) 88%, transparent);
+  background:
+    radial-gradient(120% 108% at 50% 0%, color-mix(in srgb, var(--color-accent-start) 7%, transparent), transparent 72%),
+    color-mix(in srgb, var(--todo-film) 40%, transparent);
+  text-align: center;
+  cursor: default;
 }
 
-.todo-description-preview-empty > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+.todo-description-preview-empty::before,
+.todo-description-preview-empty::after {
+  content: none;
+}
+
+.todo-description-empty-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 3px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 70%, transparent);
+  border-radius: 12px;
+  color: color-mix(in srgb, var(--color-accent-start) 68%, var(--color-text-muted));
+  background: color-mix(in srgb, var(--surface-control) 52%, transparent);
+  box-shadow: inset 0 1px 0 var(--todo-highlight);
+}
+
+.todo-description-preview-empty strong {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.todo-description-preview-empty p {
+  margin: 0;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.todo-description-empty-cta {
+  display: inline-flex;
+  height: 27px;
+  margin-top: 5px;
+  padding: 0 12px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 32%, transparent);
+  border-radius: 999px;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.todo-description-empty-cta:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 48%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 16%, transparent);
 }
 
 .todo-description-editor {
@@ -13642,4 +13729,35 @@ body {
   outline: none;
   background: transparent;
   box-shadow: none;
+}
+
+/* Warning counts remain visible in both sidebar sizes. */
+.sidebar-todo-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-collapsed-action:has(.sidebar-todo-warning-badge) {
+  position: relative;
+}
+.sidebar-collapsed-action .sidebar-todo-warning-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
 }

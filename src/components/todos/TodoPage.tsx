@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Circle,
   Clock3,
+  FileText,
   FolderKanban,
   ListTodo,
   LoaderCircle,
@@ -32,8 +33,8 @@ import {
   type TodoStatus,
 } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
-import { TodoTreeCanvas, TaskStatusIcon } from "./TodoTreeCanvas";
-import { STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { TodoTreeCanvas, TaskStatusIcon, TodoDeadline } from "./TodoTreeCanvas";
+import { compareTodoDeadline, STATE_LABEL, taskState, topicOf } from "./task-graph";
 import "./task-trees.css";
 import { Markdown } from "../chat/Markdown";
 
@@ -288,6 +289,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
     setBusy(true);
     try {
       setState(await operation());
+      useTodoStore.getState().markTodosChanged();
       setError(null);
     } catch (reason) {
       setError(String(reason));
@@ -321,7 +323,8 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         (filter === "today"
           ? todo.dueAt?.slice(0, 10) === localDateKey() && todo.status !== "completed"
           : taskState(todo) === filter),
-    );
+    )
+    .sort(compareTodoDeadline);
   return (
     <section ref={pageRef} className="todo-page task-page">
       <header className="task-page-header">
@@ -330,7 +333,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           <h1>
             待办 <small>{state.items.length}</small>
           </h1>
-          <p>每个主题一栏，任务按顺序排开。</p>
+          <p>未完成在前，已完成在后；各组按截止日期排序，无日期的放在组末。</p>
         </div>
         <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
           <Plus size={16} />
@@ -426,8 +429,8 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                 <strong>{todo.title}</strong>
                 <span>
                   {topicOf(todo)} · {STATE_LABEL[taskState(todo)]}
-                  {todo.dueAt ? ` · ${todo.dueAt.slice(0, 10)}` : ""}
                 </span>
+                <TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} />
               </button>
             </article>
           ))}
@@ -687,11 +690,11 @@ function CreateTodoModal({
           </label>
           <label>
             <span>
-              描述 <small>{form.description.length}/4000</small>
+              描述 <small>{form.description.length}/50000</small>
             </span>
             <textarea
               value={form.description}
-              maxLength={4000}
+              maxLength={50000}
               rows={4}
               onChange={(event) => setForm({ ...form, description: event.target.value })}
               placeholder="补充背景、目标或验收要求…"
@@ -901,7 +904,7 @@ function TodoDetail({
             <div className="todo-description-heading">
               <span>描述</span>
               <div>
-                <small>{description.length}/4000 · Markdown</small>
+                <small>{description.length}/50000 · Markdown</small>
                 <button type="button" onClick={() => setEditingDescription((value) => !value)}>
                   {editingDescription ? <Check size={12} /> : <PenLine size={12} />}
                   {editingDescription ? "完成编辑" : "编辑"}
@@ -913,31 +916,36 @@ function TodoDetail({
                 <textarea
                   autoFocus
                   rows={10}
-                  maxLength={4000}
+                  maxLength={50000}
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
                   placeholder="使用 Markdown 补充目标、要求或验收标准…"
                 />
                 <span>支持标题、列表、引用、链接、表格与代码块</span>
               </div>
+            ) : description ? (
+              <div className="todo-description-preview">
+                <span className="todo-description-preview-tag">
+                  <FileText size={11} aria-hidden="true" />
+                  Markdown 描述
+                </span>
+                <Markdown content={description} />
+              </div>
             ) : (
-              <div
-                className={`todo-description-preview ${description ? "" : "todo-description-preview-empty"}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => setEditingDescription(true)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") setEditingDescription(true);
-                }}
-              >
-                {description ? (
-                  <Markdown content={description} />
-                ) : (
-                  <span>
-                    <PenLine size={15} />
-                    点击添加任务描述，支持 Markdown
-                  </span>
-                )}
+              <div className="todo-description-preview todo-description-preview-empty">
+                <span className="todo-description-empty-icon" aria-hidden="true">
+                  <FileText size={18} />
+                </span>
+                <strong>还没有描述</strong>
+                <p>用 Markdown 记录目标、验收标准或参考资料。</p>
+                <button
+                  type="button"
+                  className="todo-description-empty-cta"
+                  onClick={() => setEditingDescription(true)}
+                >
+                  <PenLine size={12} aria-hidden="true" />
+                  添加描述
+                </button>
               </div>
             )}
           </div>

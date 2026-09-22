@@ -373,7 +373,7 @@
   background: #07162930;
 }
 .task-detail-backdrop .todo-detail {
-  width: min(760px, 92%);
+  width: 80%;
   height: 100%;
   min-width: 0;
   margin: 0;
@@ -389,8 +389,22 @@
 .task-detail-backdrop .todo-detail-fields {
   padding: 28px;
 }
+/* Status / due date / project / tags belong on one line so the focus panel
+   keeps its vertical space for the task content. Narrow panels fall back to a
+   two-column stack where the tag editor still gets a full row. */
 .task-detail-backdrop .todo-detail-properties-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.4fr);
+}
+.task-detail-backdrop .todo-property-field-wide {
+  grid-column: auto;
+}
+@container todo-page (max-width: 1160px) {
+  .task-detail-backdrop .todo-detail-properties-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .task-detail-backdrop .todo-property-field-wide {
+    grid-column: 1 / -1;
+  }
 }
 .todo-modal {
   max-height: 90vh;
@@ -510,8 +524,83 @@
   border-left-color: var(--todo-border);
   background:
     linear-gradient(140deg, var(--todo-highlight), transparent 48%),
-    color-mix(in srgb, var(--todo-panel) 78%, rgba(10, 14, 22, 0.72));
+    rgba(18, 23, 34, 0.97);
   backdrop-filter: blur(30px) saturate(140%);
   -webkit-backdrop-filter: blur(30px) saturate(140%);
   box-shadow: -24px 0 64px rgba(4, 8, 16, 0.34);
+}
+
+/* Keep deadlines readable as a distinct badge in both task views. */
+.task-page .task-deadline {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 40%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-accent-start) 14%, var(--todo-film));
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.task-deadline svg {
+  flex-shrink: 0;
+  color: var(--color-accent-start);
+}
+.task-deadline time {
+  font-variant-numeric: tabular-nums;
+}
+
+.task-page .task-deadline-neutral {
+  border-color: var(--todo-border);
+  background: color-mix(in srgb, var(--color-text-muted) 8%, var(--todo-film));
+  color: var(--color-text-secondary);
+}
+.task-page .task-deadline-warning {
+  border-color: #f87171;
+  background: #fee2e2;
+  color: #991b1b;
+}
+.task-page .task-deadline-reminder {
+  border-color: #fbbf24;
+  background: #fef3c7;
+  color: #92400e;
+}
+.task-page .task-deadline-gentle {
+  border-color: #b6cce5;
+  background: #eaf2fb;
+  color: #486583;
+}
+.task-page .task-deadline svg {
+  color: inherit;
+}
+
+.task-topic-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.task-topic-title .task-topic-warning-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.task-topic-title .task-topic-warning-active {
+  background: #dc2626;
+  color: #fff;
 }

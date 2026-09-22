@@ -1,7 +1,18 @@
 import { useMemo } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, FolderKanban, Plus } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, ChevronRight, Circle, CircleDot, FolderKanban, Plus } from "lucide-react";
 import type { TodoItem, CreateTodoInput } from "../../lib/tauri-bridge";
-import { layoutTopic, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { deadlineTone, sortTopicsByUrgency, layoutTopic, STATE_LABEL, taskState, topicOf } from "./task-graph";
+
+export function TodoDeadline({ dueAt, completed = false }: { dueAt?: string; completed?: boolean }) {
+  if (!dueAt) return null;
+  const date = dueAt.slice(0, 10);
+  return (
+    <span className={`task-deadline task-deadline-${deadlineTone(dueAt, completed)}`}>
+      <CalendarDays size={14} aria-hidden="true" />
+      <span>截止 <time dateTime={date}>{date}</time></span>
+    </span>
+  );
+}
 
 export function TaskStatusIcon({ state }: { state: ReturnType<typeof taskState> }) {
   const Icon = state === "completed" ? Check : state === "in_progress" ? CircleDot : Circle;
@@ -31,8 +42,8 @@ export function TodoTreeCanvas({ items, query, zoom, collapsed, onCollapse, onOp
       map.set(key, group);
     }
     const normalized = query.trim().toLocaleLowerCase();
-    return [...map].filter(
-      ([, group]) =>
+    return sortTopicsByUrgency([...map].map(([key, group]) => ({ key, ...group }))).filter(
+      (group) =>
         !normalized ||
         `${group.label} ${group.items.map((todo) => `${todo.title} ${todo.description} ${todo.tags.join(" ")}`).join(" ")}`
           .toLocaleLowerCase()
@@ -53,7 +64,7 @@ export function TodoTreeCanvas({ items, query, zoom, collapsed, onCollapse, onOp
         </div>
       ) : (
         <div className="task-forest" style={{ zoom }}>
-          {groups.map(([key, group]) => (
+          {groups.map(({ key, ...group }) => (
             <TopicTree
               key={key}
               label={group.label}
@@ -93,6 +104,10 @@ function TopicTree({
 }) {
   const graph = useMemo(() => layoutTopic(items), [items]);
   const completed = items.filter((todo) => todo.status === "completed").length;
+  const now = new Date();
+  const warningCount = items.filter((todo) =>
+    deadlineTone(todo.dueAt, todo.status === "completed", now) === "warning",
+  ).length;
   return (
     <section
       className={`task-topic ${collapsed ? "task-topic-collapsed" : ""}`}
@@ -101,7 +116,17 @@ function TopicTree({
       <header className="task-topic-header">
         <FolderKanban size={21} />
         <div>
-          <h2>{label}</h2>
+          <h2 className="task-topic-title">
+            {label}
+            <span
+              className={`task-topic-warning-count ${warningCount > 0 ? "task-topic-warning-active" : ""}`}
+              role="status"
+              aria-label={`${label}：${warningCount} 个警告待办`}
+              title={`${warningCount} 个未完成待办已逾期或将在 10 天内截止`}
+            >
+              {warningCount} 警告
+            </span>
+          </h2>
           <span>
             {completed} / {items.length} 已完成
           </span>
@@ -142,7 +167,7 @@ function TopicTree({
                     {STATE_LABEL[state]}
                   </button>
                   <div className="task-node-meta">
-                    {todo.dueAt ? `截止 ${todo.dueAt.slice(0, 10)}` : "点击标题查看详情"}
+                    {todo.dueAt ? <TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} /> : "点击标题查看详情"}
                   </div>
                   <footer>
                     <button disabled={busy} onClick={() => onCreate({ topic: label, tags: todo.tags })}>

@@ -64,6 +64,7 @@ import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
 import { PersonalizationSettings } from "../settings/PersonalizationSettings";
+import { useTodoWarningCount } from "../todos/useTodoWarningCount";
 import { TodoPage } from "../todos/TodoPage";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
@@ -1849,6 +1850,12 @@ export function AppShell() {
   const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
+  const todoWarningCount = useTodoWarningCount();
+  const todoWarningBadge = todoWarningCount > 0 ? (
+    <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个红色警告待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
+      {todoWarningCount}
+    </span>
+  ) : null;
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
@@ -3234,7 +3241,7 @@ export function AppShell() {
                   >
                     <Plus size={20} />
                   </button>
-                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} />{todoWarningBadge}</button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSettingsOpen(true); }} aria-label="设置" title="设置"><Settings size={19} /></button>
@@ -3317,6 +3324,7 @@ export function AppShell() {
                   >
                     <ListTodo size={15} />
                     <span>待办</span>
+                    {todoWarningBadge}
                   </button>
                 </nav>
               </header>
