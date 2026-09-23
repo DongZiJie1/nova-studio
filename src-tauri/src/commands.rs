@@ -59,6 +59,8 @@ pub struct TodoItem {
     title: String,
     description: String,
     #[serde(default)]
+    completion_notes: String,
+    #[serde(default)]
     tags: Vec<String>,
     status: String,
     priority: String,
@@ -101,6 +103,7 @@ pub struct UpdateTodoInput {
     id: String,
     title: Option<String>,
     description: Option<String>,
+    completion_notes: Option<String>,
     tags: Option<Vec<String>>,
     status: Option<String>,
     priority: Option<String>,
@@ -278,6 +281,7 @@ pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
         id: format!("todo_{}", uuid::Uuid::new_v4()),
         title,
         description,
+        completion_notes: String::new(),
         tags,
         status: "pending".to_string(),
         priority,
@@ -314,6 +318,9 @@ pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
     }
     if let Some(description) = input.description.as_deref() {
         todo.description = normalize_todo_description(description)?;
+    }
+    if let Some(notes) = input.completion_notes.as_deref() {
+        todo.completion_notes = normalize_todo_description(notes)?;
     }
     if let Some(tags) = input.tags {
         todo.tags = normalize_todo_tags(tags)?;
@@ -1474,6 +1481,7 @@ mod todo_tests {
                 id: "todo_1".to_string(),
                 title: "Ship the todo tool".to_string(),
                 description: "Wire the agent tool to the 待办 page.".to_string(),
+                completion_notes: "已完成联调\n待补充文档".to_string(),
                 status: "pending".to_string(),
                 priority: "medium".to_string(),
                 project_path: Some("/tmp/project".to_string()),
@@ -1497,6 +1505,9 @@ mod todo_tests {
         assert_eq!(item["createdAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["updatedAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["order"], 4);
+        assert_eq!(item["completionNotes"], "已完成联调\n待补充文档");
+        let restored: TodoState = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(restored.items[0].completion_notes, "已完成联调\n待补充文档");
         assert!(item.get("dueAt").is_some());
         assert!(item.get("completedAt").is_some());
     }
