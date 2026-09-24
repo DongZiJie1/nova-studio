@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   CheckCircle2,
+  CalendarClock,
   CalendarDays,
   ChevronDown,
   ChevronRight,
@@ -35,6 +36,8 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   ls: FolderSearch,
   nova_data: Database,
   todo: ListTodo,
+  query_scheduled_tasks: CalendarClock,
+  write_scheduled_task: CalendarClock,
   ask_user_question: MessageCircleQuestion,
 };
 

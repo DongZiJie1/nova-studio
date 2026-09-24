@@ -1,0 +1,453 @@
+/* 定时任务 — scene-aware materials matching the 待办 surface.
+   Surfaces must use --todo-film / --todo-panel / --todo-highlight / --todo-border
+   (mapped from --scene-* tokens) so photo backgrounds stay visible. Painting
+   --color-bg-primary turns into an opaque panel and hides the backdrop. */
+
+/* Token bridge: App.css only defines these on .todo-page, but the create/edit
+   modal portals into [data-custom-background]. Re-declare here so portaled
+   chrome still samples the live scene films. */
+[data-custom-background],
+.todo-page {
+  --todo-panel: var(--scene-panel-film, rgba(18, 24, 35, 0.42));
+  --todo-film: var(--scene-local-film, rgba(255, 255, 255, 0.045));
+  --todo-highlight: var(--scene-panel-highlight, rgba(255, 255, 255, 0.06));
+  --todo-border: var(--scene-local-border, rgba(255, 255, 255, 0.1));
+}
+
+/* ── List ─────────────────────────────────────────────────────────── */
+
+.schedule-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 32px 28px;
+  margin: 0;
+  list-style: none;
+}
+
+.schedule-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  border: 1px solid var(--todo-border);
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--todo-highlight), transparent 48%), var(--todo-film);
+  box-shadow: inset 0 1px 0 var(--todo-highlight);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  padding: 12px 14px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.schedule-row:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 32%, var(--todo-border));
+  box-shadow:
+    0 12px 30px rgba(20, 29, 52, 0.08),
+    inset 0 1px 0 var(--todo-highlight);
+}
+
+.schedule-row-disabled {
+  opacity: 0.62;
+}
+
+.schedule-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.schedule-row-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.schedule-row-title strong {
+  font-size: 15px;
+  color: var(--text-heading, var(--color-text-primary));
+}
+
+.schedule-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.schedule-row-meta span {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.schedule-danger {
+  color: #e26d6d !important;
+}
+
+/* ── Chips ────────────────────────────────────────────────────────── */
+
+.schedule-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 80%, transparent);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--color-text-muted) 10%, var(--todo-film));
+  color: var(--color-text-secondary);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.schedule-chip-permission {
+  border-color: color-mix(in srgb, var(--color-accent-start) 32%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 12%, var(--todo-film));
+  color: var(--color-accent-start);
+}
+
+.schedule-chip-running {
+  border-color: color-mix(in srgb, #5b9fd4 40%, transparent);
+  background: color-mix(in srgb, #5b9fd4 16%, var(--todo-film));
+  color: #7eb6e0;
+}
+
+.schedule-chip-completed {
+  border-color: color-mix(in srgb, var(--task-success, #56ae87) 40%, transparent);
+  background: color-mix(in srgb, var(--task-success-fill, #56ae87) 16%, var(--todo-film));
+  color: var(--task-success, #56ae87);
+}
+
+.schedule-chip-error,
+.schedule-chip-missed {
+  border-color: color-mix(in srgb, #e26d6d 40%, transparent);
+  background: color-mix(in srgb, #e26d6d 14%, var(--todo-film));
+  color: #e26d6d;
+}
+
+.schedule-chip-skipped,
+.schedule-chip-idle {
+  border-color: var(--todo-border);
+  background: color-mix(in srgb, var(--color-text-muted) 10%, var(--todo-film));
+  color: var(--color-text-muted);
+}
+
+/* ── Banner ───────────────────────────────────────────────────────── */
+
+.schedule-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 32px 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #e26d6d 35%, transparent);
+  background: color-mix(in srgb, #e26d6d 12%, var(--todo-film));
+  color: #e26d6d;
+  font-size: 13px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.schedule-error-banner button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ── Rule fields (inside modal / detail) ──────────────────────────── */
+
+.schedule-rule-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.schedule-weekdays {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.schedule-weekday-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.schedule-weekday-row button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--todo-border);
+  background: var(--todo-film);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--todo-highlight);
+  transition: color 130ms ease, background 130ms ease, border-color 130ms ease;
+}
+
+.schedule-weekday-row button:hover {
+  color: var(--text-heading, var(--color-text-primary));
+  background: var(--surface-control-hover);
+}
+
+.schedule-weekday-row button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-accent-start) 14%, var(--todo-film));
+  border-color: color-mix(in srgb, var(--color-accent-start) 35%, transparent);
+  color: var(--color-accent-start);
+}
+
+.schedule-field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.schedule-checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  flex-direction: row !important;
+}
+
+.schedule-checkbox-row input {
+  width: auto !important;
+}
+
+/* ── Detail content ───────────────────────────────────────────────── */
+
+/* Read-only label/value pairs: label is muted caption, value is primary text
+   on its own line so 触发规则/每天 10:00 never run together.
+   Selector beats .task-detail-backdrop .todo-detail-properties-grid (4-col). */
+.todo-detail-properties-grid.schedule-properties-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.schedule-property-value {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-heading, var(--color-text-primary));
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-property-value-empty {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+@container todo-page (max-width: 1160px) {
+  .todo-detail-properties-grid.schedule-properties-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container todo-page (max-width: 720px) {
+  .todo-detail-properties-grid.schedule-properties-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.schedule-prompt-block {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--todo-border);
+  background: linear-gradient(135deg, var(--todo-highlight), transparent 46%), var(--todo-film);
+  box-shadow: inset 0 1px 0 var(--todo-highlight);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.schedule-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.schedule-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-run-list li {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--todo-border);
+  background: color-mix(in srgb, var(--todo-film) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 70%, transparent);
+}
+
+.schedule-run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.schedule-run-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #e26d6d;
+}
+
+/* ── Photo background (custom scene) ────────────────────────────────
+   Mirrors task-trees.css: keep cards translucent so the photo stays visible. */
+
+[data-custom-background="true"] .task-page {
+  --task-success: #6fd6ac;
+  --task-success-fill: #2f8f6b;
+}
+
+[data-custom-background="true"] .schedule-row {
+  background:
+    linear-gradient(135deg, var(--todo-highlight), transparent 48%),
+    var(--todo-film);
+  box-shadow:
+    0 6px 18px rgba(6, 10, 20, 0.22),
+    inset 0 1px 0 var(--todo-highlight);
+  backdrop-filter: blur(22px) saturate(130%);
+  -webkit-backdrop-filter: blur(22px) saturate(130%);
+}
+
+[data-custom-background="true"] .schedule-row:hover {
+  box-shadow:
+    0 6px 20px color-mix(in srgb, var(--color-accent-start) 16%, transparent),
+    inset 0 1px 0 var(--todo-highlight);
+}
+
+[data-custom-background="true"] .schedule-prompt-block,
+[data-custom-background="true"] .schedule-run-list li {
+  background:
+    linear-gradient(135deg, var(--todo-highlight), transparent 48%),
+    var(--todo-film);
+  box-shadow: inset 0 1px 0 var(--todo-highlight);
+}
+
+/* ── Photo scene: modal-internal schedule controls ────────────────── */
+
+:root:has([data-custom-background="true"]) .schedule-weekday-row button {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(239, 242, 248, 0.96);
+  background: rgba(6, 9, 17, 0.4);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+:root:has([data-custom-background="true"]) .schedule-weekday-row button:hover {
+  color: #f5f6fa;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root:has([data-custom-background="true"]) .schedule-weekday-row button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--color-accent-start) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 22%, rgba(6, 9, 17, 0.5));
+  color: #c4ccff;
+}
+
+:root:has([data-custom-background="true"]) .schedule-weekdays,
+:root:has([data-custom-background="true"]) .schedule-field-hint,
+:root:has([data-custom-background="true"]) .schedule-note {
+  color: rgba(166, 176, 194, 0.88);
+}
+
+:root:has([data-custom-background="true"]) .schedule-property-value {
+  color: rgba(239, 242, 248, 0.96);
+}
+
+:root:has([data-custom-background="true"]) .schedule-property-value-empty {
+  color: rgba(166, 176, 194, 0.72);
+}
+
+:root:has([data-custom-background="true"]) .schedule-chip {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(220, 226, 238, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+:root:has([data-custom-background="true"]) .schedule-chip-permission {
+  border-color: color-mix(in srgb, var(--color-accent-start) 35%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 18%, transparent);
+  color: #c4ccff;
+}
+
+:root:has([data-custom-background="true"]) .schedule-rule-fields .task-view-switch {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(6, 9, 17, 0.35);
+}
+
+:root:has([data-custom-background="true"]) .schedule-rule-fields .task-view-switch button {
+  color: rgba(220, 226, 238, 0.9);
+}
+
+:root:has([data-custom-background="true"]) .schedule-rule-fields .task-view-switch button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-accent-start) 22%, transparent);
+  color: #c4ccff;
+}
+
+/* ── Arctic Dawn light scene (no photo) ───────────────────────────── */
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-row {
+  background: #fafdff;
+  box-shadow: 0 4px 12px #34548508;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-prompt-block,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-run-list li {
+  background: #f4f8fd;
+  box-shadow: none;
+}
+
+/* ── Nested nav under 待办 ──────────────────────────────────────────
+   Uses the shared .sidebar-nav-row chrome (see App.css) so icons stay
+   column-aligned with 新会话 / 待办. */
+
+@container todo-page (max-width: 900px) {
+  .schedule-list {
+    padding: 0 20px 20px;
+  }
+  .schedule-error-banner {
+    margin: 0 20px 12px;
+  }
+}

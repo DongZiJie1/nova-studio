@@ -387,6 +387,8 @@ export interface PersistedRpcContentBlock {
 }
 
 export interface PersistedRpcMessage {
+  stopReason?: string;
+  errorMessage?: string;
   entryId?: string;
   role?: string;
   content?: string | PersistedRpcContentBlock[];

@@ -33,6 +33,7 @@ import {
 } from "../lib/tauri-bridge";
 import { recordTokenUsage, recordUserInteraction } from "../lib/activity-tracker";
 import { useNotificationStore, type AgentNotificationStatus } from "./notification-store";
+import { assistantFailure } from "../lib/assistant-failure";
 
 // ─── Frontend-side types ───
 
@@ -386,6 +387,10 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
     }
 
     if (message.role === "assistant") {
+      const failure = assistantFailure(message);
+      if (failure) {
+        hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, role: "notice", content: failure, timestamp });
+      }
       if (!Array.isArray(message.content)) {
         const content = messageText(message);
         if (content) hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content, timestamp });
@@ -1049,7 +1054,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
         const errorMessage = msg ? (msg as Record<string, unknown>).errorMessage : undefined;
         const isError = stopReason === "error" && errorMessage;
 
-        const displayText = text || (isError ? `Error: ${errorMessage}` : null);
+        const displayText = text || (msg ? assistantFailure(msg) : null);
 
         if (displayText) {
           // Deduplicate: agent may send message_end twice with the same content.
@@ -1120,6 +1125,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "agent_status": {
       if (event.status === "settled") {
+        // Scheduled run outcomes are persisted by the backend subscriber.
         // Flush any remaining streaming text
         if (agent.streamingText) {
           return {
@@ -1165,6 +1171,9 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
     case "response": {
       if (!event.success) {
         return { ...agent, status: "error" as const };
+      }
+      if (event.command === "abort") {
+        return { ...agent, status: "idle", streamingText: "", streamingThinking: "", activeToolCalls: new Map(), pendingPermission: null };
       }
       return agent;
     }

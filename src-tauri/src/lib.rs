@@ -4,6 +4,8 @@ mod agent_process;
 mod commands;
 mod nova_host_process;
 mod rpc_types;
+mod scheduled_tasks;
+mod scheduler;
 mod worktree;
 
 use agent_manager::AgentManager;
@@ -152,8 +154,15 @@ pub fn run() {
             });
 
             // Store AgentManager as Tauri managed state
-            app.manage(AgentManagerState(manager));
+            app.manage(AgentManagerState(manager.clone()));
             app.manage(commands::TaskRegistryState(registry));
+
+            // Start the scheduled-task scheduler (定时任务) after the manager is ready.
+            let scheduler_handle = scheduler::SchedulerHandle::spawn(
+                app.handle().clone(),
+                manager.clone(),
+            );
+            app.manage(scheduler_handle);
 
             // Set up event forwarding: agent events → Tauri frontend events
             let app_handle = app.handle().clone();
@@ -225,6 +234,13 @@ pub fn run() {
             commands::create_todo,
             commands::update_todo,
             commands::delete_todo,
+            scheduled_tasks::list_scheduled_tasks,
+            scheduled_tasks::create_scheduled_task,
+            scheduled_tasks::update_scheduled_task,
+            scheduled_tasks::delete_scheduled_task,
+            scheduled_tasks::set_scheduled_task_enabled,
+            scheduled_tasks::record_scheduled_run_result,
+            scheduler::run_scheduled_task_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

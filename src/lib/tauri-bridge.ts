@@ -391,6 +391,163 @@ export async function deleteTodo(id: string): Promise<TodoState> {
   return invoke<TodoState>("delete_todo", { id });
 }
 
+// ─── Scheduled tasks (定时任务) ───
+
+export type ScheduleKind = "once" | "recurring";
+export type RecurrenceKind = "daily" | "weekly" | "monthly" | "cron";
+export type ScheduleRunStatus = "running" | "completed" | "error" | "missed" | "skipped";
+export type AutomationPermissionMode = "ask" | "edits" | "allow";
+
+export interface ScheduleRule {
+  kind: ScheduleKind;
+  runAt?: string;
+  recurrence?: RecurrenceKind;
+  timeOfDay?: string;
+  weekdays?: number[];
+  monthDays?: number[];
+  cron?: string;
+  timezone?: string;
+}
+
+export interface ScheduledRun {
+  id: string;
+  taskId: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: ScheduleRunStatus;
+  agentId?: string;
+  sessionId?: string;
+  error?: string;
+  summary?: string;
+  catchUp?: boolean;
+}
+
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  prompt: string;
+  description?: string;
+  projectPath: string;
+  enabled: boolean;
+  schedule: ScheduleRule;
+  permissionMode: AutomationPermissionMode;
+  model?: string;
+  provider?: string;
+  worktreeEnabled?: boolean;
+  lastRunAt?: string;
+  lastRunStatus?: ScheduleRunStatus;
+  lastAgentId?: string;
+  lastSessionId?: string;
+  nextRunAt?: string;
+  missedCount?: number;
+  runs: ScheduledRun[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface ScheduledTaskState {
+  version: number;
+  items: ScheduledTask[];
+}
+
+export interface CreateScheduledTaskInput {
+  title: string;
+  prompt: string;
+  description?: string;
+  projectPath: string;
+  schedule: ScheduleRule;
+  permissionMode?: AutomationPermissionMode;
+  model?: string;
+  provider?: string;
+  worktreeEnabled?: boolean;
+  enabled?: boolean;
+}
+
+export type UpdateScheduledTaskInput = Partial<
+  Pick<
+    ScheduledTask,
+    | "title"
+    | "prompt"
+    | "description"
+    | "projectPath"
+    | "schedule"
+    | "permissionMode"
+    | "model"
+    | "provider"
+    | "worktreeEnabled"
+    | "enabled"
+  >
+> & { id: string };
+
+export interface ScheduledTaskFiredPayload {
+  taskId: string;
+  runId: string;
+  title: string;
+  agentId: string;
+  sessionId: string;
+  catchUp: boolean;
+  nextRunAt?: string;
+}
+
+export interface ScheduledTaskRunUpdatedPayload {
+  taskId: string;
+  runId: string;
+  status: ScheduleRunStatus;
+  agentId?: string;
+  error?: string;
+}
+
+export async function listScheduledTasks(): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("list_scheduled_tasks");
+}
+
+export async function createScheduledTask(input: CreateScheduledTaskInput): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("create_scheduled_task", { input });
+}
+
+export async function updateScheduledTask(input: UpdateScheduledTaskInput): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("update_scheduled_task", { input });
+}
+
+export async function deleteScheduledTask(id: string): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("delete_scheduled_task", { id });
+}
+
+export async function runScheduledTaskNow(id: string): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("run_scheduled_task_now", { id });
+}
+
+export async function setScheduledTaskEnabled(id: string, enabled: boolean): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("set_scheduled_task_enabled", { id, enabled });
+}
+
+export async function recordScheduledRunResult(input: {
+  taskId: string;
+  runId: string;
+  status: ScheduleRunStatus;
+  error?: string;
+  summary?: string;
+}): Promise<ScheduledTaskState> {
+  return invoke<ScheduledTaskState>("record_scheduled_run_result", { input });
+}
+
+export async function onScheduledTaskFired(
+  handler: (payload: ScheduledTaskFiredPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<ScheduledTaskFiredPayload>("scheduled-task-fired", (event) => handler(event.payload));
+}
+
+export async function onScheduledTaskRunUpdated(
+  handler: (payload: ScheduledTaskRunUpdatedPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<ScheduledTaskRunUpdatedPayload>("scheduled-task-run-updated", (event) => handler(event.payload));
+}
+
+export async function onScheduledTasksChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("scheduled-tasks-changed", () => handler());
+}
+
 export async function setModel(agentId: string, provider: string, modelId: string): Promise<void> {
   return invoke("set_model", { agentId, provider, modelId });
 }
