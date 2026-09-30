@@ -245,7 +245,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     executionTraces: [],
     contextSnapshot: null,
     autoCompactionEnabled: true,
-    toolPermissionMode: "ask",
+    toolPermissionMode: "allow",
     pendingPermission: null,
     liveUsage: null,
     outputSinceLastUserInput: 0,
