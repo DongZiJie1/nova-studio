@@ -6,6 +6,7 @@ import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
 import { listAgents, onAgentEvent, requestMessages } from "./lib/tauri-bridge";
 import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
+import { useScheduleStore } from "./stores/schedule-store";
 import { useTodoStore } from "./stores/todo-store";
 import { useUiStore } from "./stores/ui-store";
 
@@ -21,11 +22,21 @@ const COALESCED_DELTA_TYPES = new Set(["text_delta", "thinking_delta", "toolcall
 /** The agent writes the same `todos.json` the 待办 page reads, so a finished
  * `todo` tool call means the page is showing stale data. */
 function isTodoMutation(payload: AgentEventPayload): boolean {
-  return (
-    payload.event.type === "tool_execution_end" &&
-    payload.event.toolName === "todo" &&
-    !payload.event.isError
-  );
+	return (
+		payload.event.type === "tool_execution_end" &&
+		payload.event.toolName === "todo" &&
+		!payload.event.isError
+	);
+}
+
+/** Same dual-writer invalidation for scheduled-tasks.json (定时任务). */
+function isScheduleMutation(payload: AgentEventPayload): boolean {
+	return (
+		payload.event.type === "tool_execution_end" &&
+		(payload.event.toolName === "write_scheduled_task" ||
+			payload.event.toolName === "query_scheduled_tasks") &&
+		!payload.event.isError
+	);
 }
 
 interface PendingStreamDelta {
@@ -121,6 +132,9 @@ function App() {
       handleAgentEvent(payload);
       if (isTodoMutation(payload)) {
         useTodoStore.getState().markTodosChanged();
+      }
+      if (isScheduleMutation(payload)) {
+        useScheduleStore.getState().markSchedulesChanged();
       }
       if (payload.event.type === "agent_settled") {
         void requestMessages(payload.agentId).catch((error) => console.error("Failed to refresh message entries:", error));

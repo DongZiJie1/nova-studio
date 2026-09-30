@@ -118,7 +118,7 @@ static TODO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 
 
-fn nova_agent_dir() -> Result<PathBuf, String> {
+pub(crate) fn nova_agent_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR")
         .or_else(|| std::env::var_os("CODING_AGENT_DIR"))
         .or_else(|| std::env::var_os("PI_CODING_AGENT_DIR"))
@@ -554,7 +554,7 @@ fn read_json_object(path: &Path, root_key: &str) -> Result<serde_json::Value, St
     Ok(value)
 }
 
-fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+pub(crate) fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let content = serde_json::to_string_pretty(value).map_err(|error| error.to_string())? + "\n";
     let temporary_path = path.with_extension("json.tmp");
     std::fs::write(&temporary_path, content)

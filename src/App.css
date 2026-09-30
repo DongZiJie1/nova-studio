@@ -2571,6 +2571,34 @@ body {
     border-color 0.15s ease;
 }
 
+/* Hover actions overlay the right edge so the last-chat time stays flush right. */
+.agent-card-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: rgba(18, 22, 36, 0.92);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.agent-card:hover .agent-card-actions,
+.agent-card:focus-within .agent-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-card:hover .agent-last-time,
+.agent-card:focus-within .agent-last-time {
+  opacity: 0;
+}
+
 .agent-card:hover {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.11);
@@ -2712,6 +2740,7 @@ body {
 }
 
 .agent-name {
+  display: block;
   font-size: 13px;
   font-weight: 600;
   color: #dfe3ee;
@@ -2719,6 +2748,22 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.agent-last-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 600;
+  color: #e4e9f5;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
 }
 
 .agent-sub {
@@ -4274,6 +4319,18 @@ body {
   text-shadow: none;
 }
 
+:root[data-theme="arctic-dawn"] .agent-last-time {
+  color: var(--text-heading, #1f2937);
+  border-color: rgba(31, 41, 55, 0.12);
+  background: rgba(31, 41, 55, 0.06);
+  box-shadow: none;
+  text-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] .agent-card-actions {
+  background: rgba(245, 247, 252, 0.94);
+}
+
 :root[data-theme="arctic-dawn"] .slash-command-description,
 :root[data-theme="arctic-dawn"] .slash-command-hint,
 :root[data-theme="arctic-dawn"] .file-mention-title,
@@ -4633,20 +4690,36 @@ body {
   font-weight: 550;
 }
 
+.studio-sidebar .agent-last-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: #eef1fa;
+  padding: 2px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
 .studio-sidebar .agent-sub {
   display: none;
+}
+
+.studio-sidebar .agent-card-actions {
+  right: 2px;
+  padding: 2px;
+  background: rgba(16, 20, 32, 0.94);
 }
 
 .studio-sidebar .agent-action {
   width: 22px;
   height: 22px;
-  opacity: 0;
+  opacity: 0.85;
 }
 
 .studio-sidebar .agent-card:hover .agent-action,
 .studio-sidebar .agent-card-active .agent-action,
 .studio-sidebar .agent-action:focus-visible {
-  opacity: 0.75;
+  opacity: 1;
 }
 
 .studio-sidebar .agent-expand {
@@ -7727,6 +7800,152 @@ body {
   justify-content: flex-end;
   gap: 8px;
   border-top: 1px solid var(--color-border-glass);
+}
+
+/* Photo backgrounds always use the dark Liquid Glass palette for the create
+   modal (same language as todo-date-popover / personalization-modal). Without
+   this, arctic-dawn keeps --sidebar-solid-bg light while [data-custom-background]
+   flips text to near-white and the title disappears. Covers both portal targets
+   (body and [data-custom-background]) via :has(). */
+:root:has([data-custom-background="true"]) .todo-modal-backdrop {
+  background: rgba(4, 7, 14, 0.42);
+  backdrop-filter: blur(22px) saturate(84%) brightness(0.86);
+  -webkit-backdrop-filter: blur(22px) saturate(84%) brightness(0.86);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal {
+  border-color: rgba(218, 226, 242, 0.16);
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.08), transparent 34%),
+    linear-gradient(145deg, rgba(34, 42, 56, 0.96), rgba(14, 20, 30, 0.96));
+  box-shadow:
+    0 32px 90px rgba(0, 0, 0, 0.48),
+    0 8px 30px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(32px) saturate(140%);
+  -webkit-backdrop-filter: blur(32px) saturate(140%);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal header {
+  border-bottom-color: rgba(218, 226, 242, 0.12);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal header h2 {
+  color: #f0f2f8;
+}
+
+:root:has([data-custom-background="true"]) .todo-modal header p {
+  color: rgba(166, 176, 194, 0.9);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal header .todo-icon-button {
+  color: rgba(166, 176, 194, 0.9);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal header .todo-icon-button:hover {
+  color: #f0f2f8;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal-icon {
+  border-color: rgba(119, 142, 255, 0.28);
+  color: #aab8ff;
+  background: linear-gradient(145deg, rgba(98, 119, 230, 0.22), rgba(72, 87, 175, 0.12));
+}
+
+:root:has([data-custom-background="true"]) .todo-modal-fields label {
+  color: rgba(210, 216, 228, 0.92);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal-fields label small {
+  color: rgba(140, 150, 168, 0.9);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal-fields input,
+:root:has([data-custom-background="true"]) .todo-modal-fields textarea,
+:root:has([data-custom-background="true"]) .todo-modal-fields select {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #eef0f6;
+  background: rgba(6, 9, 17, 0.46);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal-fields input::placeholder,
+:root:has([data-custom-background="true"]) .todo-modal-fields textarea::placeholder {
+  color: #626b80;
+}
+
+:root:has([data-custom-background="true"]) .todo-modal-fields input:focus,
+:root:has([data-custom-background="true"]) .todo-modal-fields textarea:focus,
+:root:has([data-custom-background="true"]) .todo-modal-fields select:focus {
+  border-color: rgba(112, 137, 255, 0.56);
+  background: rgba(5, 8, 16, 0.62);
+  box-shadow: 0 0 0 3px rgba(91, 116, 235, 0.1);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal footer {
+  border-top-color: rgba(218, 226, 242, 0.12);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-secondary-button {
+  color: rgba(210, 216, 228, 0.9);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-secondary-button:hover:not(:disabled) {
+  color: #f5f6fa;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Property controls (due date, project select, tag editor) still sample
+   --surface-control from :root. Portaled to <body> under arctic-dawn that token
+   is a light film, so those three fields flash silver against the dark modal. */
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-control,
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-field .todo-property-control,
+:root:has([data-custom-background="true"]) .todo-modal .todo-tag-editor {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(6, 9, 17, 0.46);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.14);
+  color: #eef0f6;
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-control:hover,
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-field .todo-property-control:hover,
+:root:has([data-custom-background="true"]) .todo-modal .todo-tag-editor:focus-within {
+  border-color: rgba(112, 137, 255, 0.56);
+  background: rgba(5, 8, 16, 0.62);
+  box-shadow: 0 0 0 3px rgba(91, 116, 235, 0.1), inset 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-control:focus-within,
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-control-open,
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-field .todo-property-control:focus-visible,
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-field .todo-property-control-open {
+  border-color: rgba(112, 137, 255, 0.56);
+  background: rgba(5, 8, 16, 0.62);
+  box-shadow: 0 0 0 3px rgba(91, 116, 235, 0.1), inset 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-value,
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-value-empty,
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-control,
+:root:has([data-custom-background="true"]) .todo-modal .todo-tag-editor input {
+  color: #eef0f6;
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-value-empty,
+:root:has([data-custom-background="true"]) .todo-modal .todo-tag-editor input::placeholder {
+  color: #8b97aa;
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-leading-icon,
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-chevron {
+  color: rgba(166, 176, 194, 0.9);
+}
+
+:root:has([data-custom-background="true"]) .todo-modal .todo-date-field-label,
+:root:has([data-custom-background="true"]) .todo-modal .todo-property-field > span {
+  color: rgba(210, 216, 228, 0.92);
 }
 
 .todo-secondary-button {
@@ -13472,7 +13691,7 @@ body {
 }
 
 .conversation-dock-open .agent-workbench-triggers {
-  right: calc(var(--conversation-sidebar-width, 680px) + 4px);
+  right: calc(var(--conversation-sidebar-width, 45vw) + 4px);
 }
 
 :root[data-theme="arctic-dawn"] .agent-file-review-entry + .agent-file-review-entry {
@@ -13551,14 +13770,14 @@ body {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  gap: 10px;
-  padding: 13px 8px 10px;
+  gap: 8px;
+  padding: 12px 4px 6px;
   border-bottom: 0;
 }
 
 .studio-sidebar .sidebar-brand {
   gap: 8px;
-  padding: 0 2px;
+  padding: 0;
   font-size: 13.5px;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -13597,32 +13816,47 @@ body {
 .studio-sidebar .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .studio-sidebar .sidebar-nav-row,
 .studio-sidebar .sidebar-settings-button {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  height: 32px;
-  padding: 0 8px;
+  height: 30px;
+  padding: 0 2px 0 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   color: var(--color-text-secondary);
   background: transparent;
   font-family: inherit;
   font-size: 12.5px;
   font-weight: 550;
+  line-height: 1;
   text-align: left;
   cursor: pointer;
   transition: color 130ms ease, background 130ms ease;
 }
 
-.studio-sidebar .sidebar-nav-row svg,
-.studio-sidebar .sidebar-settings-button svg {
-  flex: 0 0 auto;
+/* Fixed icon column so brand mark / 新会话 / 待办 / 定时任务 share one left edge.
+   Column width matches .sidebar-brand-mark (22px) so labels line up too. */
+.studio-sidebar .sidebar-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  color: inherit;
+}
+
+.studio-sidebar .sidebar-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .studio-sidebar .sidebar-nav-row:hover,
@@ -13631,10 +13865,28 @@ body {
   background: var(--surface-control-hover);
 }
 
+/* Active = tinted text + faint film, never a heavy filled pill (see header note). */
 .studio-sidebar .sidebar-nav-row-active,
 .studio-sidebar .sidebar-settings-button-active {
   color: var(--text-heading);
-  background: var(--surface-control);
+  background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+}
+
+/* 定时任务 sits under 待办: same icon column as siblings; hierarchy is
+   typography-only (muted + lighter weight), never a ragged left edge. */
+.studio-sidebar .sidebar-nav-row-child {
+  padding-left: 0;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.studio-sidebar .sidebar-nav-row-child:hover {
+  color: var(--text-heading);
+}
+
+.studio-sidebar .sidebar-nav-row-child.sidebar-nav-row-active {
+  color: var(--text-heading);
+  font-weight: 550;
 }
 
 /* ─── Section label ─────────────────────────────────────────────────────── */
@@ -13645,7 +13897,7 @@ body {
   flex: 0 0 auto;
   /* right padding clears the tree's 6px scrollbar so the section count lines up
      with the project row's caret column */
-  padding: 14px 16px 6px;
+  padding: 10px 16px 4px;
   color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 600;
@@ -13949,15 +14201,13 @@ body {
   display: none;
 }
 
-/* Status node sitting on the rail. Only running/failed sessions get one, so the
-   marker stays a signal instead of turning into a bullet on every row. */
+/* Status marker sits just left of the last-chat time. Only running/failed sessions
+   get one, so the marker stays a signal instead of decoration on every row. */
 .studio-sidebar .agent-status-dot {
-  position: absolute;
-  top: 50%;
-  left: 12.5px;
+  flex-shrink: 0;
   width: 7px;
   height: 7px;
-  margin-top: -3.5px;
+  margin-left: 2px;
   border-radius: 50%;
 }
 
@@ -13969,11 +14219,6 @@ body {
 
 .studio-sidebar .agent-status-dot[data-status="error"] {
   background: var(--color-error);
-}
-
-/* Nested rows have their own rail: line the dot up with it, not with the text. */
-.studio-sidebar .agent-children .agent-status-dot {
-  left: -10.5px;
 }
 
 @keyframes sidebar-status-pulse {
@@ -14175,20 +14420,21 @@ body {
   box-shadow: none;
 }
 
-/* Warning counts remain visible in both sidebar sizes. */
+/* Warning counts remain visible in both sidebar sizes. Kept compact so the
+   badge does not dominate the flat entry row. */
 .sidebar-todo-warning-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  min-width: 20px;
-  height: 20px;
+  min-width: 16px;
+  height: 16px;
   margin-left: auto;
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: 999px;
   background: #dc2626;
   color: #fff;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;

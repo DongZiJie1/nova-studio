@@ -52,15 +52,30 @@ const PRESET_PROVIDERS: { id: string; name: string; baseUrl: string; api: ModelC
 const CUSTOM_PROVIDER = "__custom__";
 
 /**
+ * Default single-response output cap for a saved model.
+ *
+ * This must NOT be the context window: providers treat `max_tokens` as the
+ * *output* limit (often 64k–131k) even when the model accepts a 1M prompt.
+ * Writing `maxTokens = contextWindow` is what produced
+ * `'max_tokens' 989974 is out of supported range (0, 131072]` on MiMo.
+ * 131072 matches the usual Anthropic-compatible gateway ceiling and is what
+ * the built-in z.ai catalog already uses alongside a 1M context window.
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 131_072;
+
+/**
  * Output-token cap for a saved model. There is no user-facing field: a single
- * response never reaches the cap, and nova already clamps `maxTokens` to the
- * context actually left at request time, so the full context window is the
- * "never triggers" choice. An existing model keeps the value already on disk
- * unless the context window was lowered below it.
+ * response never reaches a well-sized cap, and nova clamps `maxTokens` to the
+ * context actually left at request time. An existing model keeps the value
+ * already on disk unless it is above the known safe default or the context
+ * window was lowered below it.
  */
 function maxTokensForRow(row: ModelRow, existingModels: AvailableModel[]): number {
   const existing = existingModels.find((model) => model.id === row.modelId?.trim());
-  return Math.min(existing?.maxTokens ?? row.contextWindow, row.contextWindow);
+  const preferred = existing?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  // Heal configs that copied contextWindow into maxTokens (the historical default).
+  const healed = preferred > DEFAULT_MAX_OUTPUT_TOKENS ? DEFAULT_MAX_OUTPUT_TOKENS : preferred;
+  return Math.min(healed, row.contextWindow);
 }
 
 /** Compact context-window label: 1000000 -> "1M", 128000 -> "128K". */
@@ -71,10 +86,9 @@ function formatContextWindow(tokens: number): string {
 }
 
 /**
- * Connection fields. The output-token cap is deliberately absent: a single
- * response never reaches it, and nova already clamps `maxTokens` to the
- * remaining context at request time, so the saved value is always the full
- * context window (see `maxTokensForRow`).
+ * Connection fields. The output-token cap is deliberately absent from the form:
+ * we save a safe default (see `maxTokensForRow` / `DEFAULT_MAX_OUTPUT_TOKENS`)
+ * rather than letting the user copy the context window into `maxTokens`.
  */
 type ModelForm = Omit<ModelConfigurationInput, "maxTokens">;
 
@@ -314,7 +328,11 @@ export function ModelSettings({ onSaved, models }: ModelSettingsProps) {
       const modelIds = rows.map((row) => row.modelId!.trim());
       if (new Set(modelIds).size !== modelIds.length) throw new Error("模型 ID 不能重复");
       if (rows.length === 0) {
-        await saveModelConfiguration({ ...form, modelId: "", maxTokens: form.contextWindow });
+        await saveModelConfiguration({
+          ...form,
+          modelId: "",
+          maxTokens: Math.min(DEFAULT_MAX_OUTPUT_TOKENS, form.contextWindow),
+        });
       } else {
         for (const [index, row] of rows.entries()) {
           await saveModelConfiguration({

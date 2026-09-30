@@ -335,6 +335,8 @@ export interface AgentInfo {
   model: string | null;
   session_id: string | null;
   created_at: string;
+  /** Last chat activity time (ISO-8601). Falls back to created_at when unknown. */
+  last_activity_at?: string | null;
   message_count: number;
   last_error: string | null;
 }
@@ -387,6 +389,8 @@ export interface PersistedRpcContentBlock {
 }
 
 export interface PersistedRpcMessage {
+  stopReason?: string;
+  errorMessage?: string;
   entryId?: string;
   role?: string;
   content?: string | PersistedRpcContentBlock[];

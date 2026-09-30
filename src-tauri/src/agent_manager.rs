@@ -72,6 +72,9 @@ struct PersistedAgent {
     #[serde(default)]
     session_file: Option<String>,
     created_at: String,
+    /// Last chat activity time (ISO-8601) from the session catalog when available.
+    #[serde(default)]
+    last_activity_at: Option<String>,
     #[serde(default)]
     message_count: usize,
     depth: u64,
@@ -96,6 +99,9 @@ struct NovaSessionSummary {
     session_file: String,
     name: Option<String>,
     created_at: String,
+    /// Nova's list-sessions `modifiedAt` — last message activity in the session file.
+    #[serde(default)]
+    modified_at: Option<String>,
     message_count: usize,
     #[serde(default)]
     first_message: String,
@@ -195,7 +201,10 @@ impl AgentManager {
                             args: Vec::new(),
                             session_id: session.session_id,
                             session_file: Some(session.session_file),
-                            created_at: session.created_at,
+                            created_at: session.created_at.clone(),
+                            last_activity_at: Some(
+                                session.modified_at.unwrap_or_else(|| session.created_at.clone()),
+                            ),
                             message_count: session.message_count,
                             depth: legacy.map_or(0, |item| item.depth),
                             project_cwd: legacy.and_then(|item| item.project_cwd.clone()),
@@ -304,7 +313,12 @@ impl AgentManager {
                 }
                 record.cwd = cwd;
                 record.session_file = Some(session.session_file);
-                record.created_at = session.created_at;
+                record.created_at = session.created_at.clone();
+                record.last_activity_at = Some(
+                    session
+                        .modified_at
+                        .unwrap_or_else(|| session.created_at.clone()),
+                );
                 record.message_count = session.message_count;
             } else {
                 records.insert(
@@ -322,7 +336,12 @@ impl AgentManager {
                         args: Vec::new(),
                         session_id: session.session_id,
                         session_file: Some(session.session_file),
-                        created_at: session.created_at,
+                        created_at: session.created_at.clone(),
+                        last_activity_at: Some(
+                            session
+                                .modified_at
+                                .unwrap_or_else(|| session.created_at.clone()),
+                        ),
                         message_count: session.message_count,
                         depth: 0,
                         project_cwd: None,
@@ -437,6 +456,7 @@ impl AgentManager {
             session_id: short_id,
             session_file: None,
             created_at: chrono::Utc::now().to_rfc3339(),
+            last_activity_at: Some(chrono::Utc::now().to_rfc3339()),
             message_count: 0,
             depth: request.depth,
             project_cwd,
@@ -723,6 +743,7 @@ impl AgentManager {
             session_id: format!("temporary-{}", Uuid::new_v4()),
             session_file: None,
             created_at: chrono::Utc::now().to_rfc3339(),
+            last_activity_at: Some(chrono::Utc::now().to_rfc3339()),
             message_count: 0,
             depth: parent.depth.saturating_add(1),
             // A temporary side question runs in the parent's directory but never owns
@@ -781,10 +802,23 @@ impl AgentManager {
 
     /// Send an abort command to an agent
     pub async fn abort(&self, agent_id: &str) -> Result<(), String> {
-        let agents = self.agents.read().await;
-        let agent = agents.get(agent_id).ok_or("Agent not found")?;
-        let cmd = RpcCommand::Abort { id: None };
-        agent.send_command(&cmd)
+        let agent = self.get_process(agent_id).await.ok_or("Agent not found")?;
+        let id = format!("abort-{}", Uuid::new_v4());
+        let mut events = agent.subscribe();
+        agent.send_command(&RpcCommand::Abort { id: Some(id.clone()) })?;
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let event = events.recv().await.map_err(|error| error.to_string())?;
+                if event["type"] != "response" || event["id"].as_str() != Some(&id) {
+                    continue;
+                }
+                if event["success"] == true {
+                    *agent.status.lock().await = crate::rpc_types::AgentStatus::Idle;
+                    return Ok(());
+                }
+                return Err(event["error"].as_str().unwrap_or("停止失败").to_string());
+            }
+        }).await.map_err(|_| "停止请求超过 10 秒未获确认，请重试或重启会话".to_string())?
     }
 
     pub async fn steer(&self, agent_id: &str, message: String) -> Result<(), String> {
@@ -1518,9 +1552,9 @@ impl AgentManager {
             Some(record) => Some(record.clone()),
             None => self.records.read().await.get(id).cloned(),
         };
-        let (project_cwd, worktree) = match stored {
-            Some(record) => (record.project_cwd, record.worktree),
-            None => (None, None),
+        let (project_cwd, worktree, last_activity_at) = match stored {
+            Some(record) => (record.project_cwd, record.worktree, record.last_activity_at),
+            None => (None, None, None),
         };
         AgentInfo {
             id: id.to_string(),
@@ -1535,6 +1569,9 @@ impl AgentManager {
             model: process.model.clone(),
             session_id: Some(process.session_id.clone()),
             created_at: process.created_at.clone(),
+            last_activity_at: Some(
+                last_activity_at.unwrap_or_else(|| process.created_at.clone()),
+            ),
             message_count: 0,
             last_error: None,
         }
@@ -1577,6 +1614,12 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),
         created_at: record.created_at.clone(),
+        last_activity_at: Some(
+            record
+                .last_activity_at
+                .clone()
+                .unwrap_or_else(|| record.created_at.clone()),
+        ),
         message_count: record.message_count,
         last_error: None,
     }
@@ -1876,6 +1919,7 @@ mod tests {
                 session_id: "mock-parent".to_string(),
                 session_file: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                last_activity_at: Some("2026-01-01T00:00:00Z".to_string()),
                 message_count: 0,
                 depth: 0,
                 project_cwd: None,
@@ -1893,6 +1937,7 @@ mod tests {
                 session_id: "mock-child".to_string(),
                 session_file: None,
                 created_at: "2026-01-01T00:00:01Z".to_string(),
+                last_activity_at: Some("2026-01-01T00:00:01Z".to_string()),
                 message_count: 0,
                 depth: 1,
                 project_cwd: None,
@@ -1952,6 +1997,22 @@ mod tests {
         .expect("the child never had its permission mode aligned with the parent");
         assert_eq!(agent_id, child.id);
         assert_eq!(event.get("mode").and_then(|value| value.as_str()), Some("edits"));
+    }
+
+    #[tokio::test]
+    async fn abort_ack_clears_stale_streaming_without_settled_event() {
+        let state_path = std::env::temp_dir().join(format!("nova-studio-{}.json", Uuid::new_v4()));
+        let manager = AgentManager::new(mock_cli_path(), state_path.clone());
+        let info = manager.spawn(SpawnRequest {
+            worktree_enabled: false, cwd: "/tmp".into(), parent_agent_id: None,
+            model: None, provider: None, args: None, depth: 0,
+        }).await.unwrap();
+        let process = manager.get_process(&info.id).await.unwrap();
+        *process.status.lock().await = crate::rpc_types::AgentStatus::Streaming;
+        manager.abort(&info.id).await.unwrap();
+        assert!(matches!(process.get_status().await, crate::rpc_types::AgentStatus::Idle));
+        manager.stop(&info.id).await.unwrap();
+        let _ = tokio::fs::remove_file(state_path).await;
     }
 
     #[tokio::test]
@@ -2071,6 +2132,7 @@ mod tests {
                 session_id: "mock-parent".to_string(),
                 session_file: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                last_activity_at: Some("2026-01-01T00:00:00Z".to_string()),
                 message_count: 0,
                 depth: 0,
                 project_cwd: None,

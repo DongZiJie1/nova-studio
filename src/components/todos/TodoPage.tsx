@@ -685,10 +685,12 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           </h1>
           <p>未完成在前，已完成在后；各组按截止日期排序，无日期的放在组末。</p>
         </div>
-        <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
-          <Plus size={16} />
-          新建主题
-        </button>
+        {state.items.length > 0 ? (
+          <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
+            <Plus size={16} />
+            新建主题
+          </button>
+        ) : null}
       </header>
       <div className="task-toolbar">
         <label className="todo-search">

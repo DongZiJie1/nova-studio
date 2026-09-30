@@ -33,6 +33,7 @@ import {
 } from "../lib/tauri-bridge";
 import { recordTokenUsage, recordUserInteraction } from "../lib/activity-tracker";
 import { useNotificationStore, type AgentNotificationStatus } from "./notification-store";
+import { assistantFailure } from "../lib/assistant-failure";
 
 // ─── Frontend-side types ───
 
@@ -79,6 +80,8 @@ export interface AgentState {
   model: string | null;
   messages: ChatMessage[];
   createdAt: string;
+  /** Last chat activity time (ISO-8601), used by the sidebar session list. */
+  lastActivityAt: string;
   messageCount: number;
   /** Accumulated streaming text for the current assistant turn */
   streamingText: string;
@@ -202,6 +205,19 @@ function formatAgentTaskResult(details: Record<string, unknown>): { content: str
   return { content: sections.join("\n\n"), agentId };
 }
 
+/** Prefer the later of two ISO timestamps; invalid/missing values lose. */
+function laterIso(left: string, right: string): string {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (!Number.isFinite(leftTime)) return right;
+  if (!Number.isFinite(rightTime)) return left;
+  return leftTime >= rightTime ? left : right;
+}
+
+function lastActivityFromInfo(info: AgentInfo): string {
+  return info.last_activity_at || info.created_at;
+}
+
 function agentStateFromInfo(info: AgentInfo): AgentState {
   return {
     id: info.id,
@@ -217,6 +233,7 @@ function agentStateFromInfo(info: AgentInfo): AgentState {
     model: info.model,
     messages: [],
     createdAt: info.created_at,
+    lastActivityAt: lastActivityFromInfo(info),
     messageCount: info.message_count,
     streamingText: "",
     streamingThinking: "",
@@ -248,6 +265,7 @@ function mergeAgentInfo(agent: AgentState, info: AgentInfo): AgentState {
     worktree: info.worktree ?? null,
     model: info.model,
     createdAt: info.created_at,
+    lastActivityAt: laterIso(lastActivityFromInfo(info), agent.lastActivityAt),
     messageCount: Math.max(agent.messageCount, info.message_count),
   };
 }
@@ -386,6 +404,10 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
     }
 
     if (message.role === "assistant") {
+      const failure = assistantFailure(message);
+      if (failure) {
+        hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, role: "notice", content: failure, timestamp });
+      }
       if (!Array.isArray(message.content)) {
         const content = messageText(message);
         if (content) hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content, timestamp });
@@ -532,6 +554,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       attachments: attachments?.length ? attachments : undefined,
     };
     recordUserInteraction(msg.timestamp);
+    const activityIso = new Date(msg.timestamp).toISOString();
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === agentId
@@ -539,6 +562,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               ...a,
               messages: [...a.messages, msg],
               messageCount: Math.max(a.messageCount, a.messages.length + 1),
+              lastActivityAt: laterIso(activityIso, a.lastActivityAt),
               outputSinceLastUserInput: 0,
             }
           : a,
@@ -554,6 +578,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
       content,
       timestamp: Date.now(),
     };
+    const activityIso = new Date(msg.timestamp).toISOString();
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === agentId
@@ -561,6 +586,7 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               ...a,
               messages: [...a.messages, msg],
               messageCount: Math.max(a.messageCount, a.messages.length + 1),
+              lastActivityAt: laterIso(activityIso, a.lastActivityAt),
               streamingText: "",
               activeToolCalls: new Map(),
             }
@@ -785,10 +811,14 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
           const reconciled = liveResultsMissingFromSnapshot.length > 0
             ? [...hydrated, ...liveResultsMissingFromSnapshot].sort((left, right) => left.timestamp - right.timestamp)
             : hydrated;
+          const lastMessageAt = reconciled.length > 0
+            ? new Date(reconciled[reconciled.length - 1].timestamp).toISOString()
+            : agent.lastActivityAt;
           return {
             ...agent,
             messages: reconciled,
             messageCount: Math.max(agent.messageCount, reconciled.length),
+            lastActivityAt: laterIso(lastMessageAt, agent.lastActivityAt),
           };
         }),
       }));
@@ -939,6 +969,16 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
     });
 
     // Refresh context usage after each turn completes
+    if (event.type === "message_end" || event.type === "turn_end" || event.type === "agent_settled") {
+      const activityIso = new Date().toISOString();
+      set((s) => ({
+        agents: s.agents.map((agent) =>
+          agent.id === agentId
+            ? { ...agent, lastActivityAt: laterIso(activityIso, agent.lastActivityAt) }
+            : agent,
+        ),
+      }));
+    }
     if (event.type === "turn_end" || event.type === "agent_settled") {
       void requestSessionStats(agentId);
     }
@@ -1049,7 +1089,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
         const errorMessage = msg ? (msg as Record<string, unknown>).errorMessage : undefined;
         const isError = stopReason === "error" && errorMessage;
 
-        const displayText = text || (isError ? `Error: ${errorMessage}` : null);
+        const displayText = text || (msg ? assistantFailure(msg) : null);
 
         if (displayText) {
           // Deduplicate: agent may send message_end twice with the same content.
@@ -1120,6 +1160,7 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
 
     case "agent_status": {
       if (event.status === "settled") {
+        // Scheduled run outcomes are persisted by the backend subscriber.
         // Flush any remaining streaming text
         if (agent.streamingText) {
           return {
@@ -1165,6 +1206,9 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
     case "response": {
       if (!event.success) {
         return { ...agent, status: "error" as const };
+      }
+      if (event.command === "abort") {
+        return { ...agent, status: "idle", streamingText: "", streamingThinking: "", activeToolCalls: new Map(), pendingPermission: null };
       }
       return agent;
     }

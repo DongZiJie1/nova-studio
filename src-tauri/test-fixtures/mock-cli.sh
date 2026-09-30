@@ -22,6 +22,10 @@ while IFS= read -r line; do
     continue
   fi
   case "$line" in
+    *'"type":"abort"'*)
+      # No agent_settled: stopping an already idle session only returns an ack.
+      printf '{"type":"response","id":"%s","command":"abort","success":true,"agentId":"%s"}\n' "$request_id" "$agent_id"
+      ;;
     *'"type":"agent_create"'*)
       last_depth=$(printf '%s' "$line" | sed -n 's/.*"depth":\([0-9]*\).*/\1/p')
       printf '{"type":"response","command":"agent_create","success":true,"agentId":"%s"}\n' "$agent_id"

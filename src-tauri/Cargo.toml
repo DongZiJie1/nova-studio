@@ -1,6 +1,6 @@
 [package]
 name = "nova-studio"
-version = "1.7.0"
+version = "1.8.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -29,6 +29,7 @@ tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+cron = "0.12"
 log = "0.4"
 env_logger = "0.11"
 
