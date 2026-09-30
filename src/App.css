@@ -10508,6 +10508,22 @@ body {
   overflow-wrap: anywhere;
 }
 
+.trajectory-todo-meta {
+  margin-top: 7px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.trajectory-memory-section small {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
 :root[data-theme="arctic-dawn"] .conversation-view-switcher {
   border-color: rgba(110, 139, 179, 0.2);
   background: rgba(239, 247, 255, 0.3);

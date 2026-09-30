@@ -539,6 +539,7 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
   const role = typeof data.role === "string" ? data.role : typeof data.type === "string" ? data.type : entry.label.toLowerCase();
   const timestamp = data.timestamp;
   const memorySections = role === "context_user_memory" && typeof data.content === "string" ? parseUserMemorySections(data.content) : [];
+  const contextTodos = role === "context_todos" && typeof data.content === "string" ? parseContextTodos(data.content) : [];
   const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls as Array<Record<string, unknown>> : [];
   const entryId = typeof data.entryId === "string" ? data.entryId : undefined;
   const toolCallIds = new Set(toolCalls.map((tool) => tool.id).filter((id): id is string => typeof id === "string"));
@@ -575,6 +576,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
               ? "Skill 声明集合"
               : role === "context_user_memory"
                 ? "长期记忆集合"
+                : role === "context_todos"
+                  ? "待办集合"
                 : role === "context_instructions"
                   ? "项目指令集合"
           : role;
@@ -586,6 +589,7 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
         <div><dt>事件类型</dt><dd>{typeLabel}</dd></div>
         {isContextEntry && Array.isArray(data.items) && <div><dt>资源数量</dt><dd>{data.items.length}</dd></div>}
         {role === "context_user_memory" && <div><dt>记忆数量</dt><dd>{memorySections.length}</dd></div>}
+        {role === "context_todos" && <div><dt>待办数量</dt><dd>{contextTodos.length}</dd></div>}
         {isContextEntry && typeof data.name === "string" && <div><dt>资源名称</dt><dd>{data.name}</dd></div>}
         {isContextEntry && typeof data.path === "string" && <div><dt>来源路径</dt><dd>{data.path}</dd></div>}
         <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
@@ -691,6 +695,29 @@ function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
     );
   }
 
+  if (type === "context_todos") {
+    const todos = parseContextTodos(typeof data.content === "string" ? data.content : "");
+    return (
+      <div className="trajectory-memory-details">
+        <div className="trajectory-memory-summary">
+          <span>{todos.length}</span>
+          <div><strong>条待办</strong><p>会话开始时注入的待办摘要，描述可能已截断</p></div>
+        </div>
+        <div className="trajectory-memory-list">
+          {todos.map((todo, index) => (
+            <section className="trajectory-memory-section" key={todo.id || index}>
+              <header><span>{String(index + 1).padStart(2, "0")}</span><strong>{todo.title}</strong></header>
+              <div className="trajectory-todo-meta">{[todo.status, todo.priority, todo.topic, ...(todo.tags ?? [])].filter(Boolean).join(" · ")}</div>
+              {todo.description && <p>{todo.description}</p>}
+              <small>{todo.id}</small>
+            </section>
+          ))}
+          {todos.length === 0 && <p className="trajectory-detail-empty">当前会话没有加载待办</p>}
+        </div>
+      </div>
+    );
+  }
+
   if (type === "context_instructions") {
     const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
     return (
@@ -726,6 +753,19 @@ function parseUserMemorySections(content: string): Array<{ id: string; title: st
       content: body.replace(/<section_id>.*?<\/section_id>\s*/s, "").trim(),
     };
   });
+}
+
+function parseContextTodos(content: string): Array<{ id: string; title: string; description?: string; status?: string; priority?: string; topic?: string; tags?: string[] }> {
+  const jsonStart = content.indexOf("\n[");
+  if (jsonStart < 0) return [];
+  try {
+    const value: unknown = JSON.parse(content.slice(jsonStart + 1).trim());
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is { id: string; title: string; description?: string; status?: string; priority?: string; topic?: string; tags?: string[] } =>
+      item !== null && typeof item === "object" && typeof item.id === "string" && typeof item.title === "string");
+  } catch {
+    return [];
+  }
 }
 
 /** Compact token count formatting, matching the TUI footer (e.g. 7.8k, 313k, 1.2M). */
@@ -2175,6 +2215,8 @@ export function AppShell() {
     if (!snapshot) return [];
     const userMemoryMatch = snapshot.systemPrompt.match(/<user_memory>\n([\s\S]*?)\n<\/user_memory>/);
     const userMemories = userMemoryMatch ? parseUserMemorySections(userMemoryMatch[1]) : [];
+    const todoMatch = snapshot.systemPrompt.match(/<user_todos>\n([\s\S]*?)\n<\/user_todos>/);
+    const contextTodos = todoMatch ? parseContextTodos(todoMatch[1]) : [];
     const entries = [
       {
         id: "context-system",
@@ -2218,6 +2260,15 @@ export function AppShell() {
         className: "instruction",
         preview: userMemories.length > 0 ? `${userMemories.length} 个 Section · ${userMemories.map((memory) => memory.title).join(" · ")}` : "未加载用户记忆",
         data: { type: "context_user_memory", content: userMemoryMatch[1] },
+      });
+    }
+    if (todoMatch) {
+      entries.splice(userMemoryMatch ? 2 : 1, 0, {
+        id: "context-todos",
+        role: "TODO",
+        className: "instruction",
+        preview: `${contextTodos.length} 条待办 · ${contextTodos.slice(0, 3).map((todo) => todo.title).join(" · ")}${contextTodos.length > 3 ? " …" : ""}`,
+        data: { type: "context_todos", content: todoMatch[1] },
       });
     }
     return entries;
