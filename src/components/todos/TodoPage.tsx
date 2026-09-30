@@ -1398,6 +1398,28 @@ function TodoDetail({
           </label>
         </section>
 
+        <section className="todo-detail-section todo-history-section">
+          <span className="todo-detail-section-title">修改记录</span>
+          {(todo.history ?? []).length === 0 ? (
+            <p className="todo-history-empty">暂无截止日期或状态修改</p>
+          ) : (
+            <ol className="todo-history-list">
+              {[...todo.history].reverse().map((entry, index) => {
+                const statusLabel = (value: string | null) => value === "pending" ? "待处理" : value === "in_progress" ? "进行中" : value === "completed" ? "已完成" : "未设置";
+                const isDueAt = entry.type === "due_at_changed";
+                const from = isDueAt ? (entry.from || "未设置") : statusLabel(entry.from);
+                const to = isDueAt ? (entry.to || "未设置") : statusLabel(entry.to);
+                return (
+                  <li key={`${entry.changedAt}-${index}`}>
+                    <time dateTime={entry.changedAt}>{new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.changedAt))}</time>
+                    <span>{isDueAt ? "截止日期" : "状态"}：{from} → {to}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </section>
+
         <div className="todo-detail-meta">
           <span>
             创建于 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(todo.createdAt))}

@@ -338,6 +338,13 @@ export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemory
 export type TodoStatus = "pending" | "in_progress" | "completed";
 export type TodoPriority = "low" | "medium" | "high";
 
+export interface TodoHistoryEntry {
+  type: "due_at_changed" | "status_changed";
+  from: string | null;
+  to: string | null;
+  changedAt: string;
+}
+
 export interface TodoItem {
   topic?: string;
   id: string;
@@ -355,6 +362,7 @@ export interface TodoItem {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  history: TodoHistoryEntry[];
   order: number;
 }
 

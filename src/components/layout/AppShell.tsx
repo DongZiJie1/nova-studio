@@ -709,6 +709,15 @@ function TrajectoryFullDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
               <header><span>{String(index + 1).padStart(2, "0")}</span><strong>{todo.title}</strong></header>
               <div className="trajectory-todo-meta">{[todo.status, todo.priority, todo.topic, ...(todo.tags ?? [])].filter(Boolean).join(" · ")}</div>
               {todo.description && <p>{todo.description}</p>}
+              {Array.isArray(todo.history) && todo.history.length > 0 && (
+                <div className="trajectory-todo-history">
+                  {todo.history.map((change, changeIndex) => (
+                    <p key={`${change.changedAt}-${changeIndex}`}>
+                      {formatTrajectoryTime(change.changedAt)} · {change.type === "due_at_changed" ? "截止日期" : "状态"}：{change.from ?? "未设置"} → {change.to ?? "未设置"}
+                    </p>
+                  ))}
+                </div>
+              )}
               <small>{todo.id}</small>
             </section>
           ))}
@@ -755,13 +764,13 @@ function parseUserMemorySections(content: string): Array<{ id: string; title: st
   });
 }
 
-function parseContextTodos(content: string): Array<{ id: string; title: string; description?: string; status?: string; priority?: string; topic?: string; tags?: string[] }> {
+function parseContextTodos(content: string): Array<{ id: string; title: string; description?: string; status?: string; priority?: string; topic?: string; tags?: string[]; history?: Array<{ type: string; from: string | null; to: string | null; changedAt: string }> }> {
   const jsonStart = content.indexOf("\n[");
   if (jsonStart < 0) return [];
   try {
     const value: unknown = JSON.parse(content.slice(jsonStart + 1).trim());
     if (!Array.isArray(value)) return [];
-    return value.filter((item): item is { id: string; title: string; description?: string; status?: string; priority?: string; topic?: string; tags?: string[] } =>
+    return value.filter((item): item is { id: string; title: string; description?: string; status?: string; priority?: string; topic?: string; tags?: string[]; history?: Array<{ type: string; from: string | null; to: string | null; changedAt: string }> } =>
       item !== null && typeof item === "object" && typeof item.id === "string" && typeof item.title === "string");
   } catch {
     return [];
