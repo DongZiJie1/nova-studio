@@ -6438,6 +6438,23 @@ body {
   color: var(--color-success);
 }
 
+/* Open items past their due date: red pill next to the status chip. */
+.todo-detail-overdue-badge {
+  display: inline-flex;
+  margin-top: 4px;
+  min-height: 20px;
+  padding: 0 8px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #dc2626;
+  border-radius: 999px;
+  color: #fff;
+  background: #dc2626;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .todo-icon-button {
   display: grid;
   width: 30px;

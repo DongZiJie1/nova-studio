@@ -1908,7 +1908,7 @@ export function AppShell() {
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const todoWarningCount = useTodoWarningCount();
   const todoWarningBadge = todoWarningCount > 0 ? (
-    <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个红色警告待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
+    <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个逾期或临近截止待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
       {todoWarningCount}
     </span>
   ) : null;

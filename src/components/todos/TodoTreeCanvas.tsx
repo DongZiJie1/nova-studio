@@ -1,15 +1,47 @@
 import { useMemo } from "react";
-import { CalendarDays, Check, ChevronDown, ChevronRight, Circle, CircleDot, FolderKanban, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  CircleDot,
+  FolderKanban,
+  Plus,
+} from "lucide-react";
 import type { TodoItem, CreateTodoInput } from "../../lib/tauri-bridge";
-import { deadlineTone, sortTopicsByUrgency, layoutTopic, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import {
+  deadlineDeltaDays,
+  deadlineTone,
+  sortTopicsByUrgency,
+  layoutTopic,
+  STATE_LABEL,
+  taskState,
+  topicOf,
+} from "./task-graph";
 
 export function TodoDeadline({ dueAt, completed = false }: { dueAt?: string; completed?: boolean }) {
   if (!dueAt) return null;
   const date = dueAt.slice(0, 10);
+  const tone = deadlineTone(dueAt, completed);
+  const overdue = tone === "overdue";
+  const lateDays = overdue ? deadlineDeltaDays(dueAt, completed) : null;
   return (
-    <span className={`task-deadline task-deadline-${deadlineTone(dueAt, completed)}`}>
-      <CalendarDays size={14} aria-hidden="true" />
-      <span>截止 <time dateTime={date}>{date}</time></span>
+    <span
+      className={`task-deadline task-deadline-${tone}`}
+      title={overdue ? `截止日期 ${date}，已逾期 ${lateDays ?? 0} 天` : `截止日期 ${date}`}
+    >
+      {overdue ? <AlertTriangle size={14} aria-hidden="true" /> : <CalendarDays size={14} aria-hidden="true" />}
+      {overdue ? (
+        <span>
+          已逾期{lateDays && lateDays > 0 ? ` ${lateDays} 天` : ""} · <time dateTime={date}>{date}</time>
+        </span>
+      ) : (
+        <span>
+          截止 <time dateTime={date}>{date}</time>
+        </span>
+      )}
     </span>
   );
 }
@@ -105,6 +137,9 @@ function TopicTree({
   const graph = useMemo(() => layoutTopic(items), [items]);
   const completed = items.filter((todo) => todo.status === "completed").length;
   const now = new Date();
+  const overdueCount = items.filter((todo) =>
+    deadlineTone(todo.dueAt, todo.status === "completed", now) === "overdue",
+  ).length;
   const warningCount = items.filter((todo) =>
     deadlineTone(todo.dueAt, todo.status === "completed", now) === "warning",
   ).length;
@@ -118,11 +153,21 @@ function TopicTree({
         <div>
           <h2 className="task-topic-title">
             {label}
+            {overdueCount > 0 && (
+              <span
+                className="task-topic-warning-count task-topic-overdue-count"
+                role="status"
+                aria-label={`${label}：${overdueCount} 个已逾期待办`}
+                title={`${overdueCount} 个未完成待办已过截止日期`}
+              >
+                {overdueCount} 逾期
+              </span>
+            )}
             <span
               className={`task-topic-warning-count ${warningCount > 0 ? "task-topic-warning-active" : ""}`}
               role="status"
               aria-label={`${label}：${warningCount} 个警告待办`}
-              title={`${warningCount} 个未完成待办已逾期或将在 10 天内截止`}
+              title={`${warningCount} 个未完成待办将在 10 天内截止`}
             >
               {warningCount} 警告
             </span>
@@ -143,9 +188,10 @@ function TopicTree({
           <div className="task-graph" style={{ width: graph.width, height: graph.height }}>
             {graph.nodes.map(({ todo, x, y, height }) => {
               const state = taskState(todo);
+              const overdue = deadlineTone(todo.dueAt, todo.status === "completed", now) === "overdue";
               return (
                 <article
-                  className={`task-node task-node-${state}`}
+                  className={`task-node task-node-${state}${overdue ? " task-node-overdue" : ""}`}
                   style={{ left: x, top: y, height }}
                   key={todo.id}
                   data-todo-id={todo.id}

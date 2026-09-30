@@ -16,9 +16,10 @@ export function useTodoWarningCount() {
         const state = await listTodos();
         if (cancelled || current !== generation) return;
         const now = new Date();
-        setCount(state.items.filter((todo) =>
-          deadlineTone(todo.dueAt, todo.status === "completed", now) === "warning",
-        ).length);
+        setCount(state.items.filter((todo) => {
+          const tone = deadlineTone(todo.dueAt, todo.status === "completed", now);
+          return tone === "overdue" || tone === "warning";
+        }).length);
       } catch {
         // Retain the last known count if the backend is temporarily unavailable.
       }

@@ -46,7 +46,7 @@ import {
 } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
 import { TodoTreeCanvas, TaskStatusIcon, TodoDeadline } from "./TodoTreeCanvas";
-import { compareTodoDeadline, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { compareTodoDeadline, deadlineTone, STATE_LABEL, taskState, topicOf } from "./task-graph";
 import "./task-trees.css";
 import { Markdown } from "../chat/Markdown";
 
@@ -672,7 +672,9 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         filter === "all" ||
         (filter === "today"
           ? todo.dueAt?.slice(0, 10) === localDateKey() && todo.status !== "completed"
-          : taskState(todo) === filter),
+          : filter === "overdue"
+            ? deadlineTone(todo.dueAt, todo.status === "completed") === "overdue"
+            : taskState(todo) === filter),
     )
     .sort(compareTodoDeadline);
   return (
@@ -683,7 +685,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           <h1>
             待办 <small>{state.items.length}</small>
           </h1>
-          <p>未完成在前，已完成在后；各组按截止日期排序，无日期的放在组末。</p>
+          <p>未完成在前，已完成在后；按逾期 → 警告 → 临近 → 无日期排序。</p>
         </div>
         {state.items.length > 0 ? (
           <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
@@ -733,6 +735,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         ) : (
           <select aria-label="任务状态" value={filter} onChange={(event) => setFilter(event.target.value)}>
             <option value="all">全部状态</option>
+            <option value="overdue">已逾期</option>
             <option value="today">今天到期</option>
             <option value="ready">可开始</option>
             <option value="in_progress">进行中</option>
@@ -1259,6 +1262,11 @@ function TodoDetail({
             <span className={`todo-detail-status todo-detail-status-${status}`}>
               {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
             </span>
+            {deadlineTone(todo.dueAt, todo.status === "completed") === "overdue" && (
+              <span className="todo-detail-overdue-badge" role="status">
+                已逾期
+              </span>
+            )}
           </div>
           <div className="todo-detail-hero-title">
             <h1>{todo.title}</h1>
