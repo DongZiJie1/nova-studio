@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Nova Studio",
@@ -17,11 +18,12 @@
         "height": 800,
         "minWidth": 900,
         "minHeight": 600,
-        "theme": "Dark",
+        "theme": "Light",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,
         "transparent": false,
+        "backgroundColor": "#edf4fd",
         "devtools": true
       }
     ],

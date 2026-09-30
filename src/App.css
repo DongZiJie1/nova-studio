@@ -314,6 +314,7 @@ body,
 
 html {
   font-family: var(--font-sans);
+  background-color: var(--color-bg-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
