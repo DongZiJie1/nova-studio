@@ -1159,35 +1159,32 @@ body {
   background: color-mix(in srgb, var(--surface-control) 44%, transparent);
 }
 
+/* Hidden state must use display:none, not visibility:hidden.
+   visibility:hidden + position:absolute still contributes to the chat
+   scroll container's scrollable overflow, so a collapsed "还有 N 个文件"
+   tooltip with N rows injected phantom scroll height below the last message. */
 .turn-file-change-tooltip {
   position: absolute;
   z-index: 40;
   top: calc(100% + 6px);
   right: 10px;
   left: 10px;
-  display: flex;
-  visibility: hidden;
+  display: none;
   flex-direction: column;
   gap: 2px;
   padding: 7px;
   border: 1px solid color-mix(in srgb, var(--color-border-glass) 88%, transparent);
   border-radius: 10px;
-  opacity: 0;
   background: color-mix(in srgb, var(--color-bg-primary) 86%, transparent);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(20px) saturate(122%);
   -webkit-backdrop-filter: blur(20px) saturate(122%);
-  transform: translateY(-4px);
-  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
   pointer-events: none;
 }
 
 .turn-file-change-overflow:hover .turn-file-change-tooltip,
 .turn-file-change-overflow:focus-visible .turn-file-change-tooltip {
-  visibility: visible;
-  opacity: 1;
-  transform: translateY(0);
-  transition-delay: 0s;
+  display: flex;
 }
 
 .turn-file-change-tooltip > div {
@@ -5061,7 +5058,7 @@ body {
   background: rgba(239, 246, 255, 0.76);
 }
 
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-page {
+[data-custom-background="true"] .todo-page {
   color: #dce3ee;
   background:
     linear-gradient(110deg, rgba(8, 12, 20, 0.3), rgba(8, 12, 20, 0.18) 55%, rgba(8, 12, 20, 0.28)),
@@ -6414,7 +6411,7 @@ body {
 }
 
 .todo-detail-hero {
-  max-width: 760px;
+  max-width: 100%;
 }
 
 .todo-detail-hero-meta {
@@ -6464,13 +6461,74 @@ body {
   content: "";
 }
 
+/* Title and topic chip share one row: the chip never drops below the title. */
+.todo-detail-hero-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
 .todo-detail-hero h1 {
+  min-width: 0;
   margin: 0;
   color: var(--text-heading);
   font-size: clamp(25px, 3vw, 38px);
   font-weight: 730;
   letter-spacing: -0.035em;
   line-height: 1.16;
+}
+
+.todo-topic-tag {
+  display: inline-flex;
+  height: 28px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+  padding: 0 11px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 32%, transparent);
+  border-radius: 999px;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 11%, transparent);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 680;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.todo-topic-tag:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 18%, transparent);
+}
+
+.todo-topic-tag-pen {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.todo-topic-tag:hover .todo-topic-tag-pen {
+  opacity: 0.8;
+}
+
+.todo-topic-tag-editing {
+  padding-right: 9px;
+  cursor: text;
+}
+
+.todo-topic-tag-editing input {
+  width: 13ch;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.todo-topic-tag-editing input::placeholder {
+  color: color-mix(in srgb, currentColor 55%, transparent);
 }
 
 .todo-detail-workspace-grid {
@@ -6577,23 +6635,55 @@ body {
 
 .todo-description-preview {
   min-height: 190px;
-  padding: 18px 20px;
-  border: 1px solid color-mix(in srgb, var(--todo-border) 58%, transparent);
-  border-radius: 13px;
+  padding: 22px 24px 24px 28px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 62%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-accent-start) 30%, var(--todo-border));
+  border-radius: 14px;
   outline: none;
   color: var(--color-text-secondary);
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--todo-highlight) 64%, transparent), transparent 42%),
-    color-mix(in srgb, var(--todo-film) 38%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--todo-highlight) 86%, transparent), transparent 40%),
+    color-mix(in srgb, var(--todo-film) 58%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 74%, transparent);
   cursor: text;
-  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
-.todo-description-preview:hover,
-.todo-description-preview:focus-visible {
-  border-color: color-mix(in srgb, var(--color-accent-start) 26%, var(--todo-border));
-  background: color-mix(in srgb, var(--todo-film) 58%, transparent);
+/* Accent rail + paper sheen keep the read-only block reading as a document. */
+.todo-description-preview::before {
+  position: absolute;
+  inset: 20px auto 20px 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent-start) 84%, transparent), transparent 88%);
+  content: "";
+}
+
+.todo-description-preview::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 72px;
+  height: 72px;
+  background: linear-gradient(225deg, color-mix(in srgb, var(--color-accent-start) 13%, transparent), transparent 64%);
+  content: "";
+  pointer-events: none;
+}
+
+.todo-description-preview-tag {
+  display: inline-flex;
+  margin-bottom: 14px;
+  padding: 3px 9px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 68%, transparent);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
 }
 
 .todo-description-preview .md-body {
@@ -6633,17 +6723,72 @@ body {
 
 .todo-description-preview-empty {
   display: grid;
-  place-items: center;
+  min-height: 156px;
+  padding: 26px 24px;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
   border-style: dashed;
-  cursor: pointer;
+  border-color: color-mix(in srgb, var(--todo-border) 88%, transparent);
+  background:
+    radial-gradient(120% 108% at 50% 0%, color-mix(in srgb, var(--color-accent-start) 7%, transparent), transparent 72%),
+    color-mix(in srgb, var(--todo-film) 40%, transparent);
+  text-align: center;
+  cursor: default;
 }
 
-.todo-description-preview-empty > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+.todo-description-preview-empty::before,
+.todo-description-preview-empty::after {
+  content: none;
+}
+
+.todo-description-empty-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 3px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 70%, transparent);
+  border-radius: 12px;
+  color: color-mix(in srgb, var(--color-accent-start) 68%, var(--color-text-muted));
+  background: color-mix(in srgb, var(--surface-control) 52%, transparent);
+  box-shadow: inset 0 1px 0 var(--todo-highlight);
+}
+
+.todo-description-preview-empty strong {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.todo-description-preview-empty p {
+  margin: 0;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.todo-description-empty-cta {
+  display: inline-flex;
+  height: 27px;
+  margin-top: 5px;
+  padding: 0 12px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 32%, transparent);
+  border-radius: 999px;
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.todo-description-empty-cta:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 48%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 16%, transparent);
 }
 
 .todo-description-editor {
@@ -6734,7 +6879,9 @@ body {
 }
 
 .todo-property-field {
+  display: grid;
   min-width: 0;
+  gap: 7px;
 }
 
 .todo-property-control {
@@ -6820,18 +6967,393 @@ body {
   box-shadow: none;
 }
 
-.todo-detail-fields .todo-property-date input {
-  padding-right: 11px;
+/* Custom due-date picker — matches Studio glass language instead of the native
+   input[type=date] calendar that looks foreign inside Tauri. */
+.todo-date-field {
+  position: relative;
+  min-width: 0;
 }
 
-.todo-property-date input::-webkit-calendar-picker-indicator {
-  position: absolute;
-  inset: 0;
+.todo-date-field-label {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.todo-property-field > span {
+  display: block;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.todo-property-date {
   width: 100%;
-  height: 100%;
   margin: 0;
-  opacity: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 76%, transparent);
+  text-align: left;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
   cursor: pointer;
+}
+
+.todo-date-value {
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  padding: 0 32px 0 34px;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.todo-date-value-empty {
+  color: var(--color-text-muted);
+  font-weight: 520;
+}
+
+.todo-property-control-open {
+  border-color: color-mix(in srgb, var(--color-accent-start) 54%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 68%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 10%, transparent),
+    inset 0 1px 0 var(--todo-highlight);
+}
+
+.todo-property-control-open .todo-property-chevron {
+  color: var(--color-accent-start);
+  transform: rotate(180deg);
+}
+
+.todo-date-popover {
+  position: fixed;
+  z-index: 220;
+  display: flex;
+  width: 288px;
+  padding: 14px 14px 12px;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 18px;
+  /* Solid fill first: translucent scene films must not be the base or the
+     calendar reads as a hole over the task description. */
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--todo-highlight) 28%, transparent), transparent 52%),
+    var(--sidebar-solid-bg);
+  box-shadow: var(--input-shadow), inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 55%, transparent);
+  backdrop-filter: blur(18px) saturate(128%);
+  -webkit-backdrop-filter: blur(18px) saturate(128%);
+  animation: todo-date-popover-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes todo-date-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.todo-date-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.todo-date-header strong {
+  color: var(--text-heading);
+  font-size: 13.5px;
+  font-weight: 720;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-date-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.todo-date-nav button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.todo-date-nav button:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 24%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 9%, transparent);
+}
+
+.todo-date-weekdays,
+.todo-date-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px 2px;
+}
+
+.todo-date-weekdays {
+  padding: 0 2px;
+}
+
+.todo-date-weekdays span {
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  text-align: center;
+  line-height: 28px;
+}
+
+.todo-date-day {
+  display: grid;
+  height: 34px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.todo-date-day:hover {
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+}
+
+.todo-date-day-outside {
+  color: var(--color-text-muted);
+  opacity: 0.55;
+}
+
+.todo-date-day-today {
+  border-color: color-mix(in srgb, var(--color-accent-start) 38%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 8%, transparent);
+}
+
+.todo-date-day-selected,
+.todo-date-day-selected:hover {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, var(--color-accent-start), var(--color-accent-end));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-accent-start) 32%, transparent);
+}
+
+.todo-date-day-selected.todo-date-day-outside {
+  opacity: 1;
+}
+
+.todo-date-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 0;
+  border-top: 1px solid color-mix(in srgb, var(--todo-border) 62%, transparent);
+  margin-top: 2px;
+}
+
+.todo-date-footer button {
+  display: inline-flex;
+  height: 28px;
+  padding: 0 11px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 76%, transparent);
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-control) 42%, transparent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.todo-date-footer button:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 30%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 9%, transparent);
+}
+
+.todo-modal-fields .todo-date-field .todo-property-control {
+  height: 42px;
+  border-color: var(--input-border);
+  border-radius: 10px;
+  background: var(--surface-control);
+  box-shadow: none;
+}
+
+.todo-modal-fields .todo-date-field .todo-property-control:hover,
+.todo-modal-fields .todo-date-field .todo-property-control:focus-visible,
+.todo-modal-fields .todo-date-field .todo-property-control-open {
+  border-color: var(--color-accent-start);
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 16%, transparent);
+}
+
+.todo-modal-fields .todo-date-value {
+  font-size: 13px;
+}
+
+.todo-detail-fields .todo-date-field .todo-property-control {
+  width: 100%;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--todo-border) 76%, transparent);
+  border-radius: 11px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--todo-highlight) 52%, transparent), transparent 55%),
+    color-mix(in srgb, var(--surface-control) 40%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 70%, transparent);
+}
+
+.todo-detail-fields .todo-date-field .todo-property-control:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 24%, var(--todo-border));
+  background: color-mix(in srgb, var(--surface-control) 58%, transparent);
+}
+
+.todo-detail-fields .todo-date-field .todo-property-control:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-accent-start) 54%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 12%, transparent);
+}
+
+/* Status / project menus reuse the calendar popover chrome. */
+.todo-select-popover {
+  gap: 4px;
+  padding: 8px;
+}
+
+.todo-select-option {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 620;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.todo-select-option-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-select-option-label .todo-property-leading-icon {
+  position: static;
+  flex: 0 0 auto;
+}
+
+.todo-select-option-active {
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+}
+
+.todo-select-option-selected,
+.todo-select-option-selected.todo-select-option-active {
+  border-color: color-mix(in srgb, var(--color-accent-start) 28%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 13%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--todo-highlight) 55%, transparent);
+}
+
+.todo-select-option > svg {
+  flex: 0 0 auto;
+  color: var(--color-accent-start);
+}
+
+:root[data-theme="midnight"] .todo-date-popover {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.06), transparent 48%),
+    var(--sidebar-solid-bg);
+}
+
+/* Photo backgrounds always use the dark Liquid Glass palette, matching
+   model-picker-popover / scroll-to-bottom under [data-custom-background]. */
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-popover,
+[data-custom-background="true"] .todo-date-popover {
+  border-color: rgba(218, 226, 242, 0.16);
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.08), transparent 34%),
+    linear-gradient(145deg, rgba(34, 42, 56, 0.96), rgba(14, 20, 30, 0.96));
+  box-shadow:
+    0 20px 52px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-header strong,
+[data-custom-background="true"] .todo-date-header strong,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-day,
+[data-custom-background="true"] .todo-date-day,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-nav button,
+[data-custom-background="true"] .todo-date-nav button,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-footer button,
+[data-custom-background="true"] .todo-date-footer button {
+  color: rgba(239, 242, 248, 0.96);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-weekdays span,
+[data-custom-background="true"] .todo-date-weekdays span,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-day-outside,
+[data-custom-background="true"] .todo-date-day-outside {
+  color: rgba(166, 176, 194, 0.78);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-footer,
+[data-custom-background="true"] .todo-date-footer {
+  border-top-color: rgba(218, 226, 242, 0.12);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-footer button,
+[data-custom-background="true"] .todo-date-footer button {
+  border-color: rgba(218, 226, 242, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .todo-date-footer button:hover,
+[data-custom-background="true"] .todo-date-footer button:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 42%, transparent);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .todo-property-status-in_progress,
@@ -6959,7 +7481,9 @@ body {
   justify-content: space-between;
   gap: 8px;
   border-top: 1px solid color-mix(in srgb, var(--todo-border) 84%, transparent);
-  background: color-mix(in srgb, var(--color-bg-primary) 24%, transparent);
+  /* Transparent so the footer blends into the panel instead of painting a
+     theme-coloured band over the dark todo surface. */
+  background: transparent;
 }
 
 .todo-detail-footer-actions {
@@ -7009,21 +7533,28 @@ body {
 .todo-delete-button {
   display: inline-flex;
   height: 38px;
-  padding: 0 11px;
+  padding: 0 14px;
   align-items: center;
   gap: 6px;
-  border: 0;
+  border: 1px solid color-mix(in srgb, var(--color-error) 38%, transparent);
   border-radius: 10px;
   color: var(--color-error);
-  background: transparent;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   font: inherit;
   font-size: 11.5px;
+  font-weight: 650;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition: background 150ms ease, border-color 150ms ease, opacity 150ms ease;
 }
 
-.todo-delete-button:hover {
-  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+.todo-delete-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-error) 58%, transparent);
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+}
+
+.todo-delete-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .todo-error {
@@ -13642,4 +14173,35 @@ body {
   outline: none;
   background: transparent;
   box-shadow: none;
+}
+
+/* Warning counts remain visible in both sidebar sizes. */
+.sidebar-todo-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-collapsed-action:has(.sidebar-todo-warning-badge) {
+  position: relative;
+}
+.sidebar-collapsed-action .sidebar-todo-warning-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
 }

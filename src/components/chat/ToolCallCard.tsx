@@ -263,8 +263,6 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
       status: objectString(args, "status") || "pending",
       topic: objectString(args, "topic"),
       tags: objectValue(args, "tags"),
-      dependsOn: objectValue(args, "depends_on"),
-      parentId: objectString(args, "parent_id"),
       dueAt: objectString(args, "due_at"),
       projectPath: objectString(args, "project_path"),
     });
@@ -309,8 +307,6 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
             const status = objectString(todo, "status") || "pending";
             const tags = objectValue(todo, "tags");
             const topic = objectString(todo, "topic") || (Array.isArray(tags) && typeof tags[0] === "string" ? tags[0] : "未分类");
-            const dependencies = objectValue(todo, "dependsOn");
-            const parentId = objectString(todo, "parentId");
             const title = objectString(todo, "title", "id") || "未命名待办";
             const dueAt = objectString(todo, "dueAt", "due_at").slice(0, 10);
             const projectPath = objectString(todo, "projectPath", "project_path");
@@ -333,8 +329,6 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
                     </span>
                     {dueAt && <span><CalendarDays size={11} />{dueAt}</span>}
                     {project && <span>{project}</span>}
-                    {parentId && <span>子任务</span>}
-                    {Array.isArray(dependencies) && dependencies.length > 0 && <span>{dependencies.length} 项前置任务</span>}
                   </div>
                 </div>
               </div>

@@ -55,12 +55,11 @@ pub struct SaveUserMemoryInput {
 #[serde(rename_all = "camelCase")]
 pub struct TodoItem {
     topic: Option<String>,
-    parent_id: Option<String>,
-    #[serde(default)]
-    depends_on: Vec<String>,
     id: String,
     title: String,
     description: String,
+    #[serde(default)]
+    completion_notes: String,
     #[serde(default)]
     tags: Vec<String>,
     status: String,
@@ -87,9 +86,6 @@ pub struct TodoState {
 #[serde(rename_all = "camelCase")]
 pub struct CreateTodoInput {
     topic: Option<String>,
-    parent_id: Option<String>,
-    #[serde(default)]
-    depends_on: Vec<String>,
     title: String,
     #[serde(default)]
     description: String,
@@ -104,11 +100,10 @@ pub struct CreateTodoInput {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateTodoInput {
     topic: Option<String>,
-    parent_id: Option<String>,
-    depends_on: Option<Vec<String>>,
     id: String,
     title: Option<String>,
     description: Option<String>,
+    completion_notes: Option<String>,
     tags: Option<Vec<String>>,
     status: Option<String>,
     priority: Option<String>,
@@ -120,121 +115,8 @@ pub struct UpdateTodoInput {
 
 static TODO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn todo_topic(todo: &TodoItem) -> &str {
-    todo.topic
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .or_else(|| todo.tags.first().map(String::as_str))
-        .unwrap_or("未分类")
-}
 
-fn todo_blockers(todo: &TodoItem, items: &[TodoItem], include_children: bool) -> Vec<String> {
-    let mut ids = todo.depends_on.clone();
-    let mut parent_id = todo.parent_id.as_deref();
-    let mut seen = std::collections::HashSet::new();
-    seen.insert(todo.id.as_str());
-    while let Some(parent) = parent_id.and_then(|id| items.iter().find(|item| item.id == id)) {
-        if !seen.insert(parent.id.as_str()) {
-            break;
-        }
-        ids.extend(parent.depends_on.iter().cloned());
-        parent_id = parent.parent_id.as_deref();
-    }
-    if include_children {
-        ids.extend(
-            items
-                .iter()
-                .filter(|item| item.parent_id.as_deref() == Some(todo.id.as_str()))
-                .map(|item| item.id.clone()),
-        );
-    }
-    ids.sort();
-    ids.dedup();
-    ids.retain(|id| {
-        !items
-            .iter()
-            .any(|item| &item.id == id && item.status == "completed")
-    });
-    ids
-}
 
-fn validate_todo_graph(items: &[TodoItem]) -> Result<(), String> {
-    use std::collections::{HashMap, HashSet};
-    let mut edges: HashMap<&str, Vec<&str>> = items
-        .iter()
-        .map(|item| {
-            (
-                item.id.as_str(),
-                item.depends_on.iter().map(String::as_str).collect(),
-            )
-        })
-        .collect();
-    for item in items {
-        for id in item
-            .depends_on
-            .iter()
-            .map(String::as_str)
-            .chain(item.parent_id.as_deref())
-        {
-            if id == item.id {
-                return Err("任务不能关联自己".into());
-            }
-            if !edges.contains_key(id) {
-                return Err(format!("Todo not found: {id}"));
-            }
-        }
-        if let Some(parent_id) = item.parent_id.as_deref() {
-            let parent = items.iter().find(|other| other.id == parent_id).unwrap();
-            if todo_topic(parent).to_lowercase() != todo_topic(item).to_lowercase() {
-                return Err("父任务和子任务必须属于同一主题".into());
-            }
-            edges.get_mut(parent_id).unwrap().push(&item.id);
-        }
-    }
-    fn visit<'a>(
-        id: &'a str,
-        edges: &HashMap<&'a str, Vec<&'a str>>,
-        visiting: &mut HashSet<&'a str>,
-        done: &mut HashSet<&'a str>,
-    ) -> Result<(), String> {
-        if visiting.contains(id) {
-            return Err("任务关系不能形成循环".into());
-        }
-        if done.contains(id) {
-            return Ok(());
-        }
-        visiting.insert(id);
-        if let Some(next) = edges.get(id) {
-            for other in next {
-                visit(other, edges, visiting, done)?;
-            }
-        }
-        visiting.remove(id);
-        done.insert(id);
-        Ok(())
-    }
-    for item in items {
-        let mut seen = HashSet::from([item.id.as_str()]);
-        let mut parent_id = item.parent_id.as_deref();
-        while let Some(parent) = parent_id.and_then(|id| items.iter().find(|other| other.id == id))
-        {
-            if !seen.insert(parent.id.as_str()) {
-                break;
-            }
-            edges
-                .get_mut(item.id.as_str())
-                .unwrap()
-                .extend(parent.depends_on.iter().map(String::as_str));
-            parent_id = parent.parent_id.as_deref();
-        }
-    }
-    let mut visiting = HashSet::new();
-    let mut done = HashSet::new();
-    for item in items {
-        visit(&item.id, &edges, &mut visiting, &mut done)?;
-    }
-    Ok(())
-}
 
 fn nova_agent_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("NOVA_CODING_AGENT_DIR")
@@ -295,8 +177,8 @@ fn normalize_todo_title(value: &str) -> Result<String, String> {
 
 fn normalize_todo_description(value: &str) -> Result<String, String> {
     let description = value.trim().to_string();
-    if description.chars().count() > 4000 {
-        return Err("Todo description must not exceed 4000 characters".to_string());
+    if description.chars().count() > 50_000 {
+        return Err("Todo description must not exceed 50000 characters".to_string());
     }
     Ok(description)
 }
@@ -396,11 +278,10 @@ pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
         topic: normalize_todo_tags(input.topic.into_iter().collect())?
             .into_iter()
             .next(),
-        parent_id: normalize_optional_todo_value(input.parent_id),
-        depends_on: input.depends_on,
         id: format!("todo_{}", uuid::Uuid::new_v4()),
         title,
         description,
+        completion_notes: String::new(),
         tags,
         status: "pending".to_string(),
         priority,
@@ -414,7 +295,6 @@ pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
         completed_at: None,
         order: next_order,
     });
-    validate_todo_graph(&state.items)?;
     write_todo_state(&state)?;
     Ok(state)
 }
@@ -433,17 +313,14 @@ pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
     if let Some(topic) = input.topic {
         todo.topic = normalize_todo_tags(vec![topic])?.into_iter().next();
     }
-    if input.parent_id.is_some() {
-        todo.parent_id = normalize_optional_todo_value(input.parent_id);
-    }
-    if let Some(ids) = input.depends_on {
-        todo.depends_on = ids;
-    }
     if let Some(title) = input.title.as_deref() {
         todo.title = normalize_todo_title(title)?;
     }
     if let Some(description) = input.description.as_deref() {
         todo.description = normalize_todo_description(description)?;
+    }
+    if let Some(notes) = input.completion_notes.as_deref() {
+        todo.completion_notes = normalize_todo_description(notes)?;
     }
     if let Some(tags) = input.tags {
         todo.tags = normalize_todo_tags(tags)?;
@@ -474,16 +351,6 @@ pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
         todo.session_id = normalize_optional_todo_value(input.session_id);
     }
     todo.updated_at = chrono::Utc::now().to_rfc3339();
-    validate_todo_graph(&state.items)?;
-    if let Some(status) = input.status.as_deref() {
-        if status != "pending" {
-            let todo = state.items.iter().find(|item| item.id == input.id).unwrap();
-            let blockers = todo_blockers(todo, &state.items, status == "completed");
-            if !blockers.is_empty() {
-                return Err(format!("请先完成前置任务或子任务：{}", blockers.join(", ")));
-            }
-        }
-    }
     write_todo_state(&state)?;
     Ok(state)
 }
@@ -498,12 +365,6 @@ pub async fn delete_todo(id: String) -> Result<TodoState, String> {
     state.items.retain(|todo| todo.id != id);
     if before == state.items.len() {
         return Err(format!("Todo not found: {id}"));
-    }
-    for todo in &mut state.items {
-        todo.depends_on.retain(|dependency| dependency != &id);
-        if todo.parent_id.as_deref() == Some(&id) {
-            todo.parent_id = None;
-        }
     }
     write_todo_state(&state)?;
     Ok(state)
@@ -1531,91 +1392,6 @@ pub async fn respond_tool_permission(
 
 #[cfg(test)]
 mod todo_tests {
-    fn graph_item(id: &str) -> super::TodoItem {
-        serde_json::from_value(serde_json::json!({
-            "id": id, "title": id, "description": "", "tags": ["实验"],
-            "status": "pending", "priority": "medium", "source": "user",
-            "createdAt": "2026-09-20T00:00:00Z", "updatedAt": "2026-09-20T00:00:00Z", "order": 0
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn task_graph_rejects_cycles_and_missing_references() {
-        let mut a = graph_item("a");
-        let mut b = graph_item("b");
-        b.depends_on = vec!["a".into()];
-        assert!(super::validate_todo_graph(&[a.clone(), b.clone()]).is_ok());
-        a.depends_on = vec!["b".into()];
-        assert!(super::validate_todo_graph(&[a.clone(), b.clone()]).is_err());
-        a.depends_on = vec!["missing".into()];
-        assert!(super::validate_todo_graph(&[a.clone(), b.clone()]).is_err());
-        a.depends_on.clear();
-        b.parent_id = Some("a".into());
-        assert!(super::validate_todo_graph(&[a, b]).is_err());
-    }
-
-    #[test]
-    fn task_graph_rejects_inherited_dependency_deadlock() {
-        let mut a = graph_item("a");
-        let mut b = graph_item("b");
-        let mut a1 = graph_item("a1");
-        let mut b1 = graph_item("b1");
-        a1.parent_id = Some("a".into());
-        b1.parent_id = Some("b".into());
-        a.depends_on = vec!["b1".into()];
-        b.depends_on = vec!["a1".into()];
-        assert!(super::validate_todo_graph(&[a, b, a1, b1]).is_err());
-    }
-
-    #[test]
-    fn task_graph_join_waits_for_all_branches() {
-        let mut a = graph_item("a");
-        let mut b = graph_item("b");
-        let mut join = graph_item("join");
-        join.depends_on = vec!["a".into(), "b".into()];
-        a.status = "completed".into();
-        assert_eq!(
-            super::todo_blockers(&join, &[a.clone(), b.clone(), join.clone()], false),
-            vec!["b"]
-        );
-        b.status = "completed".into();
-        assert!(super::todo_blockers(&join, &[a, b, join.clone()], false).is_empty());
-    }
-
-    #[test]
-    fn task_graph_children_inherit_prerequisites_and_gate_parent_completion() {
-        let prep = graph_item("prep");
-        let mut parent = graph_item("parent");
-        parent.depends_on = vec!["prep".into()];
-        let mut child = graph_item("child");
-        child.parent_id = Some("parent".into());
-        let items = vec![prep, parent.clone(), child.clone()];
-        assert!(super::validate_todo_graph(&items).is_ok());
-        assert_eq!(super::todo_blockers(&child, &items, false), vec!["prep"]);
-        assert_eq!(
-            super::todo_blockers(&parent, &items, true),
-            vec!["child", "prep"]
-        );
-        child.topic = Some("其他主题".into());
-        assert!(super::validate_todo_graph(&[parent, child]).is_err());
-    }
-
-    #[test]
-    fn task_graph_roundtrips_relations_and_legacy_tags() {
-        let mut item = graph_item("child");
-        assert_eq!(super::todo_topic(&item), "实验");
-        assert!(item.depends_on.is_empty());
-        item.topic = Some("RL".into());
-        item.parent_id = Some("parent".into());
-        item.depends_on = vec!["prep".into()];
-        let value = serde_json::to_value(&item).unwrap();
-        assert_eq!(value["parentId"], "parent");
-        assert_eq!(value["dependsOn"][0], "prep");
-        let parsed: super::TodoItem = serde_json::from_value(value).unwrap();
-        assert_eq!(super::todo_topic(&parsed), "RL");
-        assert_eq!(parsed.parent_id.as_deref(), Some("parent"));
-    }
     use super::*;
 
     #[test]
@@ -1702,11 +1478,10 @@ mod todo_tests {
             items: vec![TodoItem {
                 tags: vec![],
                 topic: None,
-                parent_id: None,
-                depends_on: vec![],
                 id: "todo_1".to_string(),
                 title: "Ship the todo tool".to_string(),
                 description: "Wire the agent tool to the 待办 page.".to_string(),
+                completion_notes: "已完成联调\n待补充文档".to_string(),
                 status: "pending".to_string(),
                 priority: "medium".to_string(),
                 project_path: Some("/tmp/project".to_string()),
@@ -1730,6 +1505,9 @@ mod todo_tests {
         assert_eq!(item["createdAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["updatedAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["order"], 4);
+        assert_eq!(item["completionNotes"], "已完成联调\n待补充文档");
+        let restored: TodoState = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(restored.items[0].completion_notes, "已完成联调\n待补充文档");
         assert!(item.get("dueAt").is_some());
         assert!(item.get("completedAt").is_some());
     }

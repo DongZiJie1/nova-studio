@@ -310,6 +310,11 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
   const pendingToolCalls = new Map<string, ToolCall>();
   let pendingSourceAgentId: string | undefined;
 
+  // get_messages 刷新历史时若每次 nextId()，整棵 ChatHistory 的 React key 全变，
+  // 会整表 remount，滚动位置被重置到顶部。用 entryId + 在列表中的序号生成稳定 key。
+  const stableId = (entryId: string | undefined, timestamp: number): string =>
+    `h-${entryId ?? timestamp}-${hydrated.length}`;
+
   for (const message of messages) {
     const parsedTimestamp =
       typeof message.timestamp === "number"
@@ -331,7 +336,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         : {};
       const formatted = formatAgentTaskResult(details);
       hydrated.push({
-        id: nextId(),
+        id: stableId(message.entryId, timestamp),
         role: "agent_result",
         content: formatted.content,
         timestamp,
@@ -343,7 +348,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
 
     if (message.role === "custom" && message.customType === "agent_task_batch_completed") {
       hydrated.push({
-        id: nextId(),
+        id: stableId(message.entryId, timestamp),
         role: "agent_batch",
         content: messageText(message),
         timestamp,
@@ -355,7 +360,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
     // otherwise the abort looks like a crash.
     if (message.role === "custom" && message.customType === "turn_timeout") {
       hydrated.push({
-        id: nextId(),
+        id: stableId(message.entryId, timestamp),
         role: "notice",
         content: messageText(message),
         timestamp,
@@ -368,7 +373,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
       if (!rawContent) continue;
       const { cleanContent, attachments } = parseAttachmentsFromContent(rawContent);
       hydrated.push({
-        id: nextId(),
+        id: stableId(message.entryId, timestamp),
         entryId: message.entryId,
         role: "user",
         content: cleanContent,
@@ -383,14 +388,14 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
     if (message.role === "assistant") {
       if (!Array.isArray(message.content)) {
         const content = messageText(message);
-        if (content) hydrated.push({ id: nextId(), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content, timestamp });
+        if (content) hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content, timestamp });
         continue;
       }
 
       let text = "";
       const flushText = () => {
         if (!text) return;
-        hydrated.push({ id: nextId(), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content: text, timestamp });
+        hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, feedback: message.entryId ? feedback[message.entryId] : undefined, role: "assistant", content: text, timestamp });
         text = "";
       };
       for (const block of message.content) {
@@ -398,7 +403,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
           text += block.text;
         } else if (block.type === "thinking" && typeof block.thinking === "string") {
           flushText();
-          hydrated.push({ id: nextId(), entryId: message.entryId, role: "thinking", content: block.thinking, timestamp });
+          hydrated.push({ id: stableId(message.entryId, timestamp), entryId: message.entryId, role: "thinking", content: block.thinking, timestamp });
         } else if (
           block.type === "toolCall" &&
           typeof block.id === "string" &&
@@ -428,7 +433,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
       };
       pendingToolCalls.delete(message.toolCallId);
       hydrated.push({
-        id: nextId(),
+        id: stableId(message.entryId ?? message.toolCallId, timestamp),
         role: "tool",
         content: "",
         timestamp,
@@ -439,7 +444,7 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
 
   for (const pending of pendingToolCalls.values()) {
     hydrated.push({
-      id: nextId(),
+      id: stableId(pending.id, Date.now()),
       role: "tool",
       content: "",
       timestamp: Date.now(),

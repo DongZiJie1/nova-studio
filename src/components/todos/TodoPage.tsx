@@ -1,4 +1,13 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Minus,
@@ -8,8 +17,11 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   Clock3,
+  FileText,
   FolderKanban,
   ListTodo,
   LoaderCircle,
@@ -17,6 +29,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  Tag,
   Trash2,
   X,
 } from "lucide-react";
@@ -32,8 +45,8 @@ import {
   type TodoStatus,
 } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
-import { TodoTreeCanvas, TaskStatusIcon } from "./TodoTreeCanvas";
-import { blockersOf, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { TodoTreeCanvas, TaskStatusIcon, TodoDeadline } from "./TodoTreeCanvas";
+import { compareTodoDeadline, STATE_LABEL, taskState, topicOf } from "./task-graph";
 import "./task-trees.css";
 import { Markdown } from "../chat/Markdown";
 
@@ -204,6 +217,344 @@ function localDateKey(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+function parseDateKey(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+}
+
+function formatDueDisplay(value: string): string {
+  const date = parseDateKey(value);
+  if (!date) return "选择日期";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}/${month}/${day}`;
+}
+
+/**
+ * Sun-start weeks covering the month only. Trailing/leading weeks that fall
+ * entirely outside the month are dropped so e.g. September never shows Oct 4–10.
+ */
+function buildMonthDays(year: number, month: number): Array<{ date: Date; inMonth: boolean }> {
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const start = new Date(year, month, 1 - first.getDay());
+  const end = new Date(year, month, last.getDate() + (6 - last.getDay()));
+  const days: Array<{ date: Date; inMonth: boolean }> = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const date = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate());
+    days.push({ date, inMonth: date.getMonth() === month });
+  }
+  return days;
+}
+
+/** Portals must live inside the themed app root so [data-custom-background] / scene tokens apply. */
+function themedPortalRoot(): HTMLElement {
+  return document.querySelector<HTMLElement>("[data-custom-background]") ?? document.body;
+}
+
+/**
+ * Shared open/position/outside-dismiss behaviour for property popovers (date
+ * calendar, status/project menus). Portals into the themed app root so scene
+ * tokens and [data-custom-background] styles apply.
+ */
+function usePropertyPopover(
+  open: boolean,
+  setOpen: (value: boolean) => void,
+  deps: unknown[],
+  preferredWidth = 288,
+) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      const popover = popoverRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.max(rect.width, preferredWidth);
+      const height = popover?.offsetHeight || 280;
+      const top = rect.bottom + 8 + height > window.innerHeight - 12 ? Math.max(12, rect.top - height - 8) : rect.bottom + 8;
+      const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
+      setPosition({ top, left, width });
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    updatePosition();
+    const frame = requestAnimationFrame(updatePosition);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ...deps]);
+
+  return { triggerRef, popoverRef, position };
+}
+
+interface TodoSelectOption {
+  value: string;
+  label: string;
+  icon?: ReactNode;
+}
+
+/**
+ * Theme-matched property menu. Native <select> popups fight Studio chrome the
+ * same way input[type=date] does, so status / project share the calendar's
+ * glass popover language.
+ */
+function TodoSelectField({
+  value,
+  options,
+  onChange,
+  controlClassName = "",
+  placeholder = "未选择",
+}: {
+  value: string;
+  options: TodoSelectOption[];
+  onChange: (value: string) => void;
+  controlClassName?: string;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(() => Math.max(0, options.findIndex((option) => option.value === value)));
+  const { triggerRef, popoverRef, position } = usePropertyPopover(open, setOpen, [options.length, value], 220);
+  const selected = options.find((option) => option.value === value);
+  const listId = useId();
+
+  const openMenu = () => {
+    setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
+    setOpen(true);
+  };
+
+  const commit = (option: TodoSelectOption) => {
+    onChange(option.value);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  return (
+    <div className="todo-date-field">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`todo-property-control ${controlClassName}${open ? " todo-property-control-open" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-label={placeholder}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={(event) => {
+          if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            openMenu();
+            return;
+          }
+          if (!open) return;
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setActiveIndex((index) =>
+              event.key === "ArrowDown" ? (index + 1) % options.length : index <= 0 ? options.length - 1 : index - 1,
+            );
+          } else if (event.key === "Enter" && options[activeIndex]) {
+            event.preventDefault();
+            commit(options[activeIndex]);
+          }
+        }}
+      >
+        {selected?.icon ?? options[0]?.icon}
+        <span className={`todo-date-value${selected ? "" : " todo-date-value-empty"}`}>{selected?.label ?? placeholder}</span>
+        <ChevronDown className="todo-property-chevron" size={14} />
+      </button>
+      {open && position
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              id={listId}
+              className="todo-date-popover todo-select-popover"
+              role="listbox"
+              aria-label={placeholder}
+              style={{ top: position.top, left: position.left, width: position.width }}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              {options.map((option, index) => {
+                const isSelected = option.value === value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`todo-select-option${index === activeIndex ? " todo-select-option-active" : ""}${isSelected ? " todo-select-option-selected" : ""}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => commit(option)}
+                  >
+                    <span className="todo-select-option-label">
+                      {option.icon}
+                      {option.label}
+                    </span>
+                    {isSelected ? <Check size={14} aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+            </div>,
+            themedPortalRoot(),
+          )
+        : null}
+    </div>
+  );
+}
+
+/**
+ * Theme-matched due-date picker. The native input[type=date] calendar fights the
+ * Studio chrome (especially inside Tauri), so this renders our own popover with
+ * the same soft glass language as the rest of the todo UI.
+ */
+function TodoDateField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const selected = parseDateKey(value);
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const [viewYear, setViewYear] = useState(() => selected?.getFullYear() ?? today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => selected?.getMonth() ?? today.getMonth());
+  const { triggerRef, popoverRef, position } = usePropertyPopover(open, setOpen, [viewYear, viewMonth], 288);
+
+  const openPicker = () => {
+    const anchor = selected ?? new Date();
+    setViewYear(anchor.getFullYear());
+    setViewMonth(anchor.getMonth());
+    setOpen(true);
+  };
+
+  const days = buildMonthDays(viewYear, viewMonth);
+  const selectDate = (date: Date) => {
+    onChange(localDateKey(date));
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const shiftMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+  };
+
+  return (
+    <div className="todo-date-field">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`todo-property-control todo-property-date${open ? " todo-property-control-open" : ""}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label="截止日期"
+        onClick={() => (open ? setOpen(false) : openPicker())}
+      >
+        <CalendarDays className="todo-property-leading-icon" size={14} />
+        <span className={`todo-date-value${value && selected ? "" : " todo-date-value-empty"}`}>{formatDueDisplay(value)}</span>
+        <ChevronDown className="todo-property-chevron" size={14} />
+      </button>
+      {open && position
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="todo-date-popover"
+              role="dialog"
+              aria-label="选择截止日期"
+              style={{ top: position.top, left: position.left, width: position.width }}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="todo-date-header">
+                <strong>
+                  {viewYear}年 {viewMonth + 1}月
+                </strong>
+                <div className="todo-date-nav">
+                  <button type="button" onClick={() => shiftMonth(-1)} aria-label="上一月">
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button type="button" onClick={() => shiftMonth(1)} aria-label="下一月">
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+              </header>
+              <div className="todo-date-weekdays" aria-hidden="true">
+                {["日", "一", "二", "三", "四", "五", "六"].map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+              </div>
+              <div className="todo-date-grid">
+                {days.map(({ date, inMonth }) => {
+                  const key = localDateKey(date);
+                  const isSelected = Boolean(selected) && key === value;
+                  const isToday = key === todayKey;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={[
+                        "todo-date-day",
+                        inMonth ? "" : "todo-date-day-outside",
+                        isToday ? "todo-date-day-today" : "",
+                        isSelected ? "todo-date-day-selected" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      aria-pressed={isSelected}
+                      aria-label={formatDueDisplay(key)}
+                      onClick={() => selectDate(date)}
+                    >
+                      {date.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+              <footer className="todo-date-footer">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange("");
+                    setOpen(false);
+                    triggerRef.current?.focus();
+                  }}
+                >
+                  清除
+                </button>
+                <button type="button" onClick={() => selectDate(today)}>
+                  今天
+                </button>
+              </footer>
+            </div>,
+            themedPortalRoot(),
+          )
+        : null}
+    </div>
+  );
+}
+
 interface TodoPageProps {
   projects: Array<{ path: string; name: string }>;
   onRunTodo: (todo: TodoItem) => Promise<{ agentId: string; sessionId: string }>;
@@ -288,6 +639,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
     setBusy(true);
     try {
       setState(await operation());
+      useTodoStore.getState().markTodosChanged();
       setError(null);
     } catch (reason) {
       setError(String(reason));
@@ -320,8 +672,9 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         filter === "all" ||
         (filter === "today"
           ? todo.dueAt?.slice(0, 10) === localDateKey() && todo.status !== "completed"
-          : taskState(todo, state.items) === filter),
-    );
+          : taskState(todo) === filter),
+    )
+    .sort(compareTodoDeadline);
   return (
     <section ref={pageRef} className="todo-page task-page">
       <header className="task-page-header">
@@ -330,7 +683,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           <h1>
             待办 <small>{state.items.length}</small>
           </h1>
-          <p>每个主题，一条清晰的推进路径。</p>
+          <p>未完成在前，已完成在后；各组按截止日期排序，无日期的放在组末。</p>
         </div>
         <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
           <Plus size={16} />
@@ -358,7 +711,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         <div className="task-view-switch">
           <button aria-pressed={mode === "tree"} onClick={() => setMode("tree")}>
             <Network size={15} />
-            主题树
+            分栏
           </button>
           <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>
             <ListTodo size={15} />
@@ -381,7 +734,6 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
             <option value="today">今天到期</option>
             <option value="ready">可开始</option>
             <option value="in_progress">进行中</option>
-            <option value="blocked">等待前置</option>
             <option value="completed">已完成</option>
           </select>
         )}
@@ -416,19 +768,19 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           {visible.map((todo) => (
             <article key={todo.id}>
               <button
-                className={`task-status task-status-${taskState(todo, state.items)}`}
-                disabled={busy || (todo.status !== "completed" && blockersOf(todo, state.items, true).length > 0)}
+                className={`task-status task-status-${taskState(todo)}`}
+                disabled={busy}
                 aria-label={`切换完成状态：${todo.title}`}
                 onClick={() => toggleTodo(todo)}
               >
-                <TaskStatusIcon state={taskState(todo, state.items)} />
+                <TaskStatusIcon state={taskState(todo)} />
               </button>
               <button className="task-flat-title" onClick={() => setSelectedId(todo.id)}>
                 <strong>{todo.title}</strong>
                 <span>
-                  {topicOf(todo)} · {STATE_LABEL[taskState(todo, state.items)]}
-                  {todo.dueAt ? ` · ${todo.dueAt.slice(0, 10)}` : ""}
+                  {topicOf(todo)} · {STATE_LABEL[taskState(todo)]}
                 </span>
+                <TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} />
               </button>
             </article>
           ))}
@@ -436,7 +788,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
       )}
       <footer className="task-canvas-footer">
         <div className="task-legend">
-          {(["completed", "in_progress", "ready", "blocked"] as const).map((status) => (
+          {(["completed", "in_progress", "ready"] as const).map((status) => (
             <span className={`task-status-${status}`} key={status}>
               <TaskStatusIcon state={status} />
               {STATE_LABEL[status]}
@@ -503,23 +855,29 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
             open
             closing={false}
             onClose={() => setSelectedId(null)}
-            onSave={(input) => mutate(() => updateTodo(input))}
+            onSave={(input) =>
+              mutate(async () => {
+                const next = await updateTodo(input);
+                setSelectedId(null);
+                return next;
+              })
+            }
             onDelete={() => {
-              if (window.confirm(`删除“${selected.title}”？子任务将保留，相关依赖连线将移除。`))
+              if (window.confirm(`删除“${selected.title}”？`))
                 void mutate(async () => {
                   const next = await deleteTodo(selected.id);
                   setSelectedId(null);
                   return next;
                 });
             }}
-            onRun={() => {
-              if (blockersOf(selected, state.items).length) {
-                setError("请先完成前置任务");
-                return;
-              }
+            onRun={(input) => {
+              // Persist the draft first so Nova always starts from what the panel shows,
+              // instead of the last saved snapshot.
               void mutate(async () => {
-                const link = await onRunTodo(selected);
-                return updateTodo({ id: selected.id, status: "in_progress", ...link });
+                const saved = await updateTodo(input);
+                const item = saved.items.find((entry) => entry.id === input.id) ?? selected;
+                const link = await onRunTodo(item);
+                return updateTodo({ id: item.id, status: "in_progress", ...link });
               });
             }}
             onOpenSession={() => onOpenSession(selected)}
@@ -554,103 +912,83 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   );
 }
 
-function TaskRelations({
+function TopicField({
   items,
-  currentId,
   topic,
-  parentId,
-  dependsOn,
   onChange,
 }: {
   items: TodoItem[];
-  currentId?: string;
   topic: string;
-  parentId: string;
-  dependsOn: string[];
-  onChange: (values: { topic?: string; parentId?: string; dependsOn?: string[] }) => void;
+  onChange: (topic: string) => void;
 }) {
   const listId = useId();
-  const [search, setSearch] = useState("");
-  const candidates = items.filter((item) => item.id !== currentId);
   return (
-    <div className="task-relations">
-      <label>
-        <span>主题</span>
+    <label>
+      <span>主题</span>
+      <input
+        aria-label="主题名称"
+        list={listId}
+        maxLength={24}
+        value={topic}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="默认使用第一个标签，无标签则归入未分类"
+      />
+      <datalist id={listId}>
+        {[...new Set(items.map(topicOf))].map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
+    </label>
+  );
+}
+
+/**
+ * Compact topic chip shown next to the detail title. Clicking turns it into an
+ * inline input so the topic stays editable without a full form section.
+ */
+function TopicTag({
+  items,
+  topic,
+  onChange,
+}: {
+  items: TodoItem[];
+  topic: string;
+  onChange: (topic: string) => void;
+}) {
+  const listId = useId();
+  const [editing, setEditing] = useState(false);
+
+  if (editing) {
+    return (
+      <span className="todo-topic-tag todo-topic-tag-editing">
+        <Tag className="todo-topic-tag-icon" size={13} aria-hidden="true" />
         <input
+          autoFocus
           aria-label="主题名称"
           list={listId}
           maxLength={24}
           value={topic}
-          onChange={(event) => onChange({ topic: event.target.value })}
-          placeholder="默认使用第一个标签，无标签则归入未分类"
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === "Escape") setEditing(false);
+          }}
         />
         <datalist id={listId}>
           {[...new Set(items.map(topicOf))].map((name) => (
             <option key={name} value={name} />
           ))}
         </datalist>
-      </label>
-      <label>
-        <span>
-          父任务 <small>拆解关系，不代表先后顺序</small>
-        </span>
-        <select value={parentId} onChange={(event) => onChange({ parentId: event.target.value })}>
-          <option value="">独立任务</option>
-          {candidates
-            .filter(
-              (item) =>
-                topicOf(item).toLocaleLowerCase() === (topic || "未分类").trim().toLocaleLowerCase() ||
-                item.id === parentId,
-            )
-            .map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.title}
-              </option>
-            ))}
-        </select>
-      </label>
-      <fieldset>
-        <legend>
-          前置任务 <small>全部完成后，才能开始本任务</small>
-        </legend>
-        <input
-          aria-label="筛选前置任务"
-          placeholder="搜索可关联的任务…"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <div className="task-dependency-options">
-          {candidates
-            .filter(
-              (item) =>
-                `${topicOf(item)} ${item.title}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()) ||
-                dependsOn.includes(item.id),
-            )
-            .map((item) => (
-              <label key={item.id}>
-                <input
-                  type="checkbox"
-                  checked={dependsOn.includes(item.id)}
-                  onChange={(event) =>
-                    onChange({
-                      dependsOn: event.target.checked
-                        ? [...dependsOn, item.id]
-                        : dependsOn.filter((id) => id !== item.id),
-                    })
-                  }
-                />
-                <span>
-                  {item.title}
-                  <small>
-                    {topicOf(item)} · {STATE_LABEL[taskState(item, items)]}
-                  </small>
-                </span>
-              </label>
-            ))}
-          {candidates.length === 0 && <p>暂无可关联的任务；独立任务无需设置前置。</p>}
-        </div>
-      </fieldset>
-    </div>
+      </span>
+    );
+  }
+
+  return (
+    <button type="button" className="todo-topic-tag" title="修改主题" onClick={() => setEditing(true)}>
+      {topic || "未分类"}
+      <Tag className="todo-topic-tag-icon" size={12} aria-hidden="true" />
+      <PenLine className="todo-topic-tag-pen" size={11} aria-hidden="true" />
+    </button>
   );
 }
 
@@ -681,8 +1019,6 @@ function CreateTodoModal({
     projectPath: "",
     dueAt: "",
     topic: "",
-    parentId: "",
-    dependsOn: [],
     ...seed,
   });
   const [saving, setSaving] = useState(false);
@@ -737,7 +1073,7 @@ function CreateTodoModal({
           <div>
             <h2 id="todo-modal-title">{seed.topic ? "添加任务" : "新建主题与任务"}</h2>
             <p>
-              {seed.topic ? "设置任务内容，确认它与其他任务的关系。" : "填写主题和首个任务，开始一条新的推进路径。"}
+              {seed.topic ? "设置任务内容与所属主题。" : "填写主题和第一个任务，开始一栏新的清单。"}
             </p>
           </div>
           <button type="button" className="todo-icon-button" disabled={saving} onClick={onClose} aria-label="关闭">
@@ -758,52 +1094,52 @@ function CreateTodoModal({
           </label>
           <label>
             <span>
-              描述 <small>{form.description.length}/4000</small>
+              描述 <small>{form.description.length}/50000</small>
             </span>
             <textarea
               value={form.description}
-              maxLength={4000}
+              maxLength={50000}
               rows={4}
               onChange={(event) => setForm({ ...form, description: event.target.value })}
               placeholder="补充背景、目标或验收要求…"
             />
           </label>
           <div className="todo-modal-grid">
-            <label>
+            <div className="todo-date-field-label">
               <span>截止日期</span>
-              <input
-                type="date"
-                value={form.dueAt}
-                onChange={(event) => setForm({ ...form, dueAt: event.target.value })}
-              />
-            </label>
+              <TodoDateField value={form.dueAt ?? ""} onChange={(dueAt) => setForm({ ...form, dueAt })} />
+            </div>
           </div>
-          <TaskRelations
+          <TopicField
             items={items}
             topic={form.topic || form.tags?.[0] || ""}
-            parentId={form.parentId ?? ""}
-            dependsOn={form.dependsOn ?? []}
-            onChange={(values) => setForm({ ...form, ...values })}
+            onChange={(topic) => setForm({ ...form, topic })}
           />
           <TodoTagField
             tags={form.tags ?? []}
             suggestions={tagSuggestions}
             onChange={(tags) => setForm({ ...form, tags })}
           />
-          <label>
+          <div className="todo-date-field-label">
             <span>所属项目</span>
-            <select
-              value={form.projectPath}
-              onChange={(event) => setForm({ ...form, projectPath: event.target.value })}
-            >
-              <option value="">不关联项目</option>
-              {projects.map((project) => (
-                <option key={project.path} value={project.path}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            <TodoSelectField
+              value={form.projectPath ?? ""}
+              controlClassName="todo-property-project"
+              options={[
+                {
+                  value: "",
+                  label: "不关联项目",
+                  icon: <FolderKanban className="todo-property-leading-icon" size={14} />,
+                },
+                ...projects.map((project) => ({
+                  value: project.path,
+                  label: project.name,
+                  icon: <FolderKanban className="todo-property-leading-icon" size={14} />,
+                })),
+              ]}
+              onChange={(projectPath) => setForm({ ...form, projectPath })}
+            />
+          </div>
         </div>
 
         <footer>
@@ -819,6 +1155,20 @@ function CreateTodoModal({
     </div>,
     document.body,
   );
+}
+
+/** The editable copy of a todo held by the detail panel. */
+interface TodoDraft {
+  id: string;
+  title: string;
+  description: string;
+  completionNotes: string;
+  status: TodoStatus;
+  priority: TodoPriority;
+  tags: string[];
+  projectPath: string;
+  dueAt: string;
+  topic: string;
 }
 
 function TodoDetail({
@@ -845,60 +1195,48 @@ function TodoDetail({
   open: boolean;
   closing: boolean;
   onClose: () => void;
-  onSave: (input: {
-    id: string;
-    title: string;
-    description: string;
-    status: TodoStatus;
-    priority: TodoPriority;
-    tags: string[];
-    projectPath: string;
-    dueAt: string;
-    topic: string;
-    parentId: string;
-    dependsOn: string[];
-  }) => Promise<void>;
+  onSave: (input: TodoDraft) => Promise<void>;
   onDelete: () => void;
-  onRun: () => void;
+  onRun: (input: TodoDraft) => void;
   onOpenSession: () => void;
 }) {
   useDialogFocus(panelRef);
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(todo.description);
+  const [completionNotes, setCompletionNotes] = useState(todo.completionNotes ?? "");
   const [status, setStatus] = useState(todo.status);
   const priority = todo.priority;
   const [topic, setTopic] = useState(topicOf(todo));
-  const [parentId, setParentId] = useState(todo.parentId ?? "");
-  const [dependsOn, setDependsOn] = useState(todo.dependsOn ?? []);
   const [tags, setTags] = useState<string[]>(todo.tags ?? []);
   const [projectPath, setProjectPath] = useState(todo.projectPath ?? "");
   const [dueAt, setDueAt] = useState(todo.dueAt?.slice(0, 10) ?? "");
   const [editingDescription, setEditingDescription] = useState(false);
 
+  // Only re-seed the draft when the panel switches to another task. Depending on the
+  // whole object also re-ran this on every background refresh (window focus, agent
+  // writes), which silently discarded unsaved edits and greyed out the save button.
   useEffect(() => {
     setTitle(todo.title);
     setDescription(todo.description);
+    setCompletionNotes(todo.completionNotes ?? "");
     setStatus(todo.status);
     setTopic(topicOf(todo));
-    setParentId(todo.parentId ?? "");
-    setDependsOn(todo.dependsOn ?? []);
     setTags(todo.tags ?? []);
     setProjectPath(todo.projectPath ?? "");
     setDueAt(todo.dueAt?.slice(0, 10) ?? "");
     setEditingDescription(false);
-  }, [todo]);
+  }, [todo.id]);
 
   const dirty =
     title !== todo.title ||
     description !== todo.description ||
+    completionNotes !== (todo.completionNotes ?? "") ||
     status !== todo.status ||
     topic !== topicOf(todo) ||
-    parentId !== (todo.parentId ?? "") ||
-    dependsOn.join("\0") !== (todo.dependsOn ?? []).join("\0") ||
     tags.join("\u0000") !== (todo.tags ?? []).join("\u0000") ||
     projectPath !== (todo.projectPath ?? "") ||
     dueAt !== (todo.dueAt?.slice(0, 10) ?? "");
-  const DetailStatusIcon = status === "completed" ? CheckCircle2 : status === "in_progress" ? Clock3 : Circle;
+  const draft: TodoDraft = { id: todo.id, title, description, completionNotes, status, priority, tags, projectPath, dueAt, topic };
 
   return (
     <aside
@@ -920,66 +1258,66 @@ function TodoDetail({
               {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
             </span>
           </div>
-          <h1>{todo.title}</h1>
+          <div className="todo-detail-hero-title">
+            <h1>{todo.title}</h1>
+            <TopicTag items={items} topic={topic} onChange={setTopic} />
+          </div>
         </section>
 
         <section className="todo-detail-section todo-detail-properties">
           <span className="todo-detail-section-title">任务属性</span>
           <div className="todo-detail-properties-grid">
-            <label className="todo-property-field">
+            <div className="todo-property-field">
               <span>状态</span>
-              <div className={`todo-property-control todo-property-status-${status}`}>
-                <DetailStatusIcon className="todo-property-leading-icon" size={14} />
-                <select value={status} onChange={(event) => setStatus(event.target.value as TodoStatus)}>
-                  <option value="pending">待处理</option>
-                  <option value="in_progress">进行中</option>
-                  <option value="completed">已完成</option>
-                </select>
-                <ChevronDown className="todo-property-chevron" size={14} />
-              </div>
-            </label>
-            <label className="todo-property-field">
+              <TodoSelectField
+                value={status}
+                controlClassName={`todo-property-status-${status}`}
+                options={[
+                  { value: "pending", label: "待处理", icon: <Circle className="todo-property-leading-icon" size={14} /> },
+                  {
+                    value: "in_progress",
+                    label: "进行中",
+                    icon: <Clock3 className="todo-property-leading-icon" size={14} />,
+                  },
+                  {
+                    value: "completed",
+                    label: "已完成",
+                    icon: <CheckCircle2 className="todo-property-leading-icon" size={14} />,
+                  },
+                ]}
+                onChange={(next) => setStatus(next as TodoStatus)}
+              />
+            </div>
+            <div className="todo-property-field">
               <span>截止日期</span>
-              <div className="todo-property-control todo-property-date">
-                <CalendarDays className="todo-property-leading-icon" size={14} />
-                <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
-              </div>
-            </label>
-            <label className="todo-property-field">
+              <TodoDateField value={dueAt} onChange={setDueAt} />
+            </div>
+            <div className="todo-property-field">
               <span>所属项目</span>
-              <div className="todo-property-control todo-property-project">
-                <FolderKanban className="todo-property-leading-icon" size={14} />
-                <select value={projectPath} onChange={(event) => setProjectPath(event.target.value)}>
-                  <option value="">不关联项目</option>
-                  {projects.map((project) => (
-                    <option key={project.path} value={project.path}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="todo-property-chevron" size={14} />
-              </div>
-            </label>
+              <TodoSelectField
+                value={projectPath}
+                controlClassName="todo-property-project"
+                options={[
+                  {
+                    value: "",
+                    label: "不关联项目",
+                    icon: <FolderKanban className="todo-property-leading-icon" size={14} />,
+                  },
+                  ...projects.map((project) => ({
+                    value: project.path,
+                    label: project.name,
+                    icon: <FolderKanban className="todo-property-leading-icon" size={14} />,
+                  })),
+                ]}
+                onChange={setProjectPath}
+              />
+            </div>
             <div className="todo-property-field todo-property-field-wide">
               <TodoTagField tags={tags} suggestions={tagSuggestions} onChange={setTags} />
             </div>
           </div>
         </section>
 
-        <section className="todo-detail-section">
-          <TaskRelations
-            items={items}
-            currentId={todo.id}
-            topic={topic}
-            parentId={parentId}
-            dependsOn={dependsOn}
-            onChange={(values) => {
-              if (values.topic !== undefined) setTopic(values.topic);
-              if (values.parentId !== undefined) setParentId(values.parentId);
-              if (values.dependsOn !== undefined) setDependsOn(values.dependsOn);
-            }}
-          />
-        </section>
         <section className="todo-detail-section todo-detail-content-section">
           <span className="todo-detail-section-title">任务内容</span>
           <label>
@@ -990,7 +1328,7 @@ function TodoDetail({
             <div className="todo-description-heading">
               <span>描述</span>
               <div>
-                <small>{description.length}/4000 · Markdown</small>
+                <small>{description.length}/50000 · Markdown</small>
                 <button type="button" onClick={() => setEditingDescription((value) => !value)}>
                   {editingDescription ? <Check size={12} /> : <PenLine size={12} />}
                   {editingDescription ? "完成编辑" : "编辑"}
@@ -1002,34 +1340,52 @@ function TodoDetail({
                 <textarea
                   autoFocus
                   rows={10}
-                  maxLength={4000}
+                  maxLength={50000}
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
                   placeholder="使用 Markdown 补充目标、要求或验收标准…"
                 />
                 <span>支持标题、列表、引用、链接、表格与代码块</span>
               </div>
+            ) : description ? (
+              <div className="todo-description-preview">
+                <span className="todo-description-preview-tag">
+                  <FileText size={11} aria-hidden="true" />
+                  Markdown 描述
+                </span>
+                <Markdown content={description} />
+              </div>
             ) : (
-              <div
-                className={`todo-description-preview ${description ? "" : "todo-description-preview-empty"}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => setEditingDescription(true)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") setEditingDescription(true);
-                }}
-              >
-                {description ? (
-                  <Markdown content={description} />
-                ) : (
-                  <span>
-                    <PenLine size={15} />
-                    点击添加任务描述，支持 Markdown
-                  </span>
-                )}
+              <div className="todo-description-preview todo-description-preview-empty">
+                <span className="todo-description-empty-icon" aria-hidden="true">
+                  <FileText size={18} />
+                </span>
+                <strong>还没有描述</strong>
+                <p>用 Markdown 记录目标、验收标准或参考资料。</p>
+                <button
+                  type="button"
+                  className="todo-description-empty-cta"
+                  onClick={() => setEditingDescription(true)}
+                >
+                  <PenLine size={12} aria-hidden="true" />
+                  添加描述
+                </button>
               </div>
             )}
           </div>
+        </section>
+
+        <section className="todo-detail-section todo-detail-content-section">
+          <label>
+            <span>完成情况 <small>{completionNotes.length}/50000</small></span>
+            <textarea
+              rows={5}
+              maxLength={50000}
+              value={completionNotes}
+              onChange={(event) => setCompletionNotes(event.target.value)}
+              placeholder="填写已完成的内容、实际结果或尚未完成的部分…"
+            />
+          </label>
         </section>
 
         <div className="todo-detail-meta">
@@ -1057,9 +1413,9 @@ function TodoDetail({
               <button
                 type="button"
                 className="todo-nova-button"
-                disabled={busy || dirty || blockersOf(todo, items).length > 0}
-                title={dirty ? "请先保存当前更改" : "交给 Nova 处理"}
-                onClick={onRun}
+                disabled={busy || !title.trim()}
+                title="交给 Nova 处理（未保存的修改会先保存）"
+                onClick={() => onRun(draft)}
               >
                 <Sparkles size={14} />
                 Nova 协作
@@ -1070,21 +1426,7 @@ function TodoDetail({
             type="button"
             className="todo-primary-button"
             disabled={busy || !dirty || !title.trim()}
-            onClick={() =>
-              void onSave({
-                id: todo.id,
-                title,
-                description,
-                status,
-                priority,
-                tags,
-                projectPath,
-                dueAt,
-                topic,
-                parentId,
-                dependsOn,
-              })
-            }
+            onClick={() => void onSave(draft)}
           >
             {busy ? <LoaderCircle className="todo-spinner" size={15} /> : <Check size={15} />}
             保存更改

@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route, RotateCcw, Info } from "lucide-react";
 import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
 import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
@@ -107,8 +107,19 @@ function formatTime(ts: number): string {
 }
 
 export function ToolCallList({ tools }: { tools: ToolCall[] }) {
+  const grouped = tools.length > 4;
   const [expanded, setExpanded] = useState(false);
-  if (tools.length <= 4) {
+  // 从 4→5 个工具时 UI 会从平铺卡片收成一行摘要，高度瞬间塌掉几百像素，
+  // 浏览器夹断 scrollTop 后看起来就像页面往回跳。跨过阈值的那一帧就展开，
+  // 不能等 useEffect（会先画一帧塌缩高度，仍然触发跳动）。
+  const wasGroupedRef = useRef(false);
+  if (grouped && !wasGroupedRef.current) {
+    wasGroupedRef.current = true;
+    setExpanded(true);
+  } else if (!grouped && wasGroupedRef.current) {
+    wasGroupedRef.current = false;
+  }
+  if (!grouped) {
     return tools.map((tool) => (
       <ToolCallCard key={tool.id} name={tool.name} status={tool.status} args={tool.args} result={tool.result} />
     ));

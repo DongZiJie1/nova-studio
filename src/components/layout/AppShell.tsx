@@ -64,6 +64,7 @@ import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
 import { PersonalizationSettings } from "../settings/PersonalizationSettings";
+import { useTodoWarningCount } from "../todos/useTodoWarningCount";
 import { TodoPage } from "../todos/TodoPage";
 import { StreamingText } from "../chat/StreamingText";
 import { ThinkingCard } from "../chat/ThinkingCard";
@@ -1849,6 +1850,12 @@ export function AppShell() {
   const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
+  const todoWarningCount = useTodoWarningCount();
+  const todoWarningBadge = todoWarningCount > 0 ? (
+    <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个红色警告待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
+      {todoWarningCount}
+    </span>
+  ) : null;
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
@@ -1890,6 +1897,8 @@ export function AppShell() {
    */
   const followLatestRef = useRef(false);
   const lastConversationScrollTopRef = useRef(0);
+  /** 上一帧的 scrollHeight，用来区分「用户上滚」和「内容变矮导致的 scrollTop 夹断」。 */
+  const lastConversationScrollHeightRef = useRef(0);
   const isComposingRef = useRef(false);
 
   const userHistory = useMemo(() => {
@@ -2392,14 +2401,23 @@ export function AppShell() {
     const container = scrollRef.current;
     if (!container) return;
     const currentScrollTop = container.scrollTop;
+    const currentScrollHeight = container.scrollHeight;
+    // 内容变矮时浏览器会夹断 scrollTop，产生的 scroll 事件看起来像用户上滚。
+    // 如果这时把 isNearBottom 置 false，后续增高就不会再贴底，页面停在很上面。
+    // 因此：高度变化引起的 scrollTop 减小不算用户意图，只有高度不变的上滚才算。
+    const heightChanged = Math.abs(currentScrollHeight - lastConversationScrollHeightRef.current) > 1;
     const isScrollingUp = currentScrollTop < lastConversationScrollTopRef.current - 0.5;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const distanceFromBottom = currentScrollHeight - currentScrollTop - container.clientHeight;
     const isNearBottom = distanceFromBottom <= 48;
-    // Any upward movement is explicit user intent. Stop following the stream
-    // immediately instead of waiting until the viewport is 48px from bottom.
-    isNearBottomRef.current = isScrollingUp ? false : isNearBottom;
+    if (isNearBottom) {
+      isNearBottomRef.current = true;
+    } else if (isScrollingUp && !heightChanged) {
+      // 真正的用户上滚：立刻停止跟随流式输出。
+      isNearBottomRef.current = false;
+    }
     lastConversationScrollTopRef.current = currentScrollTop;
-    setShowScrollToBottom(!isNearBottom && container.scrollHeight > container.clientHeight);
+    lastConversationScrollHeightRef.current = currentScrollHeight;
+    setShowScrollToBottom(!isNearBottom && currentScrollHeight > container.clientHeight);
   }, []);
 
   const handleConversationWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
@@ -2413,12 +2431,14 @@ export function AppShell() {
     setShowScrollToBottom(false);
     container.scrollTop = container.scrollHeight;
     lastConversationScrollTopRef.current = container.scrollTop;
+    lastConversationScrollHeightRef.current = container.scrollHeight;
   }, []);
 
   useLayoutEffect(() => {
     followLatestRef.current = true;
     isNearBottomRef.current = true;
     lastConversationScrollTopRef.current = 0;
+    lastConversationScrollHeightRef.current = 0;
     setShowScrollToBottom(false);
     scrollConversationToBottom();
     // A session with no history must not keep the flag forever: after this
@@ -2457,8 +2477,17 @@ export function AppShell() {
     if (conversationView !== "chat" || settingsOpen || !container || !thread) return;
     // Images, Markdown and viewport resizing can change height after the
     // messages commit. Observe the content as well as the scroll viewport.
+    // 先在回调里同步重算「是否贴底」，避免内容变矮时 scroll 夹断事件
+    // 抢先把 isNearBottom 置 false（handleConversationScroll 已忽略高度变化，
+    // 这里再兜一层：变高后若仍接近底部则视为继续跟随）。
     const observer = new ResizeObserver(() => {
-      if (isNearBottomRef.current) scrollConversationToBottom();
+      const el = scrollRef.current;
+      if (!el) {
+        if (isNearBottomRef.current) scrollConversationToBottom();
+        return;
+      }
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (isNearBottomRef.current || distanceFromBottom <= 48) scrollConversationToBottom();
     });
     observer.observe(thread);
     observer.observe(container);
@@ -3234,7 +3263,7 @@ export function AppShell() {
                   >
                     <Plus size={20} />
                   </button>
-                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} />{todoWarningBadge}</button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSettingsOpen(true); }} aria-label="设置" title="设置"><Settings size={19} /></button>
@@ -3317,6 +3346,7 @@ export function AppShell() {
                   >
                     <ListTodo size={15} />
                     <span>待办</span>
+                    {todoWarningBadge}
                   </button>
                 </nav>
               </header>
