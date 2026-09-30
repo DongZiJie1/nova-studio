@@ -333,6 +333,9 @@ pub struct AgentInfo {
     pub model: Option<String>,
     pub session_id: Option<String>,
     pub created_at: String,
+    /// Last chat / message activity time (ISO-8601). Falls back to created_at when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<String>,
     pub message_count: usize,
     pub last_error: Option<String>,
 }

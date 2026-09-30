@@ -2571,6 +2571,34 @@ body {
     border-color 0.15s ease;
 }
 
+/* Hover actions overlay the right edge so the last-chat time stays flush right. */
+.agent-card-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: rgba(18, 22, 36, 0.92);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.agent-card:hover .agent-card-actions,
+.agent-card:focus-within .agent-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-card:hover .agent-last-time,
+.agent-card:focus-within .agent-last-time {
+  opacity: 0;
+}
+
 .agent-card:hover {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.11);
@@ -2712,6 +2740,7 @@ body {
 }
 
 .agent-name {
+  display: block;
   font-size: 13px;
   font-weight: 600;
   color: #dfe3ee;
@@ -2719,6 +2748,22 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.agent-last-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 600;
+  color: #e4e9f5;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
 }
 
 .agent-sub {
@@ -4274,6 +4319,18 @@ body {
   text-shadow: none;
 }
 
+:root[data-theme="arctic-dawn"] .agent-last-time {
+  color: var(--text-heading, #1f2937);
+  border-color: rgba(31, 41, 55, 0.12);
+  background: rgba(31, 41, 55, 0.06);
+  box-shadow: none;
+  text-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] .agent-card-actions {
+  background: rgba(245, 247, 252, 0.94);
+}
+
 :root[data-theme="arctic-dawn"] .slash-command-description,
 :root[data-theme="arctic-dawn"] .slash-command-hint,
 :root[data-theme="arctic-dawn"] .file-mention-title,
@@ -4633,20 +4690,36 @@ body {
   font-weight: 550;
 }
 
+.studio-sidebar .agent-last-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: #eef1fa;
+  padding: 2px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
 .studio-sidebar .agent-sub {
   display: none;
+}
+
+.studio-sidebar .agent-card-actions {
+  right: 2px;
+  padding: 2px;
+  background: rgba(16, 20, 32, 0.94);
 }
 
 .studio-sidebar .agent-action {
   width: 22px;
   height: 22px;
-  opacity: 0;
+  opacity: 0.85;
 }
 
 .studio-sidebar .agent-card:hover .agent-action,
 .studio-sidebar .agent-card-active .agent-action,
 .studio-sidebar .agent-action:focus-visible {
-  opacity: 0.75;
+  opacity: 1;
 }
 
 .studio-sidebar .agent-expand {
@@ -13618,7 +13691,7 @@ body {
 }
 
 .conversation-dock-open .agent-workbench-triggers {
-  right: calc(var(--conversation-sidebar-width, 680px) + 4px);
+  right: calc(var(--conversation-sidebar-width, 45vw) + 4px);
 }
 
 :root[data-theme="arctic-dawn"] .agent-file-review-entry + .agent-file-review-entry {
@@ -14128,15 +14201,13 @@ body {
   display: none;
 }
 
-/* Status node sitting on the rail. Only running/failed sessions get one, so the
-   marker stays a signal instead of turning into a bullet on every row. */
+/* Status marker sits just left of the last-chat time. Only running/failed sessions
+   get one, so the marker stays a signal instead of decoration on every row. */
 .studio-sidebar .agent-status-dot {
-  position: absolute;
-  top: 50%;
-  left: 12.5px;
+  flex-shrink: 0;
   width: 7px;
   height: 7px;
-  margin-top: -3.5px;
+  margin-left: 2px;
   border-radius: 50%;
 }
 
@@ -14148,11 +14219,6 @@ body {
 
 .studio-sidebar .agent-status-dot[data-status="error"] {
   background: var(--color-error);
-}
-
-/* Nested rows have their own rail: line the dot up with it, not with the text. */
-.studio-sidebar .agent-children .agent-status-dot {
-  left: -10.5px;
 }
 
 @keyframes sidebar-status-pulse {

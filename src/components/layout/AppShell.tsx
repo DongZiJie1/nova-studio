@@ -67,6 +67,7 @@ import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
 import { PersonalizationSettings } from "../settings/PersonalizationSettings";
 import { useTodoWarningCount } from "../todos/useTodoWarningCount";
+import { useScheduleCount } from "../schedules/useScheduleCount";
 import { TodoPage } from "../todos/TodoPage";
 import { SchedulePage } from "../schedules/SchedulePage";
 import { useScheduleStore } from "../../stores/schedule-store";
@@ -161,11 +162,25 @@ interface PendingAttachment {
   previewUrl?: string;  // blob URL for image thumbnails
 }
 
-function readWorkbenchPanelWidth(key: string, fallback: number): number {
-  const stored = Number(localStorage.getItem(key));
-  const maxWidth = Math.max(420, window.innerWidth - 460);
-  const width = Number.isFinite(stored) && stored >= 320 ? stored : fallback;
-  return Math.min(width, maxWidth);
+/** Shared default dock width for all workbench panels (file review / temporary / agents / worktree). */
+const DEFAULT_WORKBENCH_WIDTH_RATIO = 0.45;
+const WORKBENCH_WIDTH_STORAGE_KEY = "nova-workbench-width";
+
+function readWorkbenchPanelWidth(): number {
+	// Prefer the shared key; fall back to legacy per-mode keys so existing resize prefs survive.
+	const legacyKeys = [WORKBENCH_WIDTH_STORAGE_KEY, "nova-workbench-width-review", "nova-workbench-width-temporary"];
+	let stored = Number.NaN;
+	for (const key of legacyKeys) {
+		const value = Number(localStorage.getItem(key));
+		if (Number.isFinite(value) && value >= 320) {
+			stored = value;
+			break;
+		}
+	}
+	const maxWidth = Math.max(420, window.innerWidth - 460);
+	const fallback = Math.round(window.innerWidth * DEFAULT_WORKBENCH_WIDTH_RATIO);
+	const width = Number.isFinite(stored) ? stored : fallback;
+	return Math.min(width, maxWidth);
 }
 
 function createNewFileDisplayPatch(path: string, content: string): string | undefined {
@@ -1096,6 +1111,36 @@ function agentSubtitle(agent: AgentState): string {
 }
 
 /**
+ * Sidebar session time: today → HH:mm, yesterday → 昨天, earlier → N天前.
+ */
+function formatLastChatTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86_400_000);
+  if (diffDays <= 0) {
+    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  if (diffDays === 1) return "昨天";
+  return `${diffDays}天前`;
+}
+
+function formatLastChatTimeTitle(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+/**
  * The sidebar only marks sessions that are actually doing something. Idle and
  * stopped are the normal resting states — marking them would put a dot on every
  * historical session and turn the marker into decoration.
@@ -1140,14 +1185,6 @@ const AgentTreeNode = memo(function AgentTreeNode({
         onClick={() => onSelect(agent.id)}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
       >
-        {agentStatusMark(agent) && (
-          <span
-            className="agent-status-dot"
-            data-status={agentStatusMark(agent)}
-            title={agentStatusMark(agent) === "running" ? "会话正在运行" : "会话执行出错"}
-            aria-hidden="true"
-          />
-        )}
         <span className="agent-text">
           <span className="agent-name">{agentDisplayName(agent, agentNames)}</span>
           {!isChild && (
@@ -1165,57 +1202,73 @@ const AgentTreeNode = memo(function AgentTreeNode({
             </span>
           )}
         </span>
+        {agentStatusMark(agent) && (
+          <span
+            className="agent-status-dot"
+            data-status={agentStatusMark(agent)}
+            title={agentStatusMark(agent) === "running" ? "会话正在运行" : "会话执行出错"}
+            aria-hidden="true"
+          />
+        )}
         <span
-          role="button"
-          tabIndex={0}
-          className="agent-action"
-          title="重命名会话"
-          onClick={(event) => {
-            event.stopPropagation();
-            onEdit(agent);
-          }}
+          className="agent-last-time"
+          title={formatLastChatTimeTitle(agent.lastActivityAt)}
         >
-          <Pencil size={12} />
+          {formatLastChatTime(agent.lastActivityAt)}
         </span>
-        {isChild && agent.status === "streaming" && (
+        <span className="agent-card-actions">
           <span
             role="button"
             tabIndex={0}
             className="agent-action"
-            title="取消子任务"
+            title="重命名会话"
             onClick={(event) => {
               event.stopPropagation();
-              void cancelAgent(agent.id, "cancelled from parent task");
+              onEdit(agent);
             }}
           >
-            <Square size={12} />
+            <Pencil size={12} />
           </span>
-        )}
-        {isChild && (agent.status === "error" || agent.status === "stopped") && (
+          {isChild && agent.status === "streaming" && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="agent-action"
+              title="取消子任务"
+              onClick={(event) => {
+                event.stopPropagation();
+                void cancelAgent(agent.id, "cancelled from parent task");
+              }}
+            >
+              <Square size={12} />
+            </span>
+          )}
+          {isChild && (agent.status === "error" || agent.status === "stopped") && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="agent-action"
+              title="重试子任务"
+              onClick={(event) => {
+                event.stopPropagation();
+                void retryAgent(agent.id);
+              }}
+            >
+              <RotateCcw size={12} />
+            </span>
+          )}
           <span
             role="button"
             tabIndex={0}
             className="agent-action"
-            title="重试子任务"
+            title="隐藏会话"
             onClick={(event) => {
               event.stopPropagation();
-              void retryAgent(agent.id);
+              onHide(agent);
             }}
           >
-            <RotateCcw size={12} />
+            <EyeOff size={13} />
           </span>
-        )}
-        <span
-          role="button"
-          tabIndex={0}
-          className="agent-action"
-          title="隐藏会话"
-          onClick={(event) => {
-            event.stopPropagation();
-            onHide(agent);
-          }}
-        >
-          <EyeOff size={13} />
         </span>
         {children.length > 0 && (
           <span
@@ -1804,11 +1857,9 @@ export function AppShell() {
   const [agentWorkbenchOpen, setAgentWorkbenchOpen] = useState(false);
   const [agentWorkbenchMode, setAgentWorkbenchMode] = useState<"review" | "temporary" | "agents" | "worktree">("review");
   const [expandedReviewFiles, setExpandedReviewFiles] = useState<Set<string>>(() => new Set());
-  const [reviewPanelWidth, setReviewPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-review", Math.round(window.innerWidth * 0.45)));
-  const [temporaryPanelWidth, setTemporaryPanelWidth] = useState(() => readWorkbenchPanelWidth("nova-workbench-width-temporary", Math.round(window.innerWidth * 0.32)));
+  const [workbenchPanelWidth, setWorkbenchPanelWidth] = useState(() => readWorkbenchPanelWidth());
   const [dockResizing, setDockResizing] = useState(false);
   const dockResizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
-  const workbenchPanelWidth = agentWorkbenchMode === "temporary" ? temporaryPanelWidth : reviewPanelWidth;
   const handleDockResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     dockResizeDrag.current = { startX: event.clientX, startWidth: workbenchPanelWidth };
@@ -1820,14 +1871,13 @@ export function AppShell() {
     if (!drag) return;
     const maxWidth = Math.max(420, window.innerWidth - 460);
     const nextWidth = Math.min(maxWidth, Math.max(320, drag.startWidth + (drag.startX - event.clientX)));
-    if (agentWorkbenchMode === "temporary") setTemporaryPanelWidth(nextWidth);
-    else setReviewPanelWidth(nextWidth);
+    setWorkbenchPanelWidth(nextWidth);
   };
   const handleDockResizeEnd = () => {
     if (!dockResizeDrag.current) return;
     dockResizeDrag.current = null;
     setDockResizing(false);
-    localStorage.setItem(agentWorkbenchMode === "temporary" ? "nova-workbench-width-temporary" : "nova-workbench-width-review", String(workbenchPanelWidth));
+    localStorage.setItem(WORKBENCH_WIDTH_STORAGE_KEY, String(workbenchPanelWidth));
   };
   const [selectedFileReferences, setSelectedFileReferences] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -1860,6 +1910,12 @@ export function AppShell() {
   const todoWarningBadge = todoWarningCount > 0 ? (
     <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个红色警告待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
       {todoWarningCount}
+    </span>
+  ) : null;
+  const scheduleCount = useScheduleCount();
+  const scheduleBadge = scheduleCount > 0 ? (
+    <span className="sidebar-todo-warning-badge" role="status" aria-label={`${scheduleCount} 个定时任务`} title={`${scheduleCount} 个定时任务`}>
+      {scheduleCount}
     </span>
   ) : null;
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
@@ -1946,6 +2002,7 @@ export function AppShell() {
     agent.name ?? "",
     agent.status,
     agent.messageCount,
+    agent.lastActivityAt,
   ].join("\u001f")).join("\u001e");
   const { agentsById, visibleAgents, visibleAgentIds, childrenByParent, rootsByProject } = useMemo(() => {
     const byId = new Map(agents.map((agent) => [agent.id, agent]));
@@ -2857,6 +2914,7 @@ export function AppShell() {
           model: info.model,
           messages: [],
           createdAt: info.created_at,
+          lastActivityAt: info.last_activity_at || info.created_at,
           messageCount: info.message_count,
           streamingText: "",
           streamingThinking: "",
@@ -2978,6 +3036,7 @@ export function AppShell() {
       model: info.model,
       messages: [],
       createdAt: info.created_at,
+      lastActivityAt: info.last_activity_at || info.created_at,
       messageCount: info.message_count,
       streamingText: "",
       streamingThinking: "",
@@ -3112,10 +3171,18 @@ export function AppShell() {
         // token 都会重建，放进依赖数组会让这个回调每次都换引用，进而击穿所有
         // 把它当下传 prop 的 memo 组件。
         const currentMessageCount = useAgentStore.getState().getAgent(agentId)?.messageCount ?? 0;
+        const existingAgent = useAgentStore.getState().getAgent(agentId);
+        const incomingActivity = info.last_activity_at || info.created_at;
+        const currentActivity = existingAgent?.lastActivityAt;
         updateAgent(agentId, {
           status: info.status,
           name: info.name,
           model: info.model,
+          // Keep the newer of backend catalog time and live UI activity.
+          lastActivityAt:
+            currentActivity && Date.parse(currentActivity) > Date.parse(incomingActivity)
+              ? currentActivity
+              : incomingActivity,
           messageCount: Math.max(info.message_count, currentMessageCount),
         });
       })
@@ -3305,7 +3372,7 @@ export function AppShell() {
                     <Plus size={20} />
                   </button>
                   <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} />{todoWarningBadge}</button>
-                  <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" title="定时任务"><CalendarClock size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" title="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }} aria-label="设置" title="设置"><Settings size={19} /></button>
@@ -3403,6 +3470,7 @@ export function AppShell() {
                       <CalendarClock size={14} />
                     </span>
                     <span className="sidebar-nav-label">定时任务</span>
+                    {scheduleBadge}
                   </button>
                 </nav>
               </header>

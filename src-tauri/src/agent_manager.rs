@@ -72,6 +72,9 @@ struct PersistedAgent {
     #[serde(default)]
     session_file: Option<String>,
     created_at: String,
+    /// Last chat activity time (ISO-8601) from the session catalog when available.
+    #[serde(default)]
+    last_activity_at: Option<String>,
     #[serde(default)]
     message_count: usize,
     depth: u64,
@@ -96,6 +99,9 @@ struct NovaSessionSummary {
     session_file: String,
     name: Option<String>,
     created_at: String,
+    /// Nova's list-sessions `modifiedAt` — last message activity in the session file.
+    #[serde(default)]
+    modified_at: Option<String>,
     message_count: usize,
     #[serde(default)]
     first_message: String,
@@ -195,7 +201,10 @@ impl AgentManager {
                             args: Vec::new(),
                             session_id: session.session_id,
                             session_file: Some(session.session_file),
-                            created_at: session.created_at,
+                            created_at: session.created_at.clone(),
+                            last_activity_at: Some(
+                                session.modified_at.unwrap_or_else(|| session.created_at.clone()),
+                            ),
                             message_count: session.message_count,
                             depth: legacy.map_or(0, |item| item.depth),
                             project_cwd: legacy.and_then(|item| item.project_cwd.clone()),
@@ -304,7 +313,12 @@ impl AgentManager {
                 }
                 record.cwd = cwd;
                 record.session_file = Some(session.session_file);
-                record.created_at = session.created_at;
+                record.created_at = session.created_at.clone();
+                record.last_activity_at = Some(
+                    session
+                        .modified_at
+                        .unwrap_or_else(|| session.created_at.clone()),
+                );
                 record.message_count = session.message_count;
             } else {
                 records.insert(
@@ -322,7 +336,12 @@ impl AgentManager {
                         args: Vec::new(),
                         session_id: session.session_id,
                         session_file: Some(session.session_file),
-                        created_at: session.created_at,
+                        created_at: session.created_at.clone(),
+                        last_activity_at: Some(
+                            session
+                                .modified_at
+                                .unwrap_or_else(|| session.created_at.clone()),
+                        ),
                         message_count: session.message_count,
                         depth: 0,
                         project_cwd: None,
@@ -437,6 +456,7 @@ impl AgentManager {
             session_id: short_id,
             session_file: None,
             created_at: chrono::Utc::now().to_rfc3339(),
+            last_activity_at: Some(chrono::Utc::now().to_rfc3339()),
             message_count: 0,
             depth: request.depth,
             project_cwd,
@@ -723,6 +743,7 @@ impl AgentManager {
             session_id: format!("temporary-{}", Uuid::new_v4()),
             session_file: None,
             created_at: chrono::Utc::now().to_rfc3339(),
+            last_activity_at: Some(chrono::Utc::now().to_rfc3339()),
             message_count: 0,
             depth: parent.depth.saturating_add(1),
             // A temporary side question runs in the parent's directory but never owns
@@ -1531,9 +1552,9 @@ impl AgentManager {
             Some(record) => Some(record.clone()),
             None => self.records.read().await.get(id).cloned(),
         };
-        let (project_cwd, worktree) = match stored {
-            Some(record) => (record.project_cwd, record.worktree),
-            None => (None, None),
+        let (project_cwd, worktree, last_activity_at) = match stored {
+            Some(record) => (record.project_cwd, record.worktree, record.last_activity_at),
+            None => (None, None, None),
         };
         AgentInfo {
             id: id.to_string(),
@@ -1548,6 +1569,9 @@ impl AgentManager {
             model: process.model.clone(),
             session_id: Some(process.session_id.clone()),
             created_at: process.created_at.clone(),
+            last_activity_at: Some(
+                last_activity_at.unwrap_or_else(|| process.created_at.clone()),
+            ),
             message_count: 0,
             last_error: None,
         }
@@ -1590,6 +1614,12 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),
         created_at: record.created_at.clone(),
+        last_activity_at: Some(
+            record
+                .last_activity_at
+                .clone()
+                .unwrap_or_else(|| record.created_at.clone()),
+        ),
         message_count: record.message_count,
         last_error: None,
     }
@@ -1889,6 +1919,7 @@ mod tests {
                 session_id: "mock-parent".to_string(),
                 session_file: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                last_activity_at: Some("2026-01-01T00:00:00Z".to_string()),
                 message_count: 0,
                 depth: 0,
                 project_cwd: None,
@@ -1906,6 +1937,7 @@ mod tests {
                 session_id: "mock-child".to_string(),
                 session_file: None,
                 created_at: "2026-01-01T00:00:01Z".to_string(),
+                last_activity_at: Some("2026-01-01T00:00:01Z".to_string()),
                 message_count: 0,
                 depth: 1,
                 project_cwd: None,
@@ -2100,6 +2132,7 @@ mod tests {
                 session_id: "mock-parent".to_string(),
                 session_file: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                last_activity_at: Some("2026-01-01T00:00:00Z".to_string()),
                 message_count: 0,
                 depth: 0,
                 project_cwd: None,
