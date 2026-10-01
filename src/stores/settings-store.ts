@@ -29,7 +29,7 @@ const defaults = {
   defaultProvider: "",
   defaultCwd: "",
   thinkingLevel: "high",
-  defaultToolPermissionMode: "ask" as ToolPermissionMode,
+  defaultToolPermissionMode: "allow" as ToolPermissionMode,
   worktreeEnabled: false,
 };
 

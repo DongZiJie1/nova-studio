@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
 import { NovaIntro } from "./components/layout/NovaIntro";
@@ -77,6 +79,11 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme === "arctic-dawn" ? "light" : "dark";
+    if (isTauri()) {
+      const appWindow = getCurrentWindow();
+      void appWindow.setTheme(theme === "arctic-dawn" ? "light" : "dark");
+      void appWindow.setBackgroundColor(theme === "arctic-dawn" ? "#edf4fd" : "#05060e");
+    }
   }, [theme]);
 
   useEffect(() => {

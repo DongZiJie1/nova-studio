@@ -1,4 +1,9 @@
-import type { AutomationPermissionMode, ScheduleRule, ScheduleRunStatus } from "../../lib/tauri-bridge";
+import type {
+  AutomationPermissionMode,
+  AutomationSessionMode,
+  ScheduleRule,
+  ScheduleRunStatus,
+} from "../../lib/tauri-bridge";
 
 const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
 
@@ -12,6 +17,16 @@ export const PERMISSION_HINTS: Record<AutomationPermissionMode, string> = {
   ask: "触发后工具调用会等待确认，适合首次试跑。",
   edits: "允许读写文件，无需逐步确认，适合无人值守。",
   allow: "放开全部工具权限，仅用于高度信任的自动化。",
+};
+
+export const SESSION_MODE_LABELS: Record<AutomationSessionMode, string> = {
+  fresh: "每次新建会话",
+  reuse: "复用同一会话",
+};
+
+export const SESSION_MODE_HINTS: Record<AutomationSessionMode, string> = {
+  fresh: "每次触发都开一条新会话，历次运行互不影响。",
+  reuse: "所有触发都在同一条会话里继续，之前的调研和结论会保留在上下文中。",
 };
 
 export const RUN_STATUS_LABELS: Record<ScheduleRunStatus, string> = {

@@ -298,6 +298,11 @@ impl AgentManager {
             .iter()
             .map(|session| format!("agent-{}", session.session_id))
             .collect();
+        let catalog_files: HashSet<String> = catalog
+            .sessions
+            .iter()
+            .map(|session| session.session_file.clone())
+            .collect();
         let running_ids: HashSet<String> = self.agents.read().await.keys().cloned().collect();
         let mut records = self.records.write().await;
         for session in catalog.sessions {
@@ -313,6 +318,28 @@ impl AgentManager {
                 }
                 record.cwd = cwd;
                 record.session_file = Some(session.session_file);
+                record.created_at = session.created_at.clone();
+                record.last_activity_at = Some(
+                    session
+                        .modified_at
+                        .unwrap_or_else(|| session.created_at.clone()),
+                );
+                record.message_count = session.message_count;
+            } else if let Some(record) = records
+                .values_mut()
+                .find(|record| record.session_file.as_deref() == Some(session.session_file.as_str()))
+            {
+                // A continued conversation may keep an older Studio agent id.
+                // Update that record instead of inserting a second entry for
+                // the same .jsonl — two records would allow two writers.
+                record.session_id = session.session_id;
+                record.cwd = cwd;
+                record.session_file = Some(session.session_file);
+                if session.name.is_some() {
+                    record.name = session.name;
+                } else if record.name.is_none() {
+                    record.name = fallback_name;
+                }
                 record.created_at = session.created_at.clone();
                 record.last_activity_at = Some(
                     session
@@ -353,7 +380,14 @@ impl AgentManager {
         // Nova's catalog is the source of truth. Drop records whose session
         // files were deleted outside Studio, while retaining live agents until
         // they stop so a refresh cannot make an active conversation disappear.
-        records.retain(|id, _| catalog_ids.contains(id) || running_ids.contains(id));
+        records.retain(|id, record| {
+            catalog_ids.contains(id)
+                || running_ids.contains(id)
+                || record
+                    .session_file
+                    .as_deref()
+                    .is_some_and(|file| catalog_files.contains(file))
+        });
         drop(records);
         self.persist_records().await?;
         Ok(())
@@ -372,6 +406,29 @@ impl AgentManager {
 
     /// Spawn a new agent process
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentInfo, String> {
+        self.spawn_inner(request, None).await
+    }
+
+    /// Spawn an agent that continues an existing Nova session id. The id is
+    /// reused as the Studio agent id so one scheduled task keeps one stable
+    /// record (and one writer) across runs instead of a fresh record per fire.
+    pub async fn spawn_continuing_session(
+        &self,
+        request: SpawnRequest,
+        session_id: &str,
+    ) -> Result<AgentInfo, String> {
+        let normalized = session_id.trim().trim_start_matches("agent-").to_string();
+        if normalized.is_empty() {
+            return self.spawn(request).await;
+        }
+        self.spawn_inner(request, Some(normalized)).await
+    }
+
+    async fn spawn_inner(
+        &self,
+        request: SpawnRequest,
+        session_id: Option<String>,
+    ) -> Result<AgentInfo, String> {
         if request.depth > MAX_AGENT_DEPTH {
             return Err(format!(
                 "Agent depth {} exceeds maximum {}",
@@ -393,7 +450,18 @@ impl AgentManager {
         }
 
         let project_cwd = normalize_project_cwd(&request.cwd)?;
-        let short_id = Uuid::new_v4().to_string()[..8].to_string();
+        // Continuing a session must not leave a second live agent behind on the
+        // same .jsonl: retire the previous holder before reusing its id.
+        if let Some(existing_id) = session_id.as_deref().map(|id| format!("agent-{id}")) {
+            if self.agents.read().await.contains_key(&existing_id) {
+                if let Err(error) = self.stop(&existing_id).await {
+                    log::warn!(
+                        "[spawn] couldn't retire {existing_id} before continuing its session: {error}"
+                    );
+                }
+            }
+        }
+        let short_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
         let agent_id = format!("agent-{short_id}");
 
         // A delegated child inherits its parent's checkout rather than creating a nested
@@ -499,7 +567,7 @@ impl AgentManager {
 
     async fn spawn_record(
         &self,
-        record: PersistedAgent,
+        mut record: PersistedAgent,
         persist: bool,
     ) -> Result<AgentInfo, String> {
         let agent_id = record.id.clone();
@@ -553,7 +621,7 @@ impl AgentManager {
             },
             "noTools": agent_id.starts_with("temporary-"),
         }))?;
-        let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let ready_event = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 let event = ready_events
                     .recv()
@@ -566,7 +634,7 @@ impl AgentManager {
                     continue;
                 }
                 if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
-                    return Ok(());
+                    return Ok(event);
                 }
                 return Err(event
                     .get("error")
@@ -577,7 +645,33 @@ impl AgentManager {
         })
         .await
         .map_err(|_| "Timed out waiting for Nova host to create agent".to_string())?;
-        ready?;
+        let ready_event = ready_event?;
+
+        // Nova answers with the session it actually opened. Adopt it so a
+        // continued conversation keeps a truthful id/file even when the spawn
+        // only knew the session path.
+        if let Some(data) = ready_event.get("data") {
+            if let Some(session_id) = data
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                record.session_id = session_id.to_string();
+            }
+            if let Some(session_file) = data
+                .get("sessionFile")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                record.session_file = Some(session_file.to_string());
+            }
+        }
+        if !persist && self.records.read().await.contains_key(&agent_id) {
+            self.records
+                .write()
+                .await
+                .insert(agent_id.clone(), record.clone());
+        }
 
         if let (Some(provider), Some(model_id)) = (record.provider.as_ref(), record.model.as_ref())
         {
@@ -1552,9 +1646,15 @@ impl AgentManager {
             Some(record) => Some(record.clone()),
             None => self.records.read().await.get(id).cloned(),
         };
-        let (project_cwd, worktree, last_activity_at) = match stored {
-            Some(record) => (record.project_cwd, record.worktree, record.last_activity_at),
-            None => (None, None, None),
+        let (project_cwd, worktree, last_activity_at, session_id, session_file) = match stored {
+            Some(record) => (
+                record.project_cwd,
+                record.worktree,
+                record.last_activity_at,
+                Some(record.session_id),
+                record.session_file,
+            ),
+            None => (None, None, None, Some(process.session_id.clone()), None),
         };
         AgentInfo {
             id: id.to_string(),
@@ -1567,7 +1667,8 @@ impl AgentManager {
             project_cwd,
             worktree,
             model: process.model.clone(),
-            session_id: Some(process.session_id.clone()),
+            session_id,
+            session_file,
             created_at: process.created_at.clone(),
             last_activity_at: Some(
                 last_activity_at.unwrap_or_else(|| process.created_at.clone()),
@@ -1613,6 +1714,7 @@ fn agent_info_from_record(record: &PersistedAgent) -> AgentInfo {
         worktree: record.worktree.clone(),
         model: record.model.clone(),
         session_id: Some(record.session_id.clone()),
+        session_file: record.session_file.clone(),
         created_at: record.created_at.clone(),
         last_activity_at: Some(
             record

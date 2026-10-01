@@ -338,6 +338,13 @@ export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemory
 export type TodoStatus = "pending" | "in_progress" | "completed";
 export type TodoPriority = "low" | "medium" | "high";
 
+export interface TodoHistoryEntry {
+  type: "due_at_changed" | "status_changed";
+  from: string | null;
+  to: string | null;
+  changedAt: string;
+}
+
 export interface TodoItem {
   topic?: string;
   id: string;
@@ -355,6 +362,7 @@ export interface TodoItem {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  history: TodoHistoryEntry[];
   order: number;
 }
 
@@ -397,6 +405,7 @@ export type ScheduleKind = "once" | "recurring";
 export type RecurrenceKind = "daily" | "weekly" | "monthly" | "cron";
 export type ScheduleRunStatus = "running" | "completed" | "error" | "missed" | "skipped";
 export type AutomationPermissionMode = "ask" | "edits" | "allow";
+export type AutomationSessionMode = "fresh" | "reuse";
 
 export interface ScheduleRule {
   kind: ScheduleKind;
@@ -433,6 +442,8 @@ export interface ScheduledTask {
   permissionMode: AutomationPermissionMode;
   model?: string;
   provider?: string;
+  sessionMode: AutomationSessionMode;
+  sessionFile?: string;
   worktreeEnabled?: boolean;
   lastRunAt?: string;
   lastRunStatus?: ScheduleRunStatus;
@@ -460,6 +471,7 @@ export interface CreateScheduledTaskInput {
   permissionMode?: AutomationPermissionMode;
   model?: string;
   provider?: string;
+  sessionMode?: AutomationSessionMode;
   worktreeEnabled?: boolean;
   enabled?: boolean;
 }
@@ -475,6 +487,7 @@ export type UpdateScheduledTaskInput = Partial<
     | "permissionMode"
     | "model"
     | "provider"
+    | "sessionMode"
     | "worktreeEnabled"
     | "enabled"
   >

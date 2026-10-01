@@ -17,9 +17,20 @@ pub static SCHEDULE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 pub const SCHEDULE_TITLE_MAX: usize = 120;
 pub const SCHEDULE_PROMPT_MAX: usize = 50_000;
 pub const SCHEDULE_RUNS_CAP: usize = 20;
+/// Upper bound for an agent-written run summary carried into the next prompt.
+pub const SCHEDULE_RUN_SUMMARY_MAX: usize = 2000;
 /// Overdue window within which a missed slot is still fired once as catch-up.
 pub const CATCH_UP_WINDOW_MINUTES: i64 = 60;
 pub const MAX_CONCURRENT_FIRES: usize = 2;
+/// Session continuity for scheduled runs: `fresh` starts a new Nova session
+/// on every fire, `reuse` keeps appending to the task's stored session file.
+pub const SESSION_MODE_FRESH: &str = "fresh";
+pub const SESSION_MODE_REUSE: &str = "reuse";
+
+/// Stored tasks without the field predate session reuse and keep firing fresh.
+fn default_session_mode() -> String {
+	SESSION_MODE_FRESH.to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +89,12 @@ pub struct ScheduledTask {
 	pub model: Option<String>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub provider: Option<String>,
+	/// `fresh` (default for pre-existing tasks) or `reuse`.
+	#[serde(default = "default_session_mode")]
+	pub session_mode: String,
+	/// Absolute path of the Nova session file this task continues in `reuse` mode.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub session_file: Option<String>,
 	#[serde(default)]
 	pub worktree_enabled: bool,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +135,7 @@ pub struct CreateScheduledTaskInput {
 	pub permission_mode: Option<String>,
 	pub model: Option<String>,
 	pub provider: Option<String>,
+	pub session_mode: Option<String>,
 	pub worktree_enabled: Option<bool>,
 	pub enabled: Option<bool>,
 }
@@ -134,6 +152,7 @@ pub struct UpdateScheduledTaskInput {
 	pub permission_mode: Option<String>,
 	pub model: Option<String>,
 	pub provider: Option<String>,
+	pub session_mode: Option<String>,
 	pub worktree_enabled: Option<bool>,
 	pub enabled: Option<bool>,
 }
@@ -212,12 +231,42 @@ pub fn normalize_optional_value(value: Option<String>) -> Option<String> {
 	})
 }
 
+/// Trim and cap a run summary so one run cannot dominate the next prompt.
+pub fn normalize_run_summary(value: &str) -> Option<String> {
+	let trimmed = value.trim();
+	if trimmed.is_empty() {
+		return None;
+	}
+	if trimmed.chars().count() <= SCHEDULE_RUN_SUMMARY_MAX {
+		return Some(trimmed.to_string());
+	}
+	let mut capped: String = trimmed.chars().take(SCHEDULE_RUN_SUMMARY_MAX).collect();
+	capped.push('…');
+	Some(capped)
+}
+
 pub fn validate_permission_mode(value: &str) -> Result<(), String> {
 	if matches!(value, "ask" | "edits" | "allow") {
 		Ok(())
 	} else {
 		Err(format!("Invalid permission mode: {value}"))
 	}
+}
+
+pub fn validate_session_mode(value: &str) -> Result<(), String> {
+	if value == SESSION_MODE_FRESH || value == SESSION_MODE_REUSE {
+		Ok(())
+	} else {
+		Err(format!("Invalid session mode: {value}"))
+	}
+}
+
+/// New tasks default to one continuing conversation; legacy tasks without the
+/// field stay on fresh sessions until the user flips the switch.
+pub fn normalize_session_mode(value: Option<String>) -> Result<String, String> {
+	let mode = normalize_optional_value(value).unwrap_or_else(|| SESSION_MODE_REUSE.to_string());
+	validate_session_mode(&mode)?;
+	Ok(mode)
 }
 
 pub fn validate_run_status(value: &str) -> Result<(), String> {
@@ -412,16 +461,42 @@ pub fn push_run(task: &mut ScheduledTask, run: ScheduledRun) {
 
 pub fn build_automation_prompt(task: &ScheduledTask, planned_at: Option<&str>) -> String {
 	let planned = planned_at.unwrap_or("立即执行");
-	vec![
+	let completed_runs = task.runs.iter().filter(|run| run.status == "completed").count();
+	let mut sections = vec![
 		"请按 Nova 定时任务自动执行。".to_string(),
 		format!("任务标题：{}", task.title),
 		format!("任务 id：{}", task.id),
 		format!("计划时间：{planned}"),
 		format!("权限模式：{}", task.permission_mode),
 		format!("任务说明：\n{}", task.prompt),
-		"执行要求：\n1. 按任务说明独立完成工作，不要等待用户补充。\n2. 完成后总结实际完成的内容、验证结果和仍需处理的问题；缺少证据时不要声称完成。\n3. 这是自动化运行，不需要更新普通待办。".to_string(),
-	]
-	.join("\n\n")
+	];
+	if let Some(previous) = task
+		.runs
+		.iter()
+		.find(|run| matches!(run.status.as_str(), "completed" | "error"))
+	{
+		let finished_at = previous
+			.finished_at
+			.as_deref()
+			.unwrap_or(previous.started_at.as_str());
+		let mut block = format!(
+			"上次运行：\n状态：{}\n时间：{}",
+			previous.status, finished_at
+		);
+		if let Some(summary) = previous
+			.summary
+			.as_deref()
+			.filter(|summary| !summary.trim().is_empty())
+		{
+			block.push_str(&format!("\n摘要：\n{summary}"));
+		}
+		sections.push(block);
+	}
+	sections.push(format!("本次是第 {} 次自动运行。", completed_runs + 1));
+	sections.push(
+		"执行要求：\n1. 按任务说明独立完成工作，不要等待用户补充。\n2. 先参考上次运行摘要，避免重复已经完成的工作，聚焦新增、变化和待核实的信息。\n3. 完成后总结实际完成的内容、验证结果和仍需处理的问题；缺少证据时不要声称完成。\n4. 结尾用一段简短总结收尾，并用 <run_summary> 与 </run_summary> 包住这段总结；它会保存为下次运行的上文摘要，请控制在 2000 字符以内。\n5. 这是自动化运行，不需要更新普通待办。".to_string(),
+	);
+	sections.join("\n\n")
 }
 
 fn apply_next_run(task: &mut ScheduledTask, after: DateTime<Local>) {
@@ -486,6 +561,7 @@ pub fn create_scheduled_task_state(
 		.permission_mode
 		.unwrap_or_else(|| "ask".to_string());
 	validate_permission_mode(&permission_mode)?;
+	let session_mode = normalize_session_mode(input.session_mode)?;
 	let mut state = read_scheduled_task_state()?;
 	let mut task = ScheduledTask {
 		id: format!("sch_{}", uuid::Uuid::new_v4()),
@@ -498,6 +574,8 @@ pub fn create_scheduled_task_state(
 		permission_mode,
 		model: normalize_optional_value(input.model),
 		provider: normalize_optional_value(input.provider),
+		session_mode,
+		session_file: None,
 		worktree_enabled: input.worktree_enabled.unwrap_or(false),
 		last_run_at: None,
 		last_run_status: None,
@@ -542,6 +620,11 @@ pub fn update_scheduled_task_state(
 		if project_path.is_empty() {
 			return Err("projectPath is required for scheduled tasks".to_string());
 		}
+		if task.project_path != project_path {
+			// Sessions belong to one project; never continue the old one here.
+			task.session_file = None;
+			task.last_session_id = None;
+		}
 		task.project_path = project_path;
 	}
 	if let Some(schedule) = input.schedule {
@@ -561,6 +644,10 @@ pub fn update_scheduled_task_state(
 	}
 	if input.provider.is_some() {
 		task.provider = normalize_optional_value(input.provider);
+	}
+	if let Some(session_mode) = normalize_optional_value(input.session_mode) {
+		validate_session_mode(&session_mode)?;
+		task.session_mode = session_mode;
 	}
 	if let Some(worktree) = input.worktree_enabled {
 		task.worktree_enabled = worktree;
@@ -616,6 +703,7 @@ pub fn set_scheduled_task_enabled_state(
 			permission_mode: None,
 			model: None,
 			provider: None,
+			session_mode: None,
 			worktree_enabled: None,
 			enabled: Some(enabled),
 		},
@@ -717,8 +805,8 @@ pub fn record_scheduled_run_result_state(
 	if input.error.is_some() {
 		run.error = input.error;
 	}
-	if input.summary.is_some() {
-		run.summary = input.summary;
+	if let Some(summary) = input.summary.as_deref().and_then(normalize_run_summary) {
+		run.summary = Some(summary);
 	}
 	task.last_run_status = Some(input.status.clone());
 	task.updated_at = now.to_rfc3339();
@@ -1039,6 +1127,8 @@ mod scheduled_task_tests {
 			permission_mode: "ask".into(),
 			model: None,
 			provider: None,
+			session_mode: SESSION_MODE_REUSE.into(),
+			session_file: None,
 			worktree_enabled: false,
 			last_run_at: None,
 			last_run_status: None,
@@ -1054,11 +1144,108 @@ mod scheduled_task_tests {
 		let value = serde_json::to_value(&task).unwrap();
 		assert_eq!(value["projectPath"], "/tmp");
 		assert_eq!(value["permissionMode"], "ask");
+		assert_eq!(value["sessionMode"], "reuse");
 		assert_eq!(value["nextRunAt"], "2026-09-23T10:00:00+08:00");
 		assert_eq!(value["worktreeEnabled"], false);
 		assert!(value.get("lastRunAt").is_none());
+		assert!(value.get("sessionFile").is_none());
 		let restored: ScheduledTask = serde_json::from_value(value).unwrap();
 		assert_eq!(restored.project_path, "/tmp");
 		assert_eq!(restored.permission_mode, "ask");
+	}
+
+	#[test]
+	fn session_mode_defaults_keep_legacy_tasks_fresh() {
+		let value = serde_json::json!({
+			"id": "sch_legacy",
+			"title": "t",
+			"prompt": "p",
+			"projectPath": "/tmp",
+			"enabled": true,
+			"schedule": { "kind": "recurring", "recurrence": "daily", "timeOfDay": "09:00" },
+			"permissionMode": "ask",
+			"worktreeEnabled": false,
+			"missedCount": 0,
+			"runs": [],
+			"createdAt": "2026-09-23T00:00:00Z",
+			"updatedAt": "2026-09-23T00:00:00Z"
+		});
+		let task: ScheduledTask = serde_json::from_value(value).unwrap();
+		assert_eq!(task.session_mode, SESSION_MODE_FRESH);
+		assert!(task.session_file.is_none());
+		// New tasks created without an explicit mode continue one conversation.
+		assert_eq!(normalize_session_mode(None).unwrap(), SESSION_MODE_REUSE);
+		assert!(validate_session_mode("nope").is_err());
+	}
+
+	fn prompt_task() -> ScheduledTask {
+		ScheduledTask {
+			id: "sch_prompt".into(),
+			title: "调研".into(),
+			prompt: "调研 RL 岗位".into(),
+			description: None,
+			project_path: "/tmp".into(),
+			enabled: true,
+			schedule: ScheduleRule {
+				kind: "recurring".into(),
+				run_at: None,
+				recurrence: Some("daily".into()),
+				time_of_day: Some("09:00".into()),
+				weekdays: None,
+				month_days: None,
+				cron: None,
+				timezone: None,
+			},
+			permission_mode: "ask".into(),
+			model: None,
+			provider: None,
+			session_mode: SESSION_MODE_REUSE.into(),
+			session_file: None,
+			worktree_enabled: false,
+			last_run_at: None,
+			last_run_status: None,
+			last_agent_id: None,
+			last_session_id: None,
+			next_run_at: None,
+			missed_count: 0,
+			runs: vec![],
+			created_at: "2026-09-23T00:00:00Z".into(),
+			updated_at: "2026-09-23T00:00:00Z".into(),
+			completed_at: None,
+		}
+	}
+
+	#[test]
+	fn automation_prompt_carries_the_previous_summary() {
+		let mut task = prompt_task();
+		let first = build_automation_prompt(&task, Some("2026-09-24T09:00:00+08:00"));
+		assert!(first.contains("本次是第 1 次自动运行"));
+		assert!(!first.contains("上次运行："));
+
+		task.runs.push(ScheduledRun {
+			id: "run_1".into(),
+			task_id: task.id.clone(),
+			started_at: "2026-09-24T09:00:00+08:00".into(),
+			finished_at: Some("2026-09-24T09:02:00+08:00".into()),
+			status: "completed".into(),
+			agent_id: None,
+			session_id: None,
+			error: None,
+			summary: Some("新增 3 个岗位".into()),
+			catch_up: None,
+		});
+		let second = build_automation_prompt(&task, None);
+		assert!(second.contains("上次运行："));
+		assert!(second.contains("新增 3 个岗位"));
+		assert!(second.contains("本次是第 2 次自动运行"));
+	}
+
+	#[test]
+	fn run_summary_is_trimmed_and_capped() {
+		assert_eq!(normalize_run_summary("  你好  ").as_deref(), Some("你好"));
+		assert!(normalize_run_summary("   ").is_none());
+		let long = "字".repeat(SCHEDULE_RUN_SUMMARY_MAX + 50);
+		let capped = normalize_run_summary(&long).expect("capped summary");
+		assert_eq!(capped.chars().count(), SCHEDULE_RUN_SUMMARY_MAX + 1);
 	}
 }

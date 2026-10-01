@@ -53,6 +53,16 @@ pub struct SaveUserMemoryInput {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TodoHistoryEntry {
+    #[serde(rename = "type")]
+    kind: String,
+    from: Option<String>,
+    to: Option<String>,
+    changed_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TodoItem {
     topic: Option<String>,
     id: String,
@@ -72,6 +82,8 @@ pub struct TodoItem {
     created_at: String,
     updated_at: String,
     completed_at: Option<String>,
+    #[serde(default)]
+    history: Vec<TodoHistoryEntry>,
     order: i64,
 }
 
@@ -162,6 +174,35 @@ fn write_todo_state(state: &TodoState) -> Result<(), String> {
         .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
     let value = serde_json::to_value(state).map_err(|error| error.to_string())?;
     write_private_json(&path, &value)
+}
+
+fn change_todo_status(todo: &mut TodoItem, status: &str, changed_at: &str) -> Result<(), String> {
+    validate_todo_status(status)?;
+    if status != todo.status {
+        todo.history.push(TodoHistoryEntry {
+            kind: "status_changed".to_string(),
+            from: Some(todo.status.clone()),
+            to: Some(status.to_string()),
+            changed_at: changed_at.to_string(),
+        });
+        todo.status = status.to_string();
+        todo.completed_at = if status == "completed" { Some(changed_at.to_string()) } else { None };
+    }
+    Ok(())
+}
+
+fn change_todo_due_at(todo: &mut TodoItem, due_at: Option<String>, changed_at: &str) -> Result<(), String> {
+    let next_due_at = validate_todo_due_at(due_at)?;
+    if next_due_at != todo.due_at {
+        todo.history.push(TodoHistoryEntry {
+            kind: "due_at_changed".to_string(),
+            from: todo.due_at.clone(),
+            to: next_due_at.clone(),
+            changed_at: changed_at.to_string(),
+        });
+        todo.due_at = next_due_at;
+    }
+    Ok(())
 }
 
 fn normalize_todo_title(value: &str) -> Result<String, String> {
@@ -293,6 +334,7 @@ pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
         created_at: now.clone(),
         updated_at: now,
         completed_at: None,
+        history: Vec::new(),
         order: next_order,
     });
     write_todo_state(&state)?;
@@ -325,14 +367,11 @@ pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
     if let Some(tags) = input.tags {
         todo.tags = normalize_todo_tags(tags)?;
     }
+    if input.due_at.is_some() {
+        change_todo_due_at(todo, input.due_at, &chrono::Utc::now().to_rfc3339())?;
+    }
     if let Some(status) = input.status.as_deref() {
-        validate_todo_status(status)?;
-        todo.status = status.to_string();
-        todo.completed_at = if status == "completed" {
-            Some(chrono::Utc::now().to_rfc3339())
-        } else {
-            None
-        };
+        change_todo_status(todo, status, &chrono::Utc::now().to_rfc3339())?;
     }
     if let Some(priority) = input.priority.as_deref() {
         validate_todo_priority(priority)?;
@@ -340,9 +379,6 @@ pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
     }
     if input.project_path.is_some() {
         todo.project_path = normalize_optional_todo_value(input.project_path);
-    }
-    if input.due_at.is_some() {
-        todo.due_at = validate_todo_due_at(input.due_at)?;
     }
     if input.agent_id.is_some() {
         todo.agent_id = normalize_optional_todo_value(input.agent_id);
@@ -1467,6 +1503,7 @@ mod todo_tests {
         assert_eq!(todo.source, "agent");
         assert_eq!(todo.agent_id.as_deref(), Some("agent-1234"));
         assert_eq!(todo.completed_at, None);
+        assert!(todo.history.is_empty());
         assert_eq!(todo.order, 0);
     }
 
@@ -1492,6 +1529,12 @@ mod todo_tests {
                 created_at: "2026-09-17T00:00:00Z".to_string(),
                 updated_at: "2026-09-17T00:00:00Z".to_string(),
                 completed_at: None,
+                history: vec![TodoHistoryEntry {
+                    kind: "due_at_changed".to_string(),
+                    from: Some("2026-09-30".to_string()),
+                    to: Some("2026-10-05".to_string()),
+                    changed_at: "2026-09-29T00:00:00Z".to_string(),
+                }],
                 order: 4,
             }],
         };
@@ -1506,8 +1549,20 @@ mod todo_tests {
         assert_eq!(item["updatedAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["order"], 4);
         assert_eq!(item["completionNotes"], "已完成联调\n待补充文档");
-        let restored: TodoState = serde_json::from_value(value.clone()).unwrap();
+        let mut restored: TodoState = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(restored.items[0].completion_notes, "已完成联调\n待补充文档");
+        assert_eq!(restored.items[0].history[0].kind, "due_at_changed");
+        assert_eq!(item["history"][0]["changedAt"], "2026-09-29T00:00:00Z");
+        let todo = &mut restored.items[0];
+        change_todo_due_at(todo, Some("2026-10-05".to_string()), "2026-09-30T00:00:00Z").unwrap();
+        change_todo_due_at(todo, Some("2026-10-05".to_string()), "2026-09-30T00:00:01Z").unwrap();
+        change_todo_status(todo, "completed", "2026-09-30T00:00:02Z").unwrap();
+        change_todo_status(todo, "completed", "2026-09-30T00:00:03Z").unwrap();
+        assert_eq!(todo.history.len(), 3);
+        assert_eq!(todo.history[1].kind, "due_at_changed");
+        assert_eq!(todo.history[1].from, None);
+        assert_eq!(todo.history[2].kind, "status_changed");
+        assert_eq!(todo.completed_at.as_deref(), Some("2026-09-30T00:00:02Z"));
         assert!(item.get("dueAt").is_some());
         assert!(item.get("completedAt").is_some());
     }

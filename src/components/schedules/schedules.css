@@ -331,6 +331,16 @@
   color: #e26d6d;
 }
 
+.schedule-run-summary {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow: auto;
+}
+
 /* ── Photo background (custom scene) ────────────────────────────────
    Mirrors task-trees.css: keep cards translucent so the photo stays visible. */
 

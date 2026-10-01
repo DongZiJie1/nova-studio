@@ -3,6 +3,7 @@ import type { ScheduledTask } from "../../lib/tauri-bridge";
 import {
   PERMISSION_LABELS,
   RUN_STATUS_LABELS,
+  SESSION_MODE_LABELS,
   formatDateTime,
   formatRuleSummary,
 } from "./schedule-rule";
@@ -52,6 +53,9 @@ export function ScheduleDetail({
               <span className="schedule-chip schedule-chip-permission">
                 {PERMISSION_LABELS[task.permissionMode]}
               </span>
+              {task.sessionMode === "reuse" ? (
+                <span className="schedule-chip schedule-chip-permission">{SESSION_MODE_LABELS.reuse}</span>
+              ) : null}
             </div>
             <div className="todo-detail-hero-title">
               <h1>{task.title}</h1>
@@ -91,6 +95,12 @@ export function ScheduleDetail({
                 <strong className="schedule-property-value">{PERMISSION_LABELS[task.permissionMode]}</strong>
               </div>
               <div className="todo-property-field">
+                <span>会话模式</span>
+                <strong className="schedule-property-value" title={task.sessionFile ?? undefined}>
+                  {SESSION_MODE_LABELS[task.sessionMode] ?? "每次新建会话"}
+                </strong>
+              </div>
+              <div className="todo-property-field">
                 <span>Worktree</span>
                 <strong className="schedule-property-value">{task.worktreeEnabled ? "开启" : "关闭"}</strong>
               </div>
@@ -119,7 +129,7 @@ export function ScheduleDetail({
                       {run.catchUp ? <span className="schedule-note">补跑</span> : null}
                     </div>
                     {run.error ? <p className="schedule-run-error">{run.error}</p> : null}
-                    {run.summary ? <p className="schedule-note">{run.summary}</p> : null}
+                    {run.summary ? <p className="schedule-run-summary">{run.summary}</p> : null}
                     {run.agentId ? (
                       <button type="button" className="task-toolbar-button" onClick={onOpenSession}>
                         <ExternalLink size={13} />

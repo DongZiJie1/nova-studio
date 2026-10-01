@@ -559,6 +559,24 @@
   background: color-mix(in srgb, var(--color-text-muted) 8%, var(--todo-film));
   color: var(--color-text-secondary);
 }
+/* Overdue open items: solid red chip + red card edge so they never blend
+   into the softer "due soon" warning tone. */
+.task-page .task-deadline-overdue {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+}
+.task-page .task-deadline-overdue svg {
+  color: #fff;
+}
+.task-node-overdue {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #dc2626 35%, transparent), 0 4px 14px rgba(220, 38, 38, 0.18);
+}
+.task-node-overdue .task-node-state {
+  color: #dc2626;
+  font-weight: 650;
+}
 .task-page .task-deadline-warning {
   border-color: #f87171;
   background: #fee2e2;
@@ -600,7 +618,16 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* Badge hierarchy mirrors the deadline chips below: overdue is the solid
+   alarm red, warning is the softer tinted red. Order matters — these must
+   stay after .task-topic-warning-count so the colours actually apply. */
 .task-topic-title .task-topic-warning-active {
+  border: 1px solid #f87171;
+  background: #fee2e2;
+  color: #991b1b;
+}
+.task-topic-title .task-topic-overdue-count {
+  border: 1px solid #dc2626;
   background: #dc2626;
   color: #fff;
 }
