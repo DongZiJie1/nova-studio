@@ -5,12 +5,19 @@ import {
   createScheduledTask,
   updateScheduledTask,
   type AutomationPermissionMode,
+  type AutomationSessionMode,
   type CreateScheduledTaskInput,
   type ScheduleRule,
   type ScheduledTask,
   type ScheduledTaskState,
 } from "../../lib/tauri-bridge";
-import { PERMISSION_HINTS, PERMISSION_LABELS, defaultRule } from "./schedule-rule";
+import {
+  PERMISSION_HINTS,
+  PERMISSION_LABELS,
+  SESSION_MODE_HINTS,
+  SESSION_MODE_LABELS,
+  defaultRule,
+} from "./schedule-rule";
 import { ScheduleRuleFields } from "./ScheduleRuleFields";
 
 export interface ScheduleFormValue {
@@ -20,6 +27,7 @@ export interface ScheduleFormValue {
   projectPath: string;
   schedule: ScheduleRule;
   permissionMode: AutomationPermissionMode;
+  sessionMode: AutomationSessionMode;
   worktreeEnabled: boolean;
 }
 
@@ -45,6 +53,7 @@ export function CreateScheduleModal({
     projectPath: editing?.projectPath ?? projects[0]?.path ?? "",
     schedule: editing?.schedule ?? defaultRule(),
     permissionMode: editing?.permissionMode ?? "ask",
+    sessionMode: editing?.sessionMode ?? "reuse",
     worktreeEnabled: editing?.worktreeEnabled ?? false,
   }));
 
@@ -81,6 +90,7 @@ export function CreateScheduleModal({
             projectPath: form.projectPath,
             schedule: form.schedule,
             permissionMode: form.permissionMode,
+            sessionMode: form.sessionMode,
             worktreeEnabled: form.worktreeEnabled,
           }),
         );
@@ -92,6 +102,7 @@ export function CreateScheduleModal({
           projectPath: form.projectPath,
           schedule: form.schedule,
           permissionMode: form.permissionMode,
+          sessionMode: form.sessionMode,
           worktreeEnabled: form.worktreeEnabled,
         };
         onSaved(await createScheduledTask(input));
@@ -199,6 +210,23 @@ export function CreateScheduleModal({
             <small className="schedule-field-hint">{PERMISSION_HINTS[form.permissionMode]}</small>
           </label>
 
+          <label>
+            <span>会话模式</span>
+            <select
+              value={form.sessionMode}
+              onChange={(event) =>
+                setForm({ ...form, sessionMode: event.target.value as AutomationSessionMode })
+              }
+            >
+              {(Object.keys(SESSION_MODE_LABELS) as AutomationSessionMode[]).map((mode) => (
+                <option key={mode} value={mode}>
+                  {SESSION_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+            <small className="schedule-field-hint">{SESSION_MODE_HINTS[form.sessionMode]}</small>
+          </label>
+
           <label className="schedule-checkbox-row">
             <input
               type="checkbox"
@@ -207,6 +235,9 @@ export function CreateScheduleModal({
             />
             <span>在独立 worktree 中执行（需要项目是 git 仓库）</span>
           </label>
+          {form.sessionMode === "reuse" && form.worktreeEnabled ? (
+            <small className="schedule-field-hint">复用会话时忽略 worktree，直接在项目目录中继续。</small>
+          ) : null}
         </div>
 
         <footer>

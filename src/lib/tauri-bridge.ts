@@ -405,6 +405,7 @@ export type ScheduleKind = "once" | "recurring";
 export type RecurrenceKind = "daily" | "weekly" | "monthly" | "cron";
 export type ScheduleRunStatus = "running" | "completed" | "error" | "missed" | "skipped";
 export type AutomationPermissionMode = "ask" | "edits" | "allow";
+export type AutomationSessionMode = "fresh" | "reuse";
 
 export interface ScheduleRule {
   kind: ScheduleKind;
@@ -441,6 +442,8 @@ export interface ScheduledTask {
   permissionMode: AutomationPermissionMode;
   model?: string;
   provider?: string;
+  sessionMode: AutomationSessionMode;
+  sessionFile?: string;
   worktreeEnabled?: boolean;
   lastRunAt?: string;
   lastRunStatus?: ScheduleRunStatus;
@@ -468,6 +471,7 @@ export interface CreateScheduledTaskInput {
   permissionMode?: AutomationPermissionMode;
   model?: string;
   provider?: string;
+  sessionMode?: AutomationSessionMode;
   worktreeEnabled?: boolean;
   enabled?: boolean;
 }
@@ -483,6 +487,7 @@ export type UpdateScheduledTaskInput = Partial<
     | "permissionMode"
     | "model"
     | "provider"
+    | "sessionMode"
     | "worktreeEnabled"
     | "enabled"
   >

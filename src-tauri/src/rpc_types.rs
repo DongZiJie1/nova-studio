@@ -332,6 +332,9 @@ pub struct AgentInfo {
     pub worktree: Option<WorktreeInfo>,
     pub model: Option<String>,
     pub session_id: Option<String>,
+    /// Absolute Nova session file this agent is attached to, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_file: Option<String>,
     pub created_at: String,
     /// Last chat / message activity time (ISO-8601). Falls back to created_at when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]

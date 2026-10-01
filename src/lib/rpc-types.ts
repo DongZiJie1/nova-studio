@@ -334,6 +334,8 @@ export interface AgentInfo {
   worktree?: WorktreeInfo | null;
   model: string | null;
   session_id: string | null;
+  /** Absolute Nova session file this agent is attached to, when known. */
+  session_file?: string | null;
   created_at: string;
   /** Last chat activity time (ISO-8601). Falls back to created_at when unknown. */
   last_activity_at?: string | null;

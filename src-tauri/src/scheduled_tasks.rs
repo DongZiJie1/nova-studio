@@ -20,6 +20,15 @@ pub const SCHEDULE_RUNS_CAP: usize = 20;
 /// Overdue window within which a missed slot is still fired once as catch-up.
 pub const CATCH_UP_WINDOW_MINUTES: i64 = 60;
 pub const MAX_CONCURRENT_FIRES: usize = 2;
+/// Session continuity for scheduled runs: `fresh` starts a new Nova session
+/// on every fire, `reuse` keeps appending to the task's stored session file.
+pub const SESSION_MODE_FRESH: &str = "fresh";
+pub const SESSION_MODE_REUSE: &str = "reuse";
+
+/// Stored tasks without the field predate session reuse and keep firing fresh.
+fn default_session_mode() -> String {
+	SESSION_MODE_FRESH.to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +87,12 @@ pub struct ScheduledTask {
 	pub model: Option<String>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub provider: Option<String>,
+	/// `fresh` (default for pre-existing tasks) or `reuse`.
+	#[serde(default = "default_session_mode")]
+	pub session_mode: String,
+	/// Absolute path of the Nova session file this task continues in `reuse` mode.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub session_file: Option<String>,
 	#[serde(default)]
 	pub worktree_enabled: bool,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +133,7 @@ pub struct CreateScheduledTaskInput {
 	pub permission_mode: Option<String>,
 	pub model: Option<String>,
 	pub provider: Option<String>,
+	pub session_mode: Option<String>,
 	pub worktree_enabled: Option<bool>,
 	pub enabled: Option<bool>,
 }
@@ -134,6 +150,7 @@ pub struct UpdateScheduledTaskInput {
 	pub permission_mode: Option<String>,
 	pub model: Option<String>,
 	pub provider: Option<String>,
+	pub session_mode: Option<String>,
 	pub worktree_enabled: Option<bool>,
 	pub enabled: Option<bool>,
 }
@@ -218,6 +235,22 @@ pub fn validate_permission_mode(value: &str) -> Result<(), String> {
 	} else {
 		Err(format!("Invalid permission mode: {value}"))
 	}
+}
+
+pub fn validate_session_mode(value: &str) -> Result<(), String> {
+	if value == SESSION_MODE_FRESH || value == SESSION_MODE_REUSE {
+		Ok(())
+	} else {
+		Err(format!("Invalid session mode: {value}"))
+	}
+}
+
+/// New tasks default to one continuing conversation; legacy tasks without the
+/// field stay on fresh sessions until the user flips the switch.
+pub fn normalize_session_mode(value: Option<String>) -> Result<String, String> {
+	let mode = normalize_optional_value(value).unwrap_or_else(|| SESSION_MODE_REUSE.to_string());
+	validate_session_mode(&mode)?;
+	Ok(mode)
 }
 
 pub fn validate_run_status(value: &str) -> Result<(), String> {
@@ -486,6 +519,7 @@ pub fn create_scheduled_task_state(
 		.permission_mode
 		.unwrap_or_else(|| "ask".to_string());
 	validate_permission_mode(&permission_mode)?;
+	let session_mode = normalize_session_mode(input.session_mode)?;
 	let mut state = read_scheduled_task_state()?;
 	let mut task = ScheduledTask {
 		id: format!("sch_{}", uuid::Uuid::new_v4()),
@@ -498,6 +532,8 @@ pub fn create_scheduled_task_state(
 		permission_mode,
 		model: normalize_optional_value(input.model),
 		provider: normalize_optional_value(input.provider),
+		session_mode,
+		session_file: None,
 		worktree_enabled: input.worktree_enabled.unwrap_or(false),
 		last_run_at: None,
 		last_run_status: None,
@@ -542,6 +578,11 @@ pub fn update_scheduled_task_state(
 		if project_path.is_empty() {
 			return Err("projectPath is required for scheduled tasks".to_string());
 		}
+		if task.project_path != project_path {
+			// Sessions belong to one project; never continue the old one here.
+			task.session_file = None;
+			task.last_session_id = None;
+		}
 		task.project_path = project_path;
 	}
 	if let Some(schedule) = input.schedule {
@@ -561,6 +602,10 @@ pub fn update_scheduled_task_state(
 	}
 	if input.provider.is_some() {
 		task.provider = normalize_optional_value(input.provider);
+	}
+	if let Some(session_mode) = normalize_optional_value(input.session_mode) {
+		validate_session_mode(&session_mode)?;
+		task.session_mode = session_mode;
 	}
 	if let Some(worktree) = input.worktree_enabled {
 		task.worktree_enabled = worktree;
@@ -616,6 +661,7 @@ pub fn set_scheduled_task_enabled_state(
 			permission_mode: None,
 			model: None,
 			provider: None,
+			session_mode: None,
 			worktree_enabled: None,
 			enabled: Some(enabled),
 		},
@@ -1039,6 +1085,8 @@ mod scheduled_task_tests {
 			permission_mode: "ask".into(),
 			model: None,
 			provider: None,
+			session_mode: SESSION_MODE_REUSE.into(),
+			session_file: None,
 			worktree_enabled: false,
 			last_run_at: None,
 			last_run_status: None,
@@ -1054,11 +1102,37 @@ mod scheduled_task_tests {
 		let value = serde_json::to_value(&task).unwrap();
 		assert_eq!(value["projectPath"], "/tmp");
 		assert_eq!(value["permissionMode"], "ask");
+		assert_eq!(value["sessionMode"], "reuse");
 		assert_eq!(value["nextRunAt"], "2026-09-23T10:00:00+08:00");
 		assert_eq!(value["worktreeEnabled"], false);
 		assert!(value.get("lastRunAt").is_none());
+		assert!(value.get("sessionFile").is_none());
 		let restored: ScheduledTask = serde_json::from_value(value).unwrap();
 		assert_eq!(restored.project_path, "/tmp");
 		assert_eq!(restored.permission_mode, "ask");
+	}
+
+	#[test]
+	fn session_mode_defaults_keep_legacy_tasks_fresh() {
+		let value = serde_json::json!({
+			"id": "sch_legacy",
+			"title": "t",
+			"prompt": "p",
+			"projectPath": "/tmp",
+			"enabled": true,
+			"schedule": { "kind": "recurring", "recurrence": "daily", "timeOfDay": "09:00" },
+			"permissionMode": "ask",
+			"worktreeEnabled": false,
+			"missedCount": 0,
+			"runs": [],
+			"createdAt": "2026-09-23T00:00:00Z",
+			"updatedAt": "2026-09-23T00:00:00Z"
+		});
+		let task: ScheduledTask = serde_json::from_value(value).unwrap();
+		assert_eq!(task.session_mode, SESSION_MODE_FRESH);
+		assert!(task.session_file.is_none());
+		// New tasks created without an explicit mode continue one conversation.
+		assert_eq!(normalize_session_mode(None).unwrap(), SESSION_MODE_REUSE);
+		assert!(validate_session_mode("nope").is_err());
 	}
 }

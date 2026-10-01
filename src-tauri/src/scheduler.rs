@@ -4,7 +4,7 @@
 //! App quit = paused; on startup we apply a catch-up miss policy.
 
 use crate::agent_manager::AgentManager;
-use crate::rpc_types::SpawnRequest;
+use crate::rpc_types::{AgentStatus, SpawnRequest};
 use crate::scheduled_tasks::{
 	self, begin_run, build_automation_prompt, decide_miss, finish_scheduled_fire,
 	record_missed_or_skipped, MissDecision, ScheduledTask, ScheduledTaskState,
@@ -12,6 +12,7 @@ use crate::scheduled_tasks::{
 };
 use chrono::{DateTime, Local};
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -27,6 +28,17 @@ pub struct Scheduler {
 
 #[derive(Clone)]
 pub struct SchedulerHandle(pub Arc<Scheduler>);
+
+/// Session file a reuse-mode task should continue, when it still exists.
+/// Fresh tasks and tasks whose file disappeared must start a new session.
+fn resolve_reuse_session_file(task: &ScheduledTask) -> Option<String> {
+	if task.session_mode != scheduled_tasks::SESSION_MODE_REUSE {
+		return None;
+	}
+	task.session_file
+		.clone()
+		.filter(|file| Path::new(file).exists())
+}
 
 #[derive(Default)]
 struct RunOutcome {
@@ -270,6 +282,45 @@ impl Scheduler {
 		};
 		let prompt = build_automation_prompt(&task, planned_label.as_deref());
 
+		// Session continuity: reuse mode keeps appending to the task's stored
+		// session file so earlier research stays in context on every fire.
+		let reuse_session = task.session_mode == scheduled_tasks::SESSION_MODE_REUSE;
+		let reuse_file = resolve_reuse_session_file(&task);
+		if reuse_session {
+			if let Some(file) = task.session_file.as_deref() {
+				if reuse_file.is_none() {
+					log::warn!(
+						"[scheduler] session file for {} is missing, starting a new session: {file}",
+						task.id
+					);
+				}
+			}
+			if task.worktree_enabled {
+				log::warn!(
+					"[scheduler] {} reuses one session and ignores worktree isolation",
+					task.id
+				);
+			}
+			// One .jsonl must have exactly one writer: retire the previous
+			// run's agent before continuing in the same file.
+			if let Some(previous_agent) = task.last_agent_id.as_deref() {
+				if let Some(process) = self.manager.get_process(previous_agent).await {
+					if process.get_status().await == AgentStatus::Streaming && advance {
+						log::info!(
+							"[scheduler] {} session is busy in {}, retrying in 5 minutes",
+							task.id,
+							previous_agent
+						);
+						self.defer_task(&task.id, Local::now()).await;
+						return;
+					}
+					if let Err(error) = self.manager.stop(previous_agent).await {
+						log::warn!("[scheduler] unable to stop {previous_agent}: {error}");
+					}
+				}
+			}
+		}
+
 		let begin = {
 			let _guard = match SCHEDULE_WRITE_LOCK.lock() {
 				Ok(guard) => guard,
@@ -287,17 +338,29 @@ impl Scheduler {
 
 		let request = SpawnRequest {
 			cwd: task.project_path.clone(),
-			worktree_enabled: task.worktree_enabled,
+			worktree_enabled: task.worktree_enabled && !reuse_session,
 			parent_agent_id: None,
 			model: task.model.clone(),
 			provider: task.provider.clone(),
-			args: None,
+			args: reuse_file
+				.clone()
+				.map(|file| vec!["--session".to_string(), file]),
 			depth: 0,
 		};
 
-		match self.manager.spawn(request).await {
+		let spawned = match (reuse_file.as_deref(), task.last_session_id.as_deref()) {
+			(Some(_), Some(session_id)) => {
+				self.manager
+					.spawn_continuing_session(request, session_id)
+					.await
+			}
+			_ => self.manager.spawn(request).await,
+		};
+		match spawned {
 			Ok(info) => {
 				let agent_id = info.id.clone();
+				let session_id = info.session_id.clone();
+				let session_file = info.session_file.clone();
 				// Subscribe before sending: fast provider failures must not race UI setup.
 				let Some(process) = self.manager.get_process(&agent_id).await else {
 					self.mark_run_error(&task.id, &run.id, Some(&agent_id), "Agent process not found");
@@ -322,8 +385,16 @@ impl Scheduler {
 					.await
 				{
 					Ok(()) => {
-						self.stamp_run_started(&task.id, &run.id, &agent_id, catch_up);
-						self.emit_fired(&task, &run.id, &agent_id, catch_up);
+						self.stamp_run_started(
+							&task.id,
+							&run.id,
+							&agent_id,
+							session_id.as_deref(),
+							session_file.as_deref(),
+							reuse_session,
+							catch_up,
+						);
+						self.emit_fired(&task, &run.id, &agent_id, session_id.as_deref(), catch_up);
 						self.advance_schedule(&task.id, scheduled_slot, advance);
 						self.emit_changed();
 						let mut outcome = RunOutcome::default();
@@ -420,17 +491,35 @@ impl Scheduler {
 		});
 	}
 
-	fn stamp_run_started(&self, task_id: &str, run_id: &str, agent_id: &str, catch_up: bool) {
+	fn stamp_run_started(
+		&self,
+		task_id: &str,
+		run_id: &str,
+		agent_id: &str,
+		session_id: Option<&str>,
+		session_file: Option<&str>,
+		reuse_session: bool,
+		catch_up: bool,
+	) {
 		let _ = self.with_lock(|| {
 			let mut state = scheduled_tasks::read_scheduled_task_state()?;
 			if let Some(item) = state.items.iter_mut().find(|t| t.id == task_id) {
 				if let Some(run) = item.runs.iter_mut().find(|r| r.id == run_id) {
 					run.agent_id = Some(agent_id.to_string());
-					run.session_id = Some(agent_id.to_string());
+					run.session_id = session_id.map(str::to_string);
 					run.catch_up = Some(catch_up);
 				}
 				item.last_agent_id = Some(agent_id.to_string());
-				item.last_session_id = Some(agent_id.to_string());
+				if let Some(session_id) = session_id {
+					item.last_session_id = Some(session_id.to_string());
+				}
+				// Only a reuse run owns the task's continuing session file;
+				// fresh runs must not steal the pointer from it.
+				if reuse_session {
+					if let Some(session_file) = session_file {
+						item.session_file = Some(session_file.to_string());
+					}
+				}
 				item.updated_at = Local::now().to_rfc3339();
 			}
 			scheduled_tasks::write_scheduled_task_state(&state)
@@ -459,13 +548,20 @@ impl Scheduler {
 		);
 	}
 
-	fn emit_fired(&self, task: &ScheduledTask, run_id: &str, agent_id: &str, catch_up: bool) {
+	fn emit_fired(
+		&self,
+		task: &ScheduledTask,
+		run_id: &str,
+		agent_id: &str,
+		session_id: Option<&str>,
+		catch_up: bool,
+	) {
 		let payload = TaskFiredPayload {
 			task_id: task.id.clone(),
 			run_id: run_id.to_string(),
 			title: task.title.clone(),
 			agent_id: agent_id.to_string(),
-			session_id: agent_id.to_string(),
+			session_id: session_id.unwrap_or(agent_id).to_string(),
 			catch_up,
 			next_run_at: task.next_run_at.clone(),
 		};
@@ -508,8 +604,70 @@ pub async fn run_scheduled_task_now(
 
 #[cfg(test)]
 mod tests {
-	use super::RunOutcome;
+	use super::{resolve_reuse_session_file, RunOutcome};
+	use crate::scheduled_tasks::{ScheduleRule, ScheduledTask, SESSION_MODE_FRESH, SESSION_MODE_REUSE};
 	use serde_json::json;
+
+	fn task_for_session(mode: &str, file: Option<String>) -> ScheduledTask {
+		ScheduledTask {
+			id: "sch_test".into(),
+			title: "t".into(),
+			prompt: "p".into(),
+			description: None,
+			project_path: "/tmp".into(),
+			enabled: true,
+			schedule: ScheduleRule {
+				kind: "once".into(),
+				run_at: Some("2026-09-23T10:00:00+08:00".into()),
+				recurrence: None,
+				time_of_day: None,
+				weekdays: None,
+				month_days: None,
+				cron: None,
+				timezone: None,
+			},
+			permission_mode: "ask".into(),
+			model: None,
+			provider: None,
+			session_mode: mode.into(),
+			session_file: file,
+			worktree_enabled: false,
+			last_run_at: None,
+			last_run_status: None,
+			last_agent_id: None,
+			last_session_id: None,
+			next_run_at: None,
+			missed_count: 0,
+			runs: vec![],
+			created_at: "2026-09-23T00:00:00Z".into(),
+			updated_at: "2026-09-23T00:00:00Z".into(),
+			completed_at: None,
+		}
+	}
+
+	#[test]
+	fn reuse_mode_only_continues_an_existing_session_file() {
+		let dir = std::env::temp_dir().join(format!("nova-scheduler-{}", uuid::Uuid::new_v4()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let file = dir.join("session.jsonl");
+		std::fs::write(&file, "{}\n").unwrap();
+		let file_path = file.to_string_lossy().into_owned();
+
+		assert_eq!(
+			resolve_reuse_session_file(&task_for_session(SESSION_MODE_REUSE, Some(file_path.clone())))
+				.as_deref(),
+			Some(file_path.as_str())
+		);
+		assert!(resolve_reuse_session_file(&task_for_session(
+			SESSION_MODE_REUSE,
+			Some(dir.join("gone.jsonl").to_string_lossy().into_owned())
+		))
+		.is_none());
+		assert!(resolve_reuse_session_file(&task_for_session(SESSION_MODE_FRESH, Some(file_path))).is_none());
+		assert!(resolve_reuse_session_file(&task_for_session(SESSION_MODE_REUSE, None)).is_none());
+
+		let _ = std::fs::remove_dir_all(&dir);
+	}
 
 	#[test]
 	fn connection_error_is_not_success_when_agent_settles() {
