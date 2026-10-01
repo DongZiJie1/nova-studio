@@ -129,7 +129,7 @@ export function ScheduleDetail({
                       {run.catchUp ? <span className="schedule-note">补跑</span> : null}
                     </div>
                     {run.error ? <p className="schedule-run-error">{run.error}</p> : null}
-                    {run.summary ? <p className="schedule-note">{run.summary}</p> : null}
+                    {run.summary ? <p className="schedule-run-summary">{run.summary}</p> : null}
                     {run.agentId ? (
                       <button type="button" className="task-toolbar-button" onClick={onOpenSession}>
                         <ExternalLink size={13} />

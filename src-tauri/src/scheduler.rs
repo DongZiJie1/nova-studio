@@ -43,6 +43,41 @@ fn resolve_reuse_session_file(task: &ScheduledTask) -> Option<String> {
 #[derive(Default)]
 struct RunOutcome {
 	error: Option<String>,
+	/// Last non-empty assistant text, persisted as the run summary.
+	summary: Option<String>,
+}
+
+/// Prefer the text the automation prompt asks the model to wrap in
+/// `<run_summary>`; fall back to the whole message when it is missing.
+fn extract_run_summary(text: &str) -> Option<String> {
+	if let Some(start) = text.find("<run_summary>") {
+		let rest = &text[start + "<run_summary>".len()..];
+		if let Some(end) = rest.find("</run_summary>") {
+			let inner = rest[..end].trim();
+			if !inner.is_empty() {
+				return Some(inner.to_string());
+			}
+		}
+	}
+	let trimmed = text.trim();
+	(!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Text blocks of an assistant message; tool-only turns return `None`.
+fn assistant_message_text(message: &serde_json::Value) -> Option<String> {
+	let mut parts = Vec::new();
+	for block in message["content"].as_array()? {
+		if block["type"].as_str() != Some("text") {
+			continue;
+		}
+		if let Some(text) = block["text"].as_str() {
+			let text = text.trim();
+			if !text.is_empty() {
+				parts.push(text.to_string());
+			}
+		}
+	}
+	extract_run_summary(&parts.join("\n\n"))
 }
 
 impl RunOutcome {
@@ -55,6 +90,11 @@ impl RunOutcome {
 					Some("aborted") => Some("任务已停止".to_string()),
 					_ => None,
 				};
+				if self.error.is_none() {
+					if let Some(text) = assistant_message_text(message) {
+						self.summary = Some(text);
+					}
+				}
 			}
 			Some("response") if event["command"] == "prompt" && event["success"] == false => {
 				self.error = Some(event["error"].as_str().unwrap_or("任务启动失败").to_string());
@@ -413,10 +453,11 @@ impl Scheduler {
 						if let Some(error) = outcome.error {
 							self.mark_run_error(&task.id, &run.id, Some(&agent_id), &error);
 						} else {
+							let summary = outcome.summary.clone();
 							let result = self.with_lock(|| scheduled_tasks::record_scheduled_run_result_state(
 								scheduled_tasks::RecordScheduledRunResultInput {
 									task_id: task.id.clone(), run_id: run.id.clone(),
-									status: "completed".into(), error: None, summary: None,
+									status: "completed".into(), error: None, summary,
 								}, Local::now()));
 							if let Err(error) = result {
 								log::error!("[scheduler] persist result failed: {error}");
@@ -424,10 +465,18 @@ impl Scheduler {
 								self.emit_run_updated(&task.id, &run.id, "completed", Some(agent_id.clone()), None);
 							}
 						}
+						// Fire-and-forget runs must not keep an idle runtime alive
+						// until the next fire; the session file keeps the context.
+						if let Err(error) = self.manager.stop(&agent_id).await {
+							log::warn!("[scheduler] unable to stop {agent_id} after run: {error}");
+						}
 					}
 					Err(error) => {
 						self.mark_run_error(&task.id, &run.id, Some(&agent_id), &error);
 						self.advance_schedule(&task.id, scheduled_slot, advance);
+						if let Err(stop_error) = self.manager.stop(&agent_id).await {
+							log::warn!("[scheduler] unable to stop {agent_id} after failure: {stop_error}");
+						}
 					}
 				}
 			}
@@ -667,6 +716,24 @@ mod tests {
 		assert!(resolve_reuse_session_file(&task_for_session(SESSION_MODE_REUSE, None)).is_none());
 
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[test]
+	fn run_outcome_keeps_the_last_assistant_text() {
+		let mut outcome = RunOutcome::default();
+		outcome.observe(&json!({"type":"message_end","message":{
+			"role":"assistant","stopReason":"toolUse",
+			"content":[{"type":"text","text":"先看看有哪些新岗位"}]}}));
+		outcome.observe(&json!({"type":"message_end","message":{
+			"role":"assistant","stopReason":"stop",
+			"content":[{"type":"text","text":"完整调研报告……\n\n<run_summary>本次新增 3 个岗位</run_summary>"}]}}));
+		// A tool-only turn must not wipe the previous summary.
+		outcome.observe(&json!({"type":"message_end","message":{
+			"role":"assistant","stopReason":"toolUse",
+			"content":[{"type":"toolCall","name":"read"}]}}));
+		assert!(outcome.observe(&json!({"type":"agent_settled"})));
+		assert!(outcome.error.is_none());
+		assert_eq!(outcome.summary.as_deref(), Some("本次新增 3 个岗位"));
 	}
 
 	#[test]
