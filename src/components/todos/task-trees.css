@@ -631,3 +631,321 @@
   background: #dc2626;
   color: #fff;
 }
+
+/* ── 完成情况 progress timeline ─────────────────────────────────────── */
+.todo-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.todo-progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.todo-progress-count {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.todo-progress-append-button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--color-accent-start), var(--color-accent-end));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.todo-progress-append-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.todo-progress-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.todo-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+  overflow: hidden;
+}
+.todo-progress-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--color-accent-start), var(--color-accent-end));
+}
+.todo-progress-bar-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.todo-progress-bar-meta strong {
+  color: var(--color-accent-start);
+  font-size: 12px;
+}
+.todo-progress-composer,
+.todo-progress-entry-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 30%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-accent-start) 8%, transparent);
+}
+.todo-progress-composer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.todo-progress-composer-head strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+.todo-progress-composer-head span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.todo-progress-percent-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.todo-progress-percent-field span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  min-width: 28px;
+}
+.todo-progress-percent-field input[type="range"] {
+  flex: 1;
+  accent-color: var(--color-accent-start);
+}
+.todo-progress-percent-toggle {
+  min-width: 56px;
+  padding: 3px 8px;
+  border: 1px solid var(--todo-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.todo-progress-percent-toggle.active {
+  border-color: color-mix(in srgb, var(--color-accent-start) 45%, transparent);
+  color: var(--color-accent-start);
+  background: color-mix(in srgb, var(--color-accent-start) 12%, transparent);
+  font-weight: 600;
+}
+.todo-progress-composer textarea,
+.todo-progress-entry-editor textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--todo-border);
+  border-radius: 8px;
+  background: var(--color-bg-glass);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.todo-progress-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.todo-progress-composer-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--todo-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.todo-progress-composer-actions .todo-progress-composer-submit {
+  border: 0;
+  background: linear-gradient(135deg, var(--color-accent-start), var(--color-accent-end));
+  color: #fff;
+  font-weight: 600;
+}
+.todo-progress-empty {
+  padding: 16px;
+  border: 1px dashed var(--todo-border);
+  border-radius: 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.todo-progress-empty p {
+  margin: 0 0 4px;
+}
+.todo-progress-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+.todo-progress-timeline::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--color-accent-start), color-mix(in srgb, var(--color-accent-end) 15%, transparent));
+  border-radius: 1px;
+}
+.todo-progress-timeline > li {
+  position: relative;
+  padding-left: 22px;
+}
+.todo-progress-timeline > li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent-start);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 25%, transparent);
+}
+.todo-progress-entry-user.todo-progress-entry {
+  --todo-progress-tone: var(--color-accent-end);
+}
+.todo-progress-entry-agent.todo-progress-entry {
+  --todo-progress-tone: var(--color-accent-start);
+}
+.todo-progress-entry {
+  padding: 12px 14px;
+  border: 1px solid var(--todo-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-text-primary) 3%, transparent);
+}
+.todo-progress-entry header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.todo-progress-entry time {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.todo-progress-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.todo-progress-percent {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent-start) 18%, transparent);
+  color: var(--color-accent-start);
+  font-size: 11px;
+  font-weight: 700;
+}
+.todo-progress-source {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.todo-progress-badges-agent .todo-progress-source {
+  background: color-mix(in srgb, var(--color-accent-end) 16%, transparent);
+  color: var(--color-accent-end);
+}
+.todo-progress-edited {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.todo-progress-entry-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+.todo-progress-entry-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.todo-progress-entry-actions button:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+.todo-progress-entry-content {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.todo-progress-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: center;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.todo-progress-expand:hover {
+  color: var(--color-accent-start);
+}
+
+/* List / card progress indicators */
+.task-node-progress {
+  display: block;
+  height: 4px;
+  margin: 0 0 4px 33px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--color-accent-start), var(--color-accent-end));
+  max-width: calc(100% - 40px);
+}
+.task-node-progress-label {
+  margin-right: 6px;
+  color: var(--color-accent-start);
+  font-weight: 600;
+}
+.task-node-latest {
+  margin-right: 6px;
+}
+.task-flat-title {
+  position: relative;
+}
+.task-flat-progress {
+  display: block;
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--color-accent-start), var(--color-accent-end));
+}

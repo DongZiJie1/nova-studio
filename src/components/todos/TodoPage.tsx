@@ -34,8 +34,11 @@ import {
   X,
 } from "lucide-react";
 import {
+  appendTodoProgress,
   createTodo,
   deleteTodo,
+  deleteTodoProgress,
+  editTodoProgress,
   listTodos,
   updateTodo,
   type CreateTodoInput,
@@ -47,6 +50,7 @@ import {
 import { useTodoStore } from "../../stores/todo-store";
 import { TodoTreeCanvas, TaskStatusIcon, TodoDeadline } from "./TodoTreeCanvas";
 import { compareTodoDeadline, deadlineTone, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { latestProgress, ProgressTimeline, progressPercent } from "./ProgressTimeline";
 import "./task-trees.css";
 import { Markdown } from "../chat/Markdown";
 
@@ -784,7 +788,12 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                 <strong>{todo.title}</strong>
                 <span>
                   {topicOf(todo)} · {STATE_LABEL[taskState(todo)]}
+                  {progressPercent(todo) !== undefined ? ` · ${progressPercent(todo)}%` : ""}
+                  {latestProgress(todo) ? ` · ${latestProgress(todo)?.source === "agent" ? "Nova" : "我"} · ${latestProgress(todo)?.content.slice(0, 24)}` : ""}
                 </span>
+                {progressPercent(todo) !== undefined && (
+                  <i className="task-flat-progress" style={{ width: `${progressPercent(todo)}%` }} />
+                )}
                 <TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} />
               </button>
             </article>
@@ -886,6 +895,15 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
               });
             }}
             onOpenSession={() => onOpenSession(selected)}
+            onAppendProgress={(content, percent) =>
+              mutate(async () => appendTodoProgress({ id: selected.id, content, percent, source: "user" }))
+            }
+            onEditProgress={(entryId, content, percent) =>
+              mutate(async () => editTodoProgress({ id: selected.id, entryId, content, percent }))
+            }
+            onDeleteProgress={(entryId) => {
+              void mutate(async () => deleteTodoProgress({ id: selected.id, entryId }));
+            }}
           />
         </div>
       )}
@@ -1167,7 +1185,6 @@ interface TodoDraft {
   id: string;
   title: string;
   description: string;
-  completionNotes: string;
   status: TodoStatus;
   priority: TodoPriority;
   tags: string[];
@@ -1190,6 +1207,9 @@ function TodoDetail({
   onDelete,
   onRun,
   onOpenSession,
+  onAppendProgress,
+  onEditProgress,
+  onDeleteProgress,
 }: {
   panelRef: RefObject<HTMLElement | null>;
   todo: TodoItem;
@@ -1204,11 +1224,13 @@ function TodoDetail({
   onDelete: () => void;
   onRun: (input: TodoDraft) => void;
   onOpenSession: () => void;
+  onAppendProgress: (content: string, percent: number | undefined) => Promise<void>;
+  onEditProgress: (entryId: string, content: string, percent: number | undefined) => Promise<void>;
+  onDeleteProgress: (entryId: string) => void;
 }) {
   useDialogFocus(panelRef);
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(todo.description);
-  const [completionNotes, setCompletionNotes] = useState(todo.completionNotes ?? "");
   const [status, setStatus] = useState(todo.status);
   const priority = todo.priority;
   const [topic, setTopic] = useState(topicOf(todo));
@@ -1223,7 +1245,6 @@ function TodoDetail({
   useEffect(() => {
     setTitle(todo.title);
     setDescription(todo.description);
-    setCompletionNotes(todo.completionNotes ?? "");
     setStatus(todo.status);
     setTopic(topicOf(todo));
     setTags(todo.tags ?? []);
@@ -1235,13 +1256,12 @@ function TodoDetail({
   const dirty =
     title !== todo.title ||
     description !== todo.description ||
-    completionNotes !== (todo.completionNotes ?? "") ||
     status !== todo.status ||
     topic !== topicOf(todo) ||
     tags.join("\u0000") !== (todo.tags ?? []).join("\u0000") ||
     projectPath !== (todo.projectPath ?? "") ||
     dueAt !== (todo.dueAt?.slice(0, 10) ?? "");
-  const draft: TodoDraft = { id: todo.id, title, description, completionNotes, status, priority, tags, projectPath, dueAt, topic };
+  const draft: TodoDraft = { id: todo.id, title, description, status, priority, tags, projectPath, dueAt, topic };
 
   return (
     <aside
@@ -1385,18 +1405,13 @@ function TodoDetail({
           </div>
         </section>
 
-        <section className="todo-detail-section todo-detail-content-section">
-          <label>
-            <span>完成情况 <small>{completionNotes.length}/50000</small></span>
-            <textarea
-              rows={5}
-              maxLength={50000}
-              value={completionNotes}
-              onChange={(event) => setCompletionNotes(event.target.value)}
-              placeholder="填写已完成的内容、实际结果或尚未完成的部分…"
-            />
-          </label>
-        </section>
+        <ProgressTimeline
+          todo={todo}
+          busy={busy}
+          onAppend={onAppendProgress}
+          onEdit={onEditProgress}
+          onDelete={onDeleteProgress}
+        />
 
         <section className="todo-detail-section todo-history-section">
           <span className="todo-detail-section-title">修改记录</span>

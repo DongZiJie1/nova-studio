@@ -345,12 +345,22 @@ export interface TodoHistoryEntry {
   changedAt: string;
 }
 
+/** One checkpoint on a todo's completion timeline (git-commit-like). */
+export interface ProgressEntry {
+  id: string;
+  at: string;
+  content: string;
+  source: "user" | "agent";
+  percent?: number;
+  editedAt?: string;
+}
+
 export interface TodoItem {
   topic?: string;
   id: string;
   title: string;
   description: string;
-  completionNotes?: string;
+  progress: ProgressEntry[];
   tags: string[];
   status: TodoStatus;
   priority: TodoPriority;
@@ -381,7 +391,26 @@ export interface CreateTodoInput {
   dueAt?: string;
 }
 
-export type UpdateTodoInput = Partial<Pick<TodoItem, "topic" | "title" | "description" | "completionNotes" | "tags" | "status" | "priority" | "projectPath" | "dueAt" | "agentId" | "sessionId">> & { id: string };
+export type UpdateTodoInput = Partial<Pick<TodoItem, "topic" | "title" | "description" | "tags" | "status" | "priority" | "projectPath" | "dueAt" | "agentId" | "sessionId">> & { id: string };
+
+export interface AppendTodoProgressInput {
+  id: string;
+  content: string;
+  percent?: number;
+  source?: "user" | "agent";
+}
+
+export interface EditTodoProgressInput {
+  id: string;
+  entryId: string;
+  content: string;
+  percent?: number;
+}
+
+export interface DeleteTodoProgressInput {
+  id: string;
+  entryId: string;
+}
 
 export async function listTodos(): Promise<TodoState> {
   return invoke<TodoState>("list_todos");
@@ -397,6 +426,18 @@ export async function updateTodo(input: UpdateTodoInput): Promise<TodoState> {
 
 export async function deleteTodo(id: string): Promise<TodoState> {
   return invoke<TodoState>("delete_todo", { id });
+}
+
+export async function appendTodoProgress(input: AppendTodoProgressInput): Promise<TodoState> {
+  return invoke<TodoState>("append_todo_progress", { input });
+}
+
+export async function editTodoProgress(input: EditTodoProgressInput): Promise<TodoState> {
+  return invoke<TodoState>("edit_todo_progress", { input });
+}
+
+export async function deleteTodoProgress(input: DeleteTodoProgressInput): Promise<TodoState> {
+  return invoke<TodoState>("delete_todo_progress", { input });
 }
 
 // ─── Scheduled tasks (定时任务) ───
