@@ -1224,8 +1224,8 @@ function TodoDetail({
   onDelete: () => void;
   onRun: (input: TodoDraft) => void;
   onOpenSession: () => void;
-  onAppendProgress: (content: string, percent: number | undefined) => Promise<void>;
-  onEditProgress: (entryId: string, content: string, percent: number | undefined) => Promise<void>;
+  onAppendProgress: (content: string, percent: number) => Promise<void>;
+  onEditProgress: (entryId: string, content: string, percent: number) => Promise<void>;
   onDeleteProgress: (entryId: string) => void;
 }) {
   useDialogFocus(panelRef);

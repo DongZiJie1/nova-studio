@@ -215,11 +215,11 @@ function TopicTree({
                   <div className="task-node-meta">
                     {(() => {
                       const latest = todo.progress?.[todo.progress.length - 1];
-                      const percent = [...(todo.progress ?? [])].reverse().find((entry) => entry.percent !== undefined)?.percent;
+                      const percent = [...(todo.progress ?? [])].reverse().find((entry) => typeof entry.percent === "number")?.percent;
                       if (!latest && !todo.dueAt) return "点击标题查看详情";
                       return (
                         <>
-                          {percent !== undefined && (
+                          {typeof percent === "number" && (
                             <>
                               <i className="task-node-progress" style={{ width: `${percent}%` }} />
                               <span className="task-node-progress-label">

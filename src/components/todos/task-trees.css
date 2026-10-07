@@ -668,29 +668,34 @@
 .todo-progress-bar-wrap {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .todo-progress-bar {
-  height: 6px;
-  border-radius: 3px;
+  height: 8px;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
   overflow: hidden;
 }
 .todo-progress-bar i {
   display: block;
   height: 100%;
-  border-radius: 3px;
+  border-radius: 999px;
   background: linear-gradient(90deg, var(--color-accent-start), var(--color-accent-end));
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--color-accent-start) 35%, transparent);
 }
 .todo-progress-bar-meta {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   color: var(--color-text-muted);
   font-size: 11px;
 }
 .todo-progress-bar-meta strong {
-  color: var(--color-accent-start);
-  font-size: 12px;
+  color: var(--color-text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 .todo-progress-composer,
 .todo-progress-entry-editor {
@@ -716,35 +721,131 @@
   color: var(--color-text-muted);
   font-size: 11px;
 }
-.todo-progress-percent-field {
+/* ── premium percent slider ────────────────────────────────────────── */
+.todo-percent {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--todo-border);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-accent-start) 7%, transparent), transparent 55%),
+    var(--todo-film);
 }
-.todo-progress-percent-field span {
+.todo-percent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.todo-percent-label {
   color: var(--color-text-secondary);
   font-size: 12px;
-  min-width: 28px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
-.todo-progress-percent-field input[type="range"] {
-  flex: 1;
-  accent-color: var(--color-accent-start);
+.todo-percent-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
 }
-.todo-progress-percent-toggle {
-  min-width: 56px;
-  padding: 3px 8px;
-  border: 1px solid var(--todo-border);
+.todo-percent-value {
+  color: var(--color-text-primary);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+.todo-percent-unit {
+  color: var(--color-accent-start);
+  font-size: 13px;
+  font-weight: 600;
+}
+.todo-percent-track {
+  position: relative;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+.todo-percent-track:focus-visible .todo-percent-thumb {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent-start) 35%, transparent),
+    0 4px 12px rgba(0, 0, 0, 0.22);
+}
+.todo-percent-rail {
+  position: relative;
+  width: 100%;
+  height: 8px;
   border-radius: 999px;
-  background: transparent;
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+  overflow: hidden;
+}
+.todo-percent-locked {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+}
+.todo-percent-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-accent-start), var(--color-accent-end));
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--color-accent-start) 35%, transparent);
+}
+.todo-percent-thumb {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid color-mix(in srgb, var(--color-accent-start) 80%, var(--color-accent-end));
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+  transform: translateY(-50%);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.todo-percent-track.is-dragging .todo-percent-thumb {
+  transform: translateY(-50%) scale(1.12);
+  box-shadow:
+    0 4px 14px color-mix(in srgb, var(--color-accent-start) 45%, transparent),
+    0 0 0 1px rgba(255, 255, 255, 0.4) inset;
+}
+.todo-percent-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--color-text-muted);
   font-size: 11px;
-  cursor: pointer;
 }
-.todo-progress-percent-toggle.active {
-  border-color: color-mix(in srgb, var(--color-accent-start) 45%, transparent);
+.todo-percent-bump {
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-start) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
   color: var(--color-accent-start);
-  background: color-mix(in srgb, var(--color-accent-start) 12%, transparent);
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.todo-percent-bump:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-start) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent-start) 50%, transparent);
+}
+.todo-percent-bump:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .todo-progress-composer textarea,
 .todo-progress-entry-editor textarea {

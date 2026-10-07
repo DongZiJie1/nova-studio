@@ -351,8 +351,9 @@ export interface ProgressEntry {
   at: string;
   content: string;
   source: "user" | "agent";
-  percent?: number;
-  editedAt?: string;
+  /** Omitted when unset; may arrive as null from Rust Option. */
+  percent?: number | null;
+  editedAt?: string | null;
 }
 
 export interface TodoItem {

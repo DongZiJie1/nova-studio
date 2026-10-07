@@ -71,7 +71,10 @@ pub struct ProgressEntry {
     at: String,
     content: String,
     source: String,
+    // Omit unset fields instead of writing null — the UI treats missing as unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     percent: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     edited_at: Option<String>,
 }
 
