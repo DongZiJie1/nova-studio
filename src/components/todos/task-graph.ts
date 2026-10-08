@@ -83,10 +83,10 @@ export function compareTodoDeadline(a: TodoItem, b: TodoItem, now = new Date()):
   return aDate.localeCompare(bDate) || a.order - b.order;
 }
 
-/** Cards wrap two per row by deadline; width never grows with task count. */
+/** Cards stack in one column by deadline; width never grows with task count. */
 export function layoutTopic(items: TodoItem[]) {
   const ordered = [...items].sort(compareTodoDeadline);
-  const columns = Math.min(2, Math.max(1, ordered.length));
+  const columns = 1;
   const width = columns * CARD_WIDTH + (columns - 1) * CARD_GAP + 32;
   const nodes: GraphNode[] = [];
   let y = 16;
