@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type FormEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -1078,9 +1077,10 @@ function CreateTodoModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose, saving]);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!form.title.trim()) return;
+  const submit = async () => {
+    if (!form.title.trim() || saving) return;
+    // Commit any in-flight IME composition so the first click sees the real title.
+    (document.activeElement as HTMLElement | null)?.blur?.();
     setSaving(true);
     try {
       onCreated(
@@ -1100,15 +1100,18 @@ function CreateTodoModal({
   return createPortal(
     <div
       className="todo-modal-backdrop"
-      onMouseDown={() => {
+      onMouseDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (!saving) onClose();
       }}
     >
       <form
         ref={modalRef}
         className="todo-modal"
-        onSubmit={(event) => void submit(event)}
-        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="todo-modal-title"
@@ -1193,7 +1196,17 @@ function CreateTodoModal({
           <button type="button" className="todo-secondary-button" disabled={saving} onClick={onClose}>
             取消
           </button>
-          <button type="submit" className="todo-primary-button" disabled={saving || !form.title.trim()}>
+          <button
+            type="button"
+            className="todo-primary-button"
+            disabled={saving || !form.title.trim()}
+            onMouseDown={(event) => {
+              // Don't let the active input blur on mousedown — that swallows the
+              // click when an IME composition is open (first click feels dead).
+              event.preventDefault();
+            }}
+            onClick={() => void submit()}
+          >
             {saving ? <LoaderCircle className="todo-spinner" size={15} /> : <Plus size={15} />}
             创建待办
           </button>
