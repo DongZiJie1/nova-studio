@@ -61,6 +61,23 @@ pub struct TodoHistoryEntry {
     changed_at: String,
 }
 
+/// One checkpoint on a todo's completion timeline — a git-commit-like record of
+/// "what got done at this moment". Keep the shape in sync with `ProgressEntry`
+/// in nova's `todo-store.ts`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressEntry {
+    id: String,
+    at: String,
+    content: String,
+    source: String,
+    // Omit unset fields instead of writing null — the UI treats missing as unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    percent: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edited_at: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TodoItem {
@@ -69,7 +86,7 @@ pub struct TodoItem {
     title: String,
     description: String,
     #[serde(default)]
-    completion_notes: String,
+    progress: Vec<ProgressEntry>,
     #[serde(default)]
     tags: Vec<String>,
     status: String,
@@ -115,7 +132,6 @@ pub struct UpdateTodoInput {
     id: String,
     title: Option<String>,
     description: Option<String>,
-    completion_notes: Option<String>,
     tags: Option<Vec<String>>,
     status: Option<String>,
     priority: Option<String>,
@@ -123,6 +139,31 @@ pub struct UpdateTodoInput {
     due_at: Option<String>,
     agent_id: Option<String>,
     session_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendTodoProgressInput {
+    id: String,
+    content: String,
+    percent: Option<i32>,
+    source: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditTodoProgressInput {
+    id: String,
+    entry_id: String,
+    content: String,
+    percent: Option<i32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteTodoProgressInput {
+    id: String,
+    entry_id: String,
 }
 
 static TODO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -161,8 +202,52 @@ fn read_todo_state() -> Result<TodoState, String> {
     }
     let content = std::fs::read_to_string(&path)
         .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
-    let mut state: TodoState = serde_json::from_str(&content)
+    // Hard-cut migration: older rows kept a single `completionNotes` string.
+    // Wrap that as the first progress checkpoint so the notes survive; the
+    // field is never written back. Mirrors `parseProgress` in todo-store.ts.
+    let mut raw: serde_json::Value = serde_json::from_str(&content)
         .map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
+    if let Some(items) = raw.get_mut("items").and_then(serde_json::Value::as_array_mut) {
+        for item in items.iter_mut() {
+            let needs_legacy = item
+                .get("progress")
+                .and_then(serde_json::Value::as_array)
+                .map(|entries| entries.is_empty())
+                .unwrap_or(true)
+                && item
+                    .get("completionNotes")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|notes| !notes.trim().is_empty())
+                    .unwrap_or(false);
+            if !needs_legacy {
+                continue;
+            }
+            let notes = item
+                .get("completionNotes")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let at = item
+                .get("updatedAt")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("1970-01-01T00:00:00Z")
+                .to_string();
+            item.as_object_mut().map(|object| {
+                object.insert(
+                    "progress".to_string(),
+                    serde_json::json!([{
+                        "id": format!("progress_{}", uuid::Uuid::new_v4()),
+                        "at": at,
+                        "content": notes,
+                        "source": "user",
+                    }]),
+                );
+            });
+        }
+    }
+    let mut state: TodoState =
+        serde_json::from_value(raw).map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
     state.version = 1;
     Ok(state)
 }
@@ -322,7 +407,7 @@ pub async fn create_todo(input: CreateTodoInput) -> Result<TodoState, String> {
         id: format!("todo_{}", uuid::Uuid::new_v4()),
         title,
         description,
-        completion_notes: String::new(),
+        progress: Vec::new(),
         tags,
         status: "pending".to_string(),
         priority,
@@ -360,9 +445,6 @@ pub async fn update_todo(input: UpdateTodoInput) -> Result<TodoState, String> {
     }
     if let Some(description) = input.description.as_deref() {
         todo.description = normalize_todo_description(description)?;
-    }
-    if let Some(notes) = input.completion_notes.as_deref() {
-        todo.completion_notes = normalize_todo_description(notes)?;
     }
     if let Some(tags) = input.tags {
         todo.tags = normalize_todo_tags(tags)?;
@@ -402,6 +484,106 @@ pub async fn delete_todo(id: String) -> Result<TodoState, String> {
     if before == state.items.len() {
         return Err(format!("Todo not found: {id}"));
     }
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+fn normalize_progress_content(value: &str) -> Result<String, String> {
+    let content = value.trim().to_string();
+    if content.is_empty() {
+        return Err("Progress content is required".to_string());
+    }
+    if content.chars().count() > 5_000 {
+        return Err("Progress content must not exceed 5000 characters".to_string());
+    }
+    Ok(content)
+}
+
+fn normalize_progress_percent(value: Option<i32>) -> Result<Option<i32>, String> {
+    match value {
+        None => Ok(None),
+        Some(percent) if (0..=100).contains(&percent) => Ok(Some(percent)),
+        Some(_) => Err("Progress percent must be an integer between 0 and 100".to_string()),
+    }
+}
+
+fn normalize_progress_source(value: Option<String>) -> String {
+    match value.as_deref() {
+        Some("agent") => "agent".to_string(),
+        _ => "user".to_string(),
+    }
+}
+
+/// Append one checkpoint to the completion timeline. Never rewrites earlier entries.
+#[tauri::command]
+pub async fn append_todo_progress(input: AppendTodoProgressInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let todo = state
+        .items
+        .iter_mut()
+        .find(|todo| todo.id == input.id)
+        .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    todo.progress.push(ProgressEntry {
+        id: format!("progress_{}", uuid::Uuid::new_v4()),
+        at: now.clone(),
+        content: normalize_progress_content(&input.content)?,
+        source: normalize_progress_source(input.source),
+        percent: normalize_progress_percent(input.percent)?,
+        edited_at: None,
+    });
+    todo.updated_at = now;
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn edit_todo_progress(input: EditTodoProgressInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let todo = state
+        .items
+        .iter_mut()
+        .find(|todo| todo.id == input.id)
+        .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    let entry = todo
+        .progress
+        .iter_mut()
+        .find(|entry| entry.id == input.entry_id)
+        .ok_or_else(|| format!("Progress entry not found: {}", input.entry_id))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    entry.content = normalize_progress_content(&input.content)?;
+    if input.percent.is_some() {
+        entry.percent = normalize_progress_percent(input.percent)?;
+    }
+    entry.edited_at = Some(now.clone());
+    todo.updated_at = now;
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn delete_todo_progress(input: DeleteTodoProgressInput) -> Result<TodoState, String> {
+    let _guard = TODO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Todo storage lock is poisoned")?;
+    let mut state = read_todo_state()?;
+    let todo = state
+        .items
+        .iter_mut()
+        .find(|todo| todo.id == input.id)
+        .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    let before = todo.progress.len();
+    todo.progress.retain(|entry| entry.id != input.entry_id);
+    if todo.progress.len() == before {
+        return Err(format!("Progress entry not found: {}", input.entry_id));
+    }
+    todo.updated_at = chrono::Utc::now().to_rfc3339();
     write_todo_state(&state)?;
     Ok(state)
 }
@@ -1518,7 +1700,14 @@ mod todo_tests {
                 id: "todo_1".to_string(),
                 title: "Ship the todo tool".to_string(),
                 description: "Wire the agent tool to the 待办 page.".to_string(),
-                completion_notes: "已完成联调\n待补充文档".to_string(),
+                progress: vec![ProgressEntry {
+                    id: "progress_1".to_string(),
+                    at: "2026-09-17T00:00:00Z".to_string(),
+                    content: "已完成联调\n待补充文档".to_string(),
+                    source: "user".to_string(),
+                    percent: Some(60),
+                    edited_at: None,
+                }],
                 status: "pending".to_string(),
                 priority: "medium".to_string(),
                 project_path: Some("/tmp/project".to_string()),
@@ -1548,9 +1737,12 @@ mod todo_tests {
         assert_eq!(item["createdAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["updatedAt"], "2026-09-17T00:00:00Z");
         assert_eq!(item["order"], 4);
-        assert_eq!(item["completionNotes"], "已完成联调\n待补充文档");
+        assert_eq!(item["progress"][0]["content"], "已完成联调\n待补充文档");
+        assert_eq!(item["progress"][0]["source"], "user");
+        assert_eq!(item["progress"][0]["percent"], 60);
+        assert!(item.get("completionNotes").is_none());
         let mut restored: TodoState = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(restored.items[0].completion_notes, "已完成联调\n待补充文档");
+        assert_eq!(restored.items[0].progress[0].content, "已完成联调\n待补充文档");
         assert_eq!(restored.items[0].history[0].kind, "due_at_changed");
         assert_eq!(item["history"][0]["changedAt"], "2026-09-29T00:00:00Z");
         let todo = &mut restored.items[0];
