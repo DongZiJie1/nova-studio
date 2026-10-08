@@ -19,6 +19,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Circle,
   Clock3,
   FileText,
@@ -238,17 +240,16 @@ function formatDueDisplay(value: string): string {
 }
 
 /**
- * Sun-start weeks covering the month only. Trailing/leading weeks that fall
- * entirely outside the month are dropped so e.g. September never shows Oct 4–10.
+ * Sun-start weeks covering the month. Always 6 rows (42 cells) so the popover
+ * height stays constant across months — variable row counts used to flip the
+ * calendar above/below the trigger while paging months.
  */
 function buildMonthDays(year: number, month: number): Array<{ date: Date; inMonth: boolean }> {
   const first = new Date(year, month, 1);
-  const last = new Date(year, month + 1, 0);
   const start = new Date(year, month, 1 - first.getDay());
-  const end = new Date(year, month, last.getDate() + (6 - last.getDay()));
   const days: Array<{ date: Date; inMonth: boolean }> = [];
-  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
-    const date = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate());
+  for (let index = 0; index < 42; index++) {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
     days.push({ date, inMonth: date.getMonth() === month });
   }
   return days;
@@ -273,10 +274,13 @@ function usePropertyPopover(
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  /** Sticky side for the current open session — month paging must not re-flip. */
+  const sideRef = useRef<"below" | "above" | null>(null);
 
   useEffect(() => {
     if (!open) {
       setPosition(null);
+      sideRef.current = null;
       return;
     }
     const updatePosition = () => {
@@ -286,7 +290,15 @@ function usePropertyPopover(
       const rect = trigger.getBoundingClientRect();
       const width = Math.max(rect.width, preferredWidth);
       const height = popover?.offsetHeight || 280;
-      const top = rect.bottom + 8 + height > window.innerHeight - 12 ? Math.max(12, rect.top - height - 8) : rect.bottom + 8;
+      const fitsBelow = rect.bottom + 8 + height <= window.innerHeight - 12;
+      // Sticky side once measured so paging months can't re-flip the panel.
+      // Pre-paint estimates stay provisional and don't lock the side.
+      const side = sideRef.current ?? (fitsBelow ? "below" : "above");
+      if (popover && !sideRef.current) sideRef.current = side;
+      const top =
+        side === "below"
+          ? rect.bottom + 8
+          : Math.max(12, rect.top - height - 8);
       const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
       setPosition({ top, left, width });
     };
@@ -446,7 +458,8 @@ function TodoDateField({ value, onChange }: { value: string; onChange: (value: s
   const todayKey = localDateKey(today);
   const [viewYear, setViewYear] = useState(() => selected?.getFullYear() ?? today.getFullYear());
   const [viewMonth, setViewMonth] = useState(() => selected?.getMonth() ?? today.getMonth());
-  const { triggerRef, popoverRef, position } = usePropertyPopover(open, setOpen, [viewYear, viewMonth], 288);
+  // Grid height is constant (always 6 rows), so paging months never repositions.
+  const { triggerRef, popoverRef, position } = usePropertyPopover(open, setOpen, [], 288);
 
   const openPicker = () => {
     const anchor = selected ?? new Date();
@@ -463,6 +476,11 @@ function TodoDateField({ value, onChange }: { value: string; onChange: (value: s
   };
   const shiftMonth = (delta: number) => {
     const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+  };
+  const shiftYear = (delta: number) => {
+    const next = new Date(viewYear + delta, viewMonth, 1);
     setViewYear(next.getFullYear());
     setViewMonth(next.getMonth());
   };
@@ -497,11 +515,17 @@ function TodoDateField({ value, onChange }: { value: string; onChange: (value: s
                   {viewYear}年 {viewMonth + 1}月
                 </strong>
                 <div className="todo-date-nav">
+                  <button type="button" onClick={() => shiftYear(-1)} aria-label="上一年">
+                    <ChevronsLeft size={15} />
+                  </button>
                   <button type="button" onClick={() => shiftMonth(-1)} aria-label="上一月">
                     <ChevronLeft size={15} />
                   </button>
                   <button type="button" onClick={() => shiftMonth(1)} aria-label="下一月">
                     <ChevronRight size={15} />
+                  </button>
+                  <button type="button" onClick={() => shiftYear(1)} aria-label="下一年">
+                    <ChevronsRight size={15} />
                   </button>
                 </div>
               </header>
