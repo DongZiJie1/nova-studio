@@ -87,6 +87,129 @@
   --danger-on-solid: #ffffff;
 }
 
+/* Nova Design System: semantic roles layered on the existing theme palette.
+   Keep optical details local to a component; share material depth, interaction
+   states and timing here. Scene overrides live on the existing background host. */
+:root {
+  --nova-brand: var(--color-accent-start);
+  --nova-brand-secondary: var(--color-accent-end);
+  --nova-success: var(--color-success);
+  --nova-warning: var(--color-warning);
+  --nova-error: var(--color-error);
+  --nova-text-primary: var(--color-text-primary);
+  --nova-text-secondary: var(--color-text-secondary);
+  --nova-text-disabled: rgba(226, 231, 242, 0.44);
+
+  --nova-foundation-surface: linear-gradient(168deg, rgba(30, 39, 73, 0.94) 0%, rgba(24, 31, 59, 0.96) 48%, rgba(20, 26, 49, 0.97) 100%);
+  --nova-foundation-edge: rgba(186, 202, 246, 0.12);
+  --nova-foundation-shadow: 5px 0 22px rgba(7, 10, 27, 0.14), inset -1px 0 rgba(255, 255, 255, 0.025);
+  --nova-foundation-heading: #f0f3ff;
+  --nova-foundation-copy: rgba(225, 232, 249, 0.82);
+  --nova-foundation-muted: rgba(181, 192, 218, 0.55);
+
+  --nova-floating-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.105) 0%, rgba(255, 255, 255, 0.025) 8%, transparent 35%),
+    linear-gradient(116deg, rgba(255, 255, 255, 0.035), transparent 43%),
+    linear-gradient(180deg, rgba(17, 22, 33, 0.28), rgba(9, 12, 20, 0.39));
+  --nova-floating-shadow:
+    0 26px 62px -26px rgba(0, 0, 0, 0.46),
+    0 10px 26px -13px rgba(0, 0, 0, 0.23),
+    inset 0 1px 0 rgba(255, 255, 255, 0.17),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    inset 1px 0 0 rgba(255, 255, 255, 0.07),
+    inset -1px 0 0 rgba(255, 255, 255, 0.035);
+  --nova-floating-edge: rgba(232, 238, 255, 0.15);
+  --nova-floating-edge-highlight: rgba(238, 243, 255, 0.42);
+  --nova-filter-floating: blur(28px) saturate(146%);
+
+  --nova-elevated-surface: linear-gradient(152deg, rgba(37, 45, 61, 0.93), rgba(13, 19, 29, 0.91));
+  --nova-elevated-drop: rgba(0, 0, 0, 0.38);
+  --nova-elevated-edge: rgba(232, 238, 255, 0.15);
+  --nova-elevated-shadow:
+    0 26px 60px -22px var(--nova-elevated-drop),
+    0 10px 26px -12px var(--nova-elevated-drop),
+    inset 0 1px 0 rgba(255, 255, 255, 0.17);
+  --nova-filter-elevated: blur(30px) saturate(150%);
+  --nova-filter-control: blur(10px) saturate(130%);
+
+  --nova-state-hover: rgba(185, 199, 255, 0.075);
+  --nova-state-active: rgba(113, 137, 220, 0.145);
+  --nova-state-edge: rgba(220, 230, 255, 0.075);
+  --nova-focus-outline: 2px solid color-mix(in srgb, var(--nova-brand) 62%, #d6e4ff);
+  --nova-disabled-opacity: 0.48;
+
+  --nova-radius-row: 8px;
+  --nova-radius-control: 14px;
+  --nova-radius-floating: 30px;
+  --nova-radius-elevated: 20px;
+  --nova-radius-pill: 999px;
+  --nova-space-1: 4px;
+  --nova-space-2: 8px;
+  --nova-space-3: 12px;
+  --nova-space-4: 16px;
+  --nova-space-6: 24px;
+  --nova-space-8: 32px;
+  --nova-font-sans: var(--font-sans);
+  --nova-type-caption: 11px;
+  --nova-type-control: 12.5px;
+  --nova-type-body: 13px;
+  --nova-type-input: 15.5px;
+
+  --nova-motion-press: 120ms;
+  --nova-motion-hover: 180ms;
+  --nova-motion-focus: 240ms;
+  --nova-motion-menu-open: 210ms;
+  --nova-motion-menu-close: 150ms;
+  --nova-motion-collapse: 280ms;
+  --nova-ease-fluid: cubic-bezier(0.22, 1, 0.36, 1);
+  --nova-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] {
+  --nova-text-disabled: rgba(60, 84, 122, 0.42);
+  --nova-foundation-surface: linear-gradient(165deg, rgba(239, 246, 255, 0.96), rgba(224, 235, 252, 0.97));
+  --nova-foundation-edge: rgba(91, 119, 162, 0.18);
+  --nova-foundation-shadow: 0 16px 44px rgba(55, 78, 113, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.72), inset 0 -1px 0 rgba(73, 101, 142, 0.08);
+  --nova-foundation-heading: #203251;
+  --nova-foundation-copy: rgba(42, 61, 94, 0.82);
+  --nova-foundation-muted: rgba(73, 93, 124, 0.6);
+  --nova-state-hover: rgba(65, 100, 162, 0.08);
+  --nova-state-active: rgba(76, 110, 191, 0.14);
+  --nova-state-edge: rgba(255, 255, 255, 0.42);
+  --nova-floating-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.52) 30%, rgba(255, 255, 255, 0.16) 76%),
+    radial-gradient(120% 92% at 12% -14%, rgba(255, 255, 255, 0.92), transparent 60%),
+    linear-gradient(158deg, rgba(247, 251, 255, 0.62), rgba(224, 237, 252, 0.52));
+  --nova-floating-shadow:
+    0 26px 58px -26px rgba(41, 66, 108, 0.3),
+    0 10px 24px -12px rgba(52, 80, 124, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    inset 0 -1px 0 rgba(70, 101, 145, 0.14),
+    inset 1px 0 0 rgba(255, 255, 255, 0.6),
+    inset -1px 0 0 rgba(255, 255, 255, 0.32);
+  --nova-floating-edge: rgba(90, 122, 168, 0.2);
+  --nova-elevated-surface: linear-gradient(152deg, rgba(252, 253, 255, 0.95), rgba(230, 240, 252, 0.93));
+  --nova-elevated-drop: rgba(48, 74, 116, 0.16);
+  --nova-elevated-edge: rgba(90, 122, 168, 0.2);
+}
+
+:root[data-theme="midnight"] [data-custom-background="false"] {
+  --nova-floating-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.085) 0%, rgba(255, 255, 255, 0.02) 20%, rgba(255, 255, 255, 0) 48%),
+    radial-gradient(120% 92% at 12% -14%, rgba(140, 150, 255, 0.09), transparent 58%),
+    linear-gradient(158deg, rgba(31, 37, 54, 0.62), rgba(10, 13, 23, 0.58));
+  --nova-floating-shadow:
+    0 30px 70px -24px rgba(0, 0, 0, 0.66),
+    0 12px 30px -12px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    inset 1px 0 0 rgba(255, 255, 255, 0.045);
+  --nova-floating-edge: rgba(255, 255, 255, 0.1);
+  --nova-elevated-surface: linear-gradient(152deg, rgba(30, 36, 51, 0.95), rgba(9, 12, 21, 0.94));
+  --nova-elevated-drop: rgba(0, 0, 0, 0.5);
+  --nova-elevated-edge: rgba(255, 255, 255, 0.1);
+}
+
 body,
 .theme-background-base,
 .glass-panel,
@@ -2818,33 +2941,12 @@ body {
 
 /* ─── Workspace sidebar ─── */
 
-/* 折叠/展开不做 width 过渡。
-
-   内容区宽度一变，整段会话就要重新折行——文字排版是布局里最贵的一项，而且代价
-   正比于会话长度。实测（1440x900，正常换行文本，非 nowrap）：
-     30 条消息  -> 单帧 0.5ms
-     120 条消息 -> 单帧 1.5ms（p95 3.4ms）
-     300 条消息 -> 单帧 4.5ms（p95 6.6ms）
-   240ms 过渡约 14 帧，等于为了一个滑入动效把整屏文字重排十四次；120Hz 屏的
-   帧预算只有 8.3ms，这里必然掉帧。改成瞬时切换后只重排一次。
-   宽度不再参与动画，侧边栏自身的玻璃面板过渡由 .glass-panel 保留。 */
+/* The two sidebar layouts stay mounted so their opacity can crossfade while the
+   rail changes width. Keep their contents clipped locally, not at the rail:
+   collapsed tooltips need to extend over the main view. */
 .studio-sidebar {
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
-}
-
-/* 宽度是瞬时切换（原因见上），用一层便宜的淡入补回一点过渡感。
-   只动 opacity：走合成器，不触发布局，所以会话再长也不会因此掉帧。
-   动画挂在侧边栏的直接子元素上——折叠/展开会把这一层整体替换掉（<nav> /
-   设置面板 / header+agent-tree+footer），新节点挂载即触发，不需要任何 JS。
-   其它情况下这些节点不会重挂，所以不会莫名重放。 */
-@keyframes studio-sidebar-panel-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.studio-sidebar > * {
-  animation: studio-sidebar-panel-in 170ms ease-out;
 }
 
 .studio-sidebar-collapsed {}
@@ -13814,12 +13916,6 @@ body {
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .agent-file-review-badge-sh { color: #4d7c0f; background: rgba(77, 124, 15, 0.11); }
 
 
-/* 侧边栏折叠已改为瞬时切换（见文件上方 .studio-sidebar 的说明），不再有过渡窗口，
-   所以这里曾经用 data-sidebar-animating 做的「过渡期间关掉大面积毛玻璃与遮罩」的
-   兜底已经不需要了：宽度只变一次，那些面板也就只重新栅格化一次。
-   如果以后要把 width 过渡加回来，必须同时恢复这段兜底，否则每帧重新模糊的老问题
-   会立刻回来（BUGS.md #2）。 */
-
 /* ═══════════════════════════════════════════════════════════════════════════
    Sidebar — consolidated visual pass
 
@@ -14520,4 +14616,1204 @@ body {
   height: 16px;
   padding: 0 4px;
   font-size: 10px;
+}
+
+/* ============================================================================
+   COMPOSER — the bottom prompt bar
+   ----------------------------------------------------------------------------
+   One floating pane of layered glass: transmitted scene + backdrop blur +
+   thickness gradient + polished edge ring + soft ambient drop. Internal
+   controls are small, quieter pieces of the same material; the send button is
+   the only element allowed a saturated brand surface.
+
+   The material is expressed as `--c-*` custom properties so each scene (photo
+   backdrop / light scene / midnight scene) repaints the same structure. Scene
+   rules sit at :root[data-theme] [data-custom-background] specificity and use
+   !important because the pre-existing per-theme `.nova-input` rules in this
+   file set the same longhand properties.
+   ========================================================================= */
+
+/* Composer alignment. The scene-qualified selector is deliberate: the legacy
+   Arctic-Dawn rules further up this file pin the same padding with !important. */
+.conversation-input-area,
+:root[data-theme] [data-custom-background] .conversation-input-area {
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 34px 32px 46px !important;
+}
+
+.composer-shell {
+  position: relative;
+  width: 100%;
+  max-width: 920px;
+}
+
+/* ── Layout skeleton ─────────────────────────────────────────────────────── */
+
+.nova-input {
+  position: relative;
+  isolation: isolate;
+  overflow: visible;
+  border-radius: var(--nova-radius-floating);
+  animation: composer-rise 260ms var(--nova-ease-fluid) both;
+}
+
+/* Controls live above the two decorative layers. */
+.nova-input > * {
+  position: relative;
+  z-index: 1;
+}
+
+.nova-input-textarea {
+  display: block;
+  width: 100%;
+  min-height: 78px;
+  max-height: 148px;
+  padding: 24px 28px 8px;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--c-text);
+  font-family: inherit;
+  font-size: var(--nova-type-input);
+  font-weight: 430;
+  line-height: 1.55;
+  letter-spacing: 0.002em;
+  caret-color: var(--color-accent-start);
+  scrollbar-width: thin;
+  transition: height var(--nova-motion-hover) var(--nova-ease-fluid);
+}
+
+.nova-input-textarea-measure {
+  position: absolute !important;
+  z-index: -1 !important;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 78px;
+  max-height: 148px;
+  padding: 24px 28px 8px;
+  overflow: hidden;
+  visibility: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: inherit;
+  font-size: 15.5px;
+  font-weight: 430;
+  line-height: 1.55;
+  letter-spacing: 0.002em;
+  pointer-events: none;
+}
+
+.nova-input-textarea::-webkit-scrollbar { width: 8px; }
+
+.nova-input-textarea::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--c-scrollbar) padding-box;
+}
+
+.nova-input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px 14px 16px;
+}
+
+.nova-input-toolbar-left {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.nova-input-toolbar-right {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.nova-input-file-hidden { display: none; }
+
+.nova-input-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 136px;
+  padding: 14px 18px 0;
+  overflow: hidden;
+}
+
+/* Drop target: a quiet accent wash, never a hard dashed browser outline. */
+.nova-input-dragover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 62%, transparent) !important;
+  box-shadow:
+    0 30px 70px -22px rgba(0, 0, 0, 0.46),
+    0 0 0 3px color-mix(in srgb, var(--color-accent-start) 20%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.nova-input-dragover::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--color-accent-start) 10%, transparent);
+  pointer-events: none;
+}
+
+/* ── Capsules & the attachment button ───────────────────────────────────── */
+
+.input-pill-slot {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+}
+
+.input-attach-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--nova-radius-control);
+  cursor: pointer;
+}
+
+.input-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 11px 0 12px;
+  border-radius: var(--nova-radius-pill);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: 0.004em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.input-pill-label {
+  min-width: 0;
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-pill-icon,
+.input-pill-chevron {
+  flex: 0 0 auto;
+}
+
+.input-pill-chevron {
+  margin-left: 1px;
+  opacity: 0.5;
+  transition: opacity 190ms ease-out, transform 190ms ease-out;
+}
+
+.input-pill:hover .input-pill-chevron,
+.model-picker-trigger-open .input-pill-chevron,
+.project-picker-trigger-open .input-pill-chevron {
+  opacity: 0.9;
+}
+
+.model-picker-trigger-open .input-pill-chevron,
+.project-picker-trigger-open .input-pill-chevron {
+  transform: translateY(1px);
+}
+
+.input-pill-dimmed {
+  opacity: 0.55;
+}
+
+.input-toolbar-control:focus-visible,
+.input-attach-button:focus-visible,
+.input-action-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent-start) 62%, transparent);
+  outline-offset: 3px;
+}
+
+/* ── Send / abort ───────────────────────────────────────────────────────── */
+
+.input-action-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.input-send-button {
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(140deg, #7f81ff 0%, #6d6ff6 44%, #8b64ef 100%) !important;
+  box-shadow:
+    0 12px 28px -10px rgba(94, 98, 246, 0.66),
+    0 3px 10px rgba(56, 60, 186, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.44),
+    inset 0 -1px 0 rgba(38, 34, 122, 0.34) !important;
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms ease-out,
+    filter 200ms ease-out !important;
+}
+
+.input-send-button:not(:disabled):hover {
+  filter: brightness(1.07) saturate(1.04);
+  box-shadow:
+    0 16px 34px -10px rgba(94, 98, 246, 0.72),
+    0 4px 12px rgba(56, 60, 186, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(38, 34, 122, 0.34) !important;
+  transform: translateY(-1px) scale(1.04);
+}
+
+.input-send-button:not(:disabled):active {
+  transform: translateY(0) scale(0.96);
+  transition-duration: 120ms !important;
+}
+
+.input-send-button:disabled {
+  color: var(--c-disabled-fg);
+  border-color: var(--c-disabled-edge);
+  background: var(--c-disabled-bg) !important;
+  box-shadow: var(--c-disabled-shadow) !important;
+  cursor: not-allowed;
+}
+
+.input-abort-button {
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(140deg, #f2686d 0%, #d94450 100%) !important;
+  box-shadow:
+    0 12px 28px -10px rgba(214, 62, 72, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    inset 0 -1px 0 rgba(120, 22, 32, 0.32) !important;
+  transition: transform 190ms cubic-bezier(0.22, 1, 0.36, 1), filter 190ms ease-out !important;
+}
+
+.input-abort-button:hover { filter: brightness(1.06); }
+.input-abort-button:active { transform: scale(0.96); transition-duration: 120ms !important; }
+
+/* ── Floating menus ─────────────────────────────────────────────────────── */
+
+.model-picker-popover,
+.project-picker-popover {
+  position: absolute;
+  z-index: 80;
+  bottom: calc(100% + 10px);
+  display: flex;
+  flex-direction: column;
+  padding: 8px !important;
+  border-radius: var(--nova-radius-elevated) !important;
+  transform-origin: bottom right;
+  opacity: 0;
+  transform: translateY(6px) scale(0.985);
+  transition:
+    opacity var(--nova-motion-menu-open) var(--nova-ease-fluid),
+    transform var(--nova-motion-menu-open) var(--nova-ease-fluid);
+}
+
+.composer-menu-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.composer-menu-closing {
+  pointer-events: none;
+  transition-duration: var(--nova-motion-menu-close) !important;
+  transition-timing-function: var(--nova-ease-exit) !important;
+}
+
+.model-picker-popover {
+  right: 0;
+  width: 300px;
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.model-picker-popover-sm { width: 272px; }
+
+.project-picker-popover {
+  right: 0;
+  width: max-content;
+  min-width: 250px;
+  max-width: min(460px, 70vw);
+  max-height: min(56vh, 420px);
+  overflow: hidden;
+}
+
+.project-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.project-picker-option-create {
+  flex: 0 0 auto;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-menu-divider);
+}
+
+.project-picker-option-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-provider {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 620;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.model-picker-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.model-picker-option-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-picker-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-option-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.model-picker-option-desc {
+  font-size: 10.5px;
+  line-height: 1.45;
+  opacity: 0.7;
+}
+
+.model-picker-option-dimmed { opacity: 0.5; }
+
+.model-picker-hint {
+  padding: 2px 10px 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  opacity: 0.72;
+}
+
+.model-picker-context {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* Popovers escape the pane, so the pane must not clip when one is open. */
+.nova-input:has(.model-picker-popover),
+.nova-input:has(.project-picker-popover) {
+  overflow: visible !important;
+}
+
+@keyframes composer-rise {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Scene: photo backdrop (dark glass over the user's image) ───────────── */
+
+:root[data-theme] [data-custom-background="true"] .nova-input {
+  --c-text: #eef1f7;
+  --c-placeholder: #9aa3b5;
+  --c-scrollbar: rgba(255, 255, 255, 0.16);
+  --c-glass-bg: var(--nova-floating-surface);
+  --c-glass-shadow: var(--nova-floating-shadow);
+  --c-edge: var(--nova-floating-edge);
+  --c-edge-focus: rgba(203, 213, 255, 0.34);
+  --c-control-bg: rgba(255, 255, 255, 0.075);
+  --c-control-bg-hover: rgba(255, 255, 255, 0.14);
+  --c-control-edge: rgba(255, 255, 255, 0.1);
+  --c-control-edge-hover: rgba(255, 255, 255, 0.18);
+  --c-control-fg: #b3bbca;
+  --c-control-fg-hover: #f2f4f9;
+  --c-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11), 0 1px 2px rgba(0, 0, 0, 0.1);
+  --c-control-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 4px 12px rgba(0, 0, 0, 0.14);
+  --c-disabled-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.055));
+  --c-disabled-edge: rgba(255, 255, 255, 0.09);
+  --c-disabled-fg: rgba(226, 231, 242, 0.44);
+  --c-disabled-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --c-menu-divider: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme] [data-custom-background="true"] .nova-input:hover {
+  --c-edge: rgba(240, 244, 255, 0.32);
+  --c-glass-shadow:
+    0 29px 66px -25px rgba(0, 0, 0, 0.5),
+    0 12px 28px -12px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    inset 0 20px 28px -26px rgba(255, 255, 255, 0.18),
+    inset 1px 0 0 rgba(255, 255, 255, 0.11),
+    inset -1px 0 0 rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme] [data-custom-background="true"] .nova-input:focus-within {
+  --c-edge: rgba(177, 188, 232, 0.16);
+  --c-glass-shadow:
+    0 29px 66px -25px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(202, 213, 255, 0.26),
+    inset 0 28px 46px -34px rgba(150, 165, 255, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    inset 1px 0 0 rgba(188, 202, 255, 0.08),
+    inset -1px 0 0 rgba(188, 202, 255, 0.06);
+}
+
+/* ── Scene: light (Arctic Dawn without a photo) ─────────────────────────── */
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input {
+  --c-text: #172642;
+  --c-placeholder: #73849c;
+  --c-scrollbar: rgba(60, 92, 138, 0.22);
+  --c-glass-bg: var(--nova-floating-surface);
+  --c-glass-shadow: var(--nova-floating-shadow);
+  --c-edge: var(--nova-floating-edge);
+  --c-edge-focus: rgba(79, 125, 243, 0.42);
+  --c-control-bg: rgba(255, 255, 255, 0.58);
+  --c-control-bg-hover: rgba(255, 255, 255, 0.86);
+  --c-control-edge: rgba(76, 108, 152, 0.16);
+  --c-control-edge-hover: rgba(76, 108, 152, 0.26);
+  --c-control-fg: #4b6386;
+  --c-control-fg-hover: #1c2f4d;
+  --c-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(58, 86, 126, 0.06);
+  --c-control-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 5px 14px rgba(58, 86, 126, 0.12);
+  --c-disabled-bg: linear-gradient(180deg, rgba(226, 234, 246, 0.7), rgba(210, 221, 238, 0.62));
+  --c-disabled-edge: rgba(90, 122, 168, 0.14);
+  --c-disabled-fg: rgba(60, 84, 122, 0.42);
+  --c-disabled-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --c-menu-divider: rgba(75, 105, 149, 0.13);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:hover {
+  --c-edge: rgba(90, 122, 168, 0.26);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:focus-within {
+  --c-edge: rgba(79, 125, 243, 0.44);
+  --c-glass-shadow:
+    0 28px 62px -26px rgba(41, 66, 108, 0.32),
+    0 0 0 1px rgba(79, 125, 243, 0.16),
+    0 0 18px -12px rgba(79, 125, 243, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(70, 101, 145, 0.14);
+}
+
+/* ── Scene: midnight without a photo ───────────────────────────────────── */
+
+:root[data-theme="midnight"] [data-custom-background="false"] .nova-input {
+  --c-text: #eceef6;
+  --c-placeholder: #767d92;
+  --c-scrollbar: rgba(255, 255, 255, 0.16);
+  --c-glass-bg: var(--nova-floating-surface);
+  --c-glass-shadow: var(--nova-floating-shadow);
+  --c-edge: var(--nova-floating-edge);
+  --c-edge-focus: rgba(150, 160, 255, 0.34);
+  --c-control-bg: rgba(255, 255, 255, 0.06);
+  --c-control-bg-hover: rgba(255, 255, 255, 0.115);
+  --c-control-edge: rgba(255, 255, 255, 0.085);
+  --c-control-edge-hover: rgba(255, 255, 255, 0.15);
+  --c-control-fg: #9ea6ba;
+  --c-control-fg-hover: #eef0f8;
+  --c-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --c-control-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 4px 12px rgba(0, 0, 0, 0.26);
+  --c-disabled-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.04));
+  --c-disabled-edge: rgba(255, 255, 255, 0.07);
+  --c-disabled-fg: rgba(220, 225, 240, 0.36);
+  --c-disabled-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --c-menu-divider: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="midnight"] [data-custom-background="false"] .nova-input:focus-within {
+  --c-edge: rgba(150, 160, 255, 0.34);
+  --c-glass-shadow:
+    0 32px 74px -24px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(129, 140, 248, 0.18),
+    0 0 18px -12px rgba(108, 114, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* ── Paint the glass once, for every scene ─────────────────────────────── */
+
+@property --c-rim-top {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(238, 243, 255, 0.42);
+}
+
+@property --c-rim-corner {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(220, 231, 255, 0.18);
+}
+
+@property --c-rim-side {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(220, 231, 255, 0.035);
+}
+
+@property --c-rim-bottom {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(164, 190, 245, 0.1);
+}
+
+:root[data-theme] [data-custom-background] .nova-input {
+  --c-rim-top: rgba(238, 243, 255, 0.42);
+  --c-rim-corner: rgba(220, 231, 255, 0.18);
+  --c-rim-side: rgba(220, 231, 255, 0.035);
+  --c-rim-bottom: rgba(164, 190, 245, 0.1);
+  border: 1px solid var(--c-edge) !important;
+  background: var(--c-glass-bg) !important;
+  box-shadow: var(--c-glass-shadow) !important;
+  backdrop-filter: var(--nova-filter-floating) !important;
+  -webkit-backdrop-filter: var(--nova-filter-floating) !important;
+  transition:
+    border-color 220ms var(--nova-ease-fluid),
+    box-shadow 260ms var(--nova-ease-fluid),
+    --c-rim-top var(--nova-motion-focus) var(--nova-ease-fluid),
+    --c-rim-corner var(--nova-motion-focus) var(--nova-ease-fluid),
+    --c-rim-side var(--nova-motion-focus) var(--nova-ease-fluid),
+    --c-rim-bottom var(--nova-motion-focus) var(--nova-ease-fluid) !important;
+}
+
+:root[data-theme] [data-custom-background] .nova-input:hover:not(:focus-within) {
+  --c-rim-top: rgba(250, 251, 255, 0.7);
+  --c-rim-corner: rgba(231, 240, 255, 0.38);
+}
+
+:root[data-theme] [data-custom-background] .nova-input:focus-within {
+  --c-rim-top: rgba(202, 211, 255, 0.82);
+  --c-rim-corner: rgba(179, 193, 255, 0.46);
+  --c-rim-side: rgba(163, 184, 255, 0.06);
+  --c-rim-bottom: rgba(141, 163, 255, 0.05);
+}
+
+/* The polished edge: a 1px ring, brightest along the top rim and upper
+   corners, settling into a faint cool reflection at the bottom. */
+:root[data-theme] [data-custom-background] .nova-input::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, transparent 1%, var(--c-rim-corner) 12%, var(--c-rim-top) 54%, var(--c-rim-corner) 88%, transparent 99%) top / 100% 25% no-repeat,
+    radial-gradient(42% 52% at 0% 0%, var(--c-rim-corner), transparent 74%),
+    radial-gradient(42% 52% at 100% 0%, var(--c-rim-corner), transparent 74%),
+    linear-gradient(180deg, transparent 30%, var(--c-rim-side) 55%, transparent 80%, var(--c-rim-bottom) 100%);
+  opacity: 0.7;
+  transition: opacity 240ms ease-out, filter 240ms ease-out;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+:root[data-theme] [data-custom-background] .nova-input:hover:not(:focus-within)::before {
+  opacity: 1;
+  filter: brightness(1.18);
+}
+
+:root[data-theme] [data-custom-background] .nova-input:focus-within::before {
+  opacity: 1;
+  filter: brightness(1.05);
+}
+
+/* Interior light: upper-corner catch lights plus a low cool reflection that
+   reads as glass thickness without becoming a grey card. */
+:root[data-theme] [data-custom-background] .nova-input::after {
+  content: "";
+  border: 0;
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.025) 38%, transparent 72%),
+    radial-gradient(24% 17% at 2% 0%, rgba(255, 255, 255, 0.09), transparent 72%),
+    radial-gradient(20% 14% at 98% 0%, rgba(255, 255, 255, 0.055), transparent 72%),
+    radial-gradient(150% 40% at 50% 124%, rgba(146, 174, 255, 0.075), transparent 76%);
+  opacity: 0.48;
+  transition: opacity 260ms ease-out;
+  pointer-events: none;
+}
+
+:root[data-theme] [data-custom-background] .nova-input:hover:not(:focus-within)::after { opacity: 1; }
+:root[data-theme] [data-custom-background] .nova-input:focus-within::after { opacity: 0.8; }
+
+:root[data-theme] [data-custom-background="false"] .nova-input::after {
+  background:
+    radial-gradient(24% 17% at 2% 0%, rgba(255, 255, 255, 0.68), transparent 72%),
+    radial-gradient(20% 14% at 98% 0%, rgba(255, 255, 255, 0.44), transparent 72%),
+    radial-gradient(150% 40% at 50% 124%, rgba(120, 158, 232, 0.06), transparent 76%);
+}
+
+:root[data-theme] [data-custom-background] .nova-input-textarea {
+  color: var(--c-text) !important;
+  caret-color: var(--color-accent-start);
+}
+
+:root[data-theme] [data-custom-background] .nova-input .nova-input-textarea::placeholder {
+  color: var(--c-placeholder);
+  font-weight: 400;
+}
+
+.nova-input:focus-within .nova-input-textarea::placeholder { opacity: 0.72; }
+
+/* ── Paint the capsules from the same material ─────────────────────────── */
+
+:root[data-theme] [data-custom-background] .input-toolbar-control,
+:root[data-theme] [data-custom-background] .input-attach-button {
+  border: 1px solid var(--c-control-edge) !important;
+  color: var(--c-control-fg) !important;
+  background: var(--c-control-bg) !important;
+  box-shadow: var(--c-control-shadow) !important;
+  backdrop-filter: var(--nova-filter-control);
+  -webkit-backdrop-filter: var(--nova-filter-control);
+  transition:
+    color 190ms ease-out,
+    background 200ms ease-out,
+    border-color 200ms ease-out,
+    box-shadow 220ms ease-out,
+    transform 190ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+/* The model is the primary setting; the remaining toolbar controls recede. */
+:root[data-theme] [data-custom-background] .nova-input .input-model-primary {
+  background: color-mix(in srgb, var(--c-control-bg) 78%, transparent) !important;
+  border-color: color-mix(in srgb, var(--c-control-edge-hover) 75%, transparent) !important;
+  color: var(--c-control-fg-hover) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 13%, transparent), 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+}
+
+:root[data-theme] [data-custom-background] .nova-input .input-model-primary:hover {
+  background: color-mix(in srgb, var(--c-control-bg-hover) 82%, transparent) !important;
+}
+
+:root[data-theme] [data-custom-background] .nova-input .input-pill-dimmed {
+  opacity: 0.48;
+}
+
+:root[data-theme] [data-custom-background] .nova-input .input-toolbar-control[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--color-accent-start) 34%, var(--c-control-edge)) !important;
+  background: color-mix(in srgb, var(--color-accent-start) 12%, var(--c-control-bg)) !important;
+  color: var(--c-control-fg-hover) !important;
+}
+
+:root[data-theme] [data-custom-background] .input-toolbar-control:hover,
+:root[data-theme] [data-custom-background] .input-attach-button:hover,
+:root[data-theme] [data-custom-background] .model-picker-trigger-open,
+:root[data-theme] [data-custom-background] .project-picker-trigger-open {
+  border-color: var(--c-control-edge-hover) !important;
+  color: var(--c-control-fg-hover) !important;
+  background: var(--c-control-bg-hover) !important;
+  box-shadow: var(--c-control-shadow-hover) !important;
+  transform: translateY(-1px);
+}
+
+:root[data-theme] [data-custom-background] .input-toolbar-control:active,
+:root[data-theme] [data-custom-background] .input-attach-button:active {
+  transform: translateY(0) scale(0.97);
+  transition-duration: var(--nova-motion-press) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-trigger-open,
+:root[data-theme] [data-custom-background] .project-picker-trigger-open {
+  transform: translateY(0);
+}
+
+/* ── Menus inherit the composer's material ─────────────────────────────── */
+
+:root[data-theme] [data-custom-background] .nova-surface-elevated {
+  border: 1px solid var(--nova-elevated-edge) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 22%, rgba(255, 255, 255, 0) 52%),
+    var(--nova-elevated-surface) !important;
+  box-shadow: var(--nova-elevated-shadow) !important;
+  backdrop-filter: var(--nova-filter-elevated) !important;
+  -webkit-backdrop-filter: var(--nova-filter-elevated) !important;
+}
+
+:root[data-theme] [data-custom-background] .model-picker-option,
+:root[data-theme] [data-custom-background] .project-picker-option {
+  transition:
+    background var(--nova-motion-hover) var(--nova-ease-fluid),
+    border-color var(--nova-motion-hover) var(--nova-ease-fluid),
+    color var(--nova-motion-hover) var(--nova-ease-fluid),
+    transform var(--nova-motion-press) var(--nova-ease-fluid) !important;
+}
+
+:root[data-theme] [data-custom-background] .project-picker-option-create {
+  border-top-color: var(--c-menu-divider) !important;
+}
+
+/* ── Narrow windows: shrink labels before anything can collide ─────────── */
+
+@container (max-width: 1020px) {
+  .nova-input .input-pill-label { max-width: 104px; }
+}
+
+@container (max-width: 900px) {
+  .nova-input .input-pill-label { max-width: 76px; }
+  .nova-input .input-pill-slot-project .input-pill-label { max-width: 60px; }
+}
+
+@container (max-width: 800px) {
+  .nova-input .input-pill-slot-project .input-pill-label,
+  .nova-input .input-pill-slot-project .input-pill-chevron { display: none; }
+}
+
+@container (max-width: 720px) {
+  .nova-input .nova-input-textarea,
+  .nova-input .nova-input-textarea-measure { padding: 20px 20px 6px; }
+  .nova-input .nova-input-toolbar { padding: 8px 12px 12px; }
+}
+
+/* Older WebViews without backdrop sampling keep the material legible by
+   leaning on the tint itself. */
+@supports not ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
+  :root[data-theme] [data-custom-background="true"] .nova-input {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 46%),
+      linear-gradient(158deg, rgba(44, 52, 69, 0.86), rgba(13, 18, 28, 0.84)) !important;
+  }
+  :root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input {
+    background: linear-gradient(158deg, rgba(252, 254, 255, 0.95), rgba(230, 240, 252, 0.94)) !important;
+  }
+  :root[data-theme="midnight"] [data-custom-background="false"] .nova-input {
+    background: linear-gradient(158deg, rgba(24, 29, 43, 0.94), rgba(8, 10, 19, 0.93)) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nova-input,
+  .model-picker-popover,
+  .project-picker-popover {
+    animation: none !important;
+  }
+
+  .nova-input,
+  .nova-input::before,
+  .nova-input::after,
+  .model-picker-popover,
+  .project-picker-popover,
+  .model-picker-option,
+  .project-picker-option,
+  .input-toolbar-control,
+  .input-attach-button,
+  .input-action-button,
+  .input-pill-chevron,
+  .nova-input-textarea {
+    transition-duration: 0.01ms !important;
+  }
+
+  .input-toolbar-control:hover,
+  .input-attach-button:hover,
+  .input-send-button:not(:disabled):hover {
+    transform: none;
+  }
+}
+
+/* Sidebar material and motion. The rail is the quiet foundation beneath the
+   composer; only interactive rows receive a brighter glass surface. */
+.studio-sidebar {
+  --sidebar-ease: var(--nova-ease-fluid);
+  --sidebar-hover: var(--nova-state-hover);
+  --sidebar-active: var(--nova-state-active);
+  --sidebar-edge: var(--nova-state-edge);
+  --sidebar-heading: var(--nova-foundation-heading);
+  --sidebar-copy: var(--nova-foundation-copy);
+  --sidebar-muted: var(--nova-foundation-muted);
+  color: var(--sidebar-copy);
+  width: 268px;
+  min-width: 0;
+  border-right: 1px solid var(--nova-foundation-edge);
+  background: var(--nova-foundation-surface);
+  box-shadow: var(--nova-foundation-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: width var(--nova-motion-collapse) var(--sidebar-ease);
+}
+
+.studio-sidebar::after {
+  content: none;
+}
+
+.studio-sidebar.studio-sidebar-collapsed {
+  width: 64px;
+}
+
+.studio-sidebar .sidebar-collapsed-nav,
+.studio-sidebar .sidebar-expanded-content {
+  transition: opacity var(--nova-motion-hover) var(--sidebar-ease), visibility var(--nova-motion-hover);
+}
+
+.studio-sidebar .sidebar-collapsed-nav {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 2;
+  width: 64px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.studio-sidebar-collapsed .sidebar-collapsed-nav {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 55ms, 0ms;
+}
+
+.studio-sidebar .sidebar-expanded-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 1;
+}
+
+.studio-sidebar .sidebar-expanded-content > :is(.sidebar-header, .sidebar-workspace-heading, .agent-tree, .sidebar-footer, .settings-sidebar-content) {
+  flex-shrink: 0;
+  width: 268px;
+}
+
+.studio-sidebar .sidebar-expanded-content > .agent-tree,
+.studio-sidebar .sidebar-expanded-content > .settings-sidebar-content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.studio-sidebar-collapsed .sidebar-expanded-content {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition-duration: 145ms, 145ms;
+}
+
+.studio-sidebar :is(.sidebar-collapsed-action, .sidebar-collapsed-logo, .sidebar-nav-row, .sidebar-settings-button, .sidebar-collapse-button, .settings-back-button, .settings-category-button, .project-group-title, .agent-card, .project-agents-toggle) {
+  transition: color var(--nova-motion-hover) var(--sidebar-ease), background-color var(--nova-motion-hover) var(--sidebar-ease), opacity var(--nova-motion-hover) var(--sidebar-ease), box-shadow var(--nova-motion-hover) var(--sidebar-ease), transform var(--nova-motion-menu-close) var(--sidebar-ease) !important;
+}
+
+.studio-sidebar :is(.sidebar-collapsed-action, .sidebar-nav-row, .sidebar-settings-button, .settings-category-button, .agent-card):hover {
+  background: var(--sidebar-hover);
+  box-shadow: inset 0 1px 0 var(--sidebar-edge);
+}
+
+.studio-sidebar :is(.sidebar-nav-row-active, .sidebar-settings-button-active, .settings-category-button-active, .agent-card-active),
+.studio-sidebar :is(.sidebar-nav-row-active, .sidebar-settings-button-active, .settings-category-button-active, .agent-card-active):hover {
+  color: var(--sidebar-heading);
+  background: var(--sidebar-active);
+  box-shadow: inset 0 1px 0 rgba(221, 229, 255, 0.11), 0 1px 5px rgba(8, 13, 36, 0.08);
+}
+
+.studio-sidebar :is(.sidebar-collapsed-action, .sidebar-nav-row, .sidebar-settings-button, .settings-category-button, .agent-card) {
+  position: relative;
+}
+
+.studio-sidebar :is(.sidebar-collapsed-action, .sidebar-nav-row, .sidebar-settings-button, .settings-category-button, .agent-card).sidebar-settings-button-active::before,
+.studio-sidebar .sidebar-nav-row-active::before,
+.studio-sidebar .settings-category-button-active::before,
+.studio-sidebar .agent-card-active::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 1px;
+  display: block;
+  width: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent-start) 70%, #c7d7ff);
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.studio-sidebar .sidebar-collapsed-action.sidebar-settings-button-active::before {
+  left: 0;
+}
+
+.studio-sidebar :is(.sidebar-nav-row, .sidebar-settings-button) {
+  color: var(--sidebar-copy);
+  font-weight: 570;
+}
+
+.studio-sidebar :is(.sidebar-brand, .sidebar-collapsed-action, .sidebar-collapsed-logo, .settings-sidebar-header h1) {
+  color: var(--sidebar-heading);
+}
+
+.studio-sidebar :is(.sidebar-workspace-heading, .sidebar-project-count, .project-agent-count, .agent-last-time, .project-group-caret) {
+  color: var(--sidebar-muted);
+}
+
+.studio-sidebar .sidebar-nav-row-child {
+  color: var(--sidebar-muted);
+  font-weight: 520;
+}
+
+.studio-sidebar .sidebar-brand-mark img,
+.studio-sidebar .sidebar-collapsed-logo img {
+  box-shadow: 0 1px 5px rgba(5, 10, 29, 0.2);
+}
+
+.studio-sidebar .sidebar-brand-badge {
+  border-color: rgba(211, 220, 255, 0.11);
+  color: var(--sidebar-muted);
+  background: rgba(197, 210, 255, 0.045);
+  letter-spacing: 0.12em;
+}
+
+.studio-sidebar .sidebar-collapse-button:hover,
+.studio-sidebar .settings-back-button:hover,
+.studio-sidebar .project-group-title:hover {
+  background: var(--sidebar-hover);
+  box-shadow: inset 0 1px 0 var(--sidebar-edge);
+}
+
+.studio-sidebar .project-group-title {
+  color: var(--sidebar-copy);
+}
+
+.studio-sidebar .project-group-title:hover .project-group-name {
+  color: var(--sidebar-heading);
+}
+
+.studio-sidebar .project-group-name {
+  color: var(--sidebar-copy);
+}
+
+.studio-sidebar .project-group-caret {
+  transition: transform 220ms var(--sidebar-ease), color 180ms var(--sidebar-ease);
+}
+
+.studio-sidebar .project-agents {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 230ms var(--sidebar-ease), opacity 180ms ease;
+}
+
+.studio-sidebar .project-agents.project-agents-collapsed {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.studio-sidebar .project-agents-content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.studio-sidebar .project-agents::before {
+  background: rgba(193, 205, 237, 0.12);
+}
+
+.studio-sidebar .agent-card-active::before {
+  left: 1px;
+}
+
+.studio-sidebar .agent-name {
+  color: var(--sidebar-copy);
+}
+
+.studio-sidebar .agent-card-active .agent-name {
+  color: var(--sidebar-heading);
+}
+
+.studio-sidebar .agent-last-time {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  color: var(--sidebar-muted);
+  background: none;
+  box-shadow: none;
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-sidebar .sidebar-footer {
+  border-top-color: rgba(197, 211, 248, 0.08);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: var(--nova-foundation-edge);
+  background: var(--nova-foundation-surface);
+  box-shadow: var(--nova-foundation-shadow);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: var(--nova-foundation-edge);
+  background: var(--nova-foundation-surface);
+  box-shadow: var(--nova-foundation-shadow);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar > .sidebar-collapsed-nav {
+  position: absolute;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar :is(.project-agent-count, .agent-last-time) {
+  border: 0;
+  color: var(--sidebar-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar .project-group-icon {
+  border: 0;
+  background: transparent;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar :is(.agent-card-active, .agent-card-active:hover) {
+  border-color: transparent;
+  background: var(--sidebar-active);
+  box-shadow: inset 0 1px 0 var(--sidebar-edge);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar :is(.agent-card:hover, .project-group-title:hover) {
+  background: var(--sidebar-hover);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .agent-last-time {
+  border: 0;
+  color: var(--sidebar-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.studio-sidebar .sidebar-todo-warning-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: linear-gradient(160deg, #c45b63, #a83e51);
+  box-shadow: 0 1px 4px rgba(16, 11, 27, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.studio-sidebar .sidebar-collapsed-action .sidebar-todo-warning-badge {
+  top: -3px;
+  right: -5px;
+}
+
+.studio-sidebar .sidebar-collapsed-github {
+  margin-top: auto;
+}
+
+.studio-sidebar .sidebar-collapsed-settings {
+  margin-top: 6px !important;
+}
+
+.studio-sidebar .sidebar-collapsed-action::after,
+.studio-sidebar .sidebar-collapsed-logo::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 50;
+  top: 50%;
+  left: calc(100% + 10px);
+  width: max-content;
+  max-width: 180px;
+  padding: 6px 9px;
+  border: 1px solid rgba(219, 228, 255, 0.14);
+  border-radius: 8px;
+  color: #eef2ff;
+  background: rgba(27, 34, 57, 0.94);
+  box-shadow: 0 6px 18px rgba(5, 9, 25, 0.22);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate( -4px, -50%);
+  transition: opacity 140ms ease, transform 140ms var(--sidebar-ease);
+  visibility: hidden;
+}
+
+.studio-sidebar .sidebar-collapsed-action:is(:hover, :focus-visible)::after,
+.studio-sidebar .sidebar-collapsed-logo:is(:hover, :focus-visible)::after {
+  opacity: 1;
+  transform: translate(0, -50%);
+  transition-delay: 320ms;
+  visibility: visible;
+}
+
+.studio-sidebar :is(button, [role="button"]):focus-visible {
+  outline: var(--nova-focus-outline);
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .studio-sidebar,
+  .studio-sidebar .sidebar-expanded-content > :is(.sidebar-header, .sidebar-workspace-heading, .agent-tree, .sidebar-footer, .settings-sidebar-content) {
+    width: 248px;
+  }
+  .studio-sidebar.studio-sidebar-collapsed { width: 64px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-sidebar,
+  .studio-sidebar *,
+  .studio-sidebar *::before,
+  .studio-sidebar *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
 }

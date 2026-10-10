@@ -1,6 +1,7 @@
 import { memo, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Background } from "./Background";
+import { resizeComposerTextarea } from "./composer-resize";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useNotificationStore } from "../../stores/notification-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -1200,6 +1201,13 @@ function agentStatusMark(agent: AgentState): "running" | "error" | null {
   return null;
 }
 
+function activateSidebarInlineAction(event: ReactKeyboardEvent<HTMLElement>) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.click();
+}
+
 interface AgentTreeNodeProps {
   agent: AgentState;
   childrenByParent: Map<string, AgentState[]>;
@@ -1232,6 +1240,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
     <div className={`agent-tree-node ${depth > 0 ? "agent-tree-child" : ""} ${isActive ? "agent-tree-node-active" : ""}`}>
       <button
         onClick={() => onSelect(agent.id)}
+        aria-current={isActive ? "true" : undefined}
         className={`agent-card ${isChild ? "agent-card-child" : ""} ${isActive ? "agent-card-active" : ""}`}
       >
         <span className="agent-text">
@@ -1271,6 +1280,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             tabIndex={0}
             className="agent-action"
             title="重命名会话"
+            onKeyDown={activateSidebarInlineAction}
             onClick={(event) => {
               event.stopPropagation();
               onEdit(agent);
@@ -1284,6 +1294,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
               tabIndex={0}
               className="agent-action"
               title="取消子任务"
+              onKeyDown={activateSidebarInlineAction}
               onClick={(event) => {
                 event.stopPropagation();
                 void cancelAgent(agent.id, "cancelled from parent task");
@@ -1298,6 +1309,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
               tabIndex={0}
               className="agent-action"
               title="重试子任务"
+              onKeyDown={activateSidebarInlineAction}
               onClick={(event) => {
                 event.stopPropagation();
                 void retryAgent(agent.id);
@@ -1311,6 +1323,7 @@ const AgentTreeNode = memo(function AgentTreeNode({
             tabIndex={0}
             className="agent-action"
             title="隐藏会话"
+            onKeyDown={activateSidebarInlineAction}
             onClick={(event) => {
               event.stopPropagation();
               onHide(agent);
@@ -1868,6 +1881,37 @@ function ProviderLogoMark({ provider, size = 16 }: { provider?: string; size?: n
   );
 }
 
+function useMenuPresence(open: boolean): { rendered: boolean; visible: boolean } {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const frame = window.requestAnimationFrame(() => setVisible(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+    setVisible(false);
+    if (!mounted) return;
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 160;
+    const timer = window.setTimeout(() => setMounted(false), delay);
+    return () => window.clearTimeout(timer);
+  }, [open, mounted]);
+  return { rendered: open || mounted, visible: open && visible };
+}
+
+function handleComposerMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+  if (options.length === 0) return;
+  event.preventDefault();
+  const current = options.indexOf(document.activeElement as HTMLButtonElement);
+  const next = event.key === "Home" ? 0
+    : event.key === "End" ? options.length - 1
+    : event.key === "ArrowDown" ? (current + 1) % options.length
+    : (current - 1 + options.length) % options.length;
+  options[next]?.focus();
+}
+
 export function AppShell() {
   const agents = useAgentStore((s) => s.agents);
   const activeId = useAgentStore((s) => s.activeAgentId);
@@ -1950,6 +1994,10 @@ export function AppShell() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [permissionPickerOpen, setPermissionPickerOpen] = useState(false);
   const [worktreePickerOpen, setWorktreePickerOpen] = useState(false);
+  const projectPickerPresence = useMenuPresence(projectPickerOpen);
+  const modelPickerPresence = useMenuPresence(modelPickerOpen);
+  const permissionPickerPresence = useMenuPresence(permissionPickerOpen);
+  const worktreePickerPresence = useMenuPresence(worktreePickerOpen);
   // Whether the project staged for the next agent is a git repo (worktrees need one).
   const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1958,13 +2006,13 @@ export function AppShell() {
   const todoWarningCount = useTodoWarningCount();
   const todoWarningBadge = todoWarningCount > 0 ? (
     <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个逾期或临近截止待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
-      {todoWarningCount}
+      {todoWarningCount > 99 ? "99+" : todoWarningCount}
     </span>
   ) : null;
   const scheduleCount = useScheduleCount();
   const scheduleBadge = scheduleCount > 0 ? (
     <span className="sidebar-todo-warning-badge" role="status" aria-label={`${scheduleCount} 个定时任务`} title={`${scheduleCount} 个定时任务`}>
-      {scheduleCount}
+      {scheduleCount > 99 ? "99+" : scheduleCount}
     </span>
   ) : null;
   const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
@@ -1994,9 +2042,14 @@ export function AppShell() {
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const permissionPickerRef = useRef<HTMLDivElement>(null);
   const worktreePickerRef = useRef<HTMLDivElement>(null);
+  const projectTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const permissionTriggerRef = useRef<HTMLButtonElement>(null);
+  const worktreeTriggerRef = useRef<HTMLButtonElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaMeasureRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const conversationThreadRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -2024,25 +2077,30 @@ export function AppShell() {
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
-    if (!el) return;
-    const hasFiles = pendingAttachments.length > 0;
-    const maxHeight = 200;
-    if (hasFiles) {
-      // Files attached (icons occupy space) → allow growing
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-      el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
-    } else {
-      // No files → keep fixed height, never grow; scroll inside instead
-      el.style.height = "";
-      el.style.overflowY = "auto";
-    }
-  }, [pendingAttachments.length]);
+    const measure = textareaMeasureRef.current;
+    if (!el || !measure) return;
+    // The mirror measures wrapped content without resetting the live textarea's
+    // height, so consecutive keystrokes can interpolate between pixel values.
+    resizeComposerTextarea(el, measure);
+  }, []);
 
-  // Re-apply textarea height when attachments change (fixed when none, growable when files present)
-  useEffect(() => {
+  // Keep height in sync with content (covers history nav / slash commands / attachments)
+  useLayoutEffect(() => {
     autoResize();
-  }, [autoResize, pendingAttachments]);
+  }, [autoResize, input, pendingAttachments]);
+
+  useEffect(() => {
+    const shell = composerShellRef.current;
+    if (!shell) return;
+    let width = shell.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (shell.clientWidth === width) return;
+      width = shell.clientWidth;
+      autoResize();
+    });
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [autoResize]);
 
   const agentNavigationKey = agents.map((agent) => [
     agent.id,
@@ -2672,7 +2730,7 @@ export function AppShell() {
   useEffect(() => {
     if (!projectPickerOpen) return;
     const closePicker = (event: MouseEvent) => {
-      if (!projectPickerRef.current?.contains(event.target as Node)) {
+      if (!projectPickerRef.current?.contains(event.target as Node) && !projectTriggerRef.current?.contains(event.target as Node)) {
         setProjectPickerOpen(false);
       }
     };
@@ -2683,7 +2741,7 @@ export function AppShell() {
   useEffect(() => {
     if (!modelPickerOpen) return;
     const closePicker = (event: MouseEvent) => {
-      if (!modelPickerRef.current?.contains(event.target as Node)) {
+      if (!modelPickerRef.current?.contains(event.target as Node) && !modelTriggerRef.current?.contains(event.target as Node)) {
         setModelPickerOpen(false);
       }
     };
@@ -2694,7 +2752,7 @@ export function AppShell() {
   useEffect(() => {
     if (!permissionPickerOpen) return;
     const closePicker = (event: MouseEvent) => {
-      if (!permissionPickerRef.current?.contains(event.target as Node)) {
+      if (!permissionPickerRef.current?.contains(event.target as Node) && !permissionTriggerRef.current?.contains(event.target as Node)) {
         setPermissionPickerOpen(false);
       }
     };
@@ -2705,13 +2763,33 @@ export function AppShell() {
   useEffect(() => {
     if (!worktreePickerOpen) return;
     const closePicker = (event: MouseEvent) => {
-      if (!worktreePickerRef.current?.contains(event.target as Node)) {
+      if (!worktreePickerRef.current?.contains(event.target as Node) && !worktreeTriggerRef.current?.contains(event.target as Node)) {
         setWorktreePickerOpen(false);
       }
     };
     document.addEventListener("mousedown", closePicker);
     return () => document.removeEventListener("mousedown", closePicker);
   }, [worktreePickerOpen]);
+
+  useEffect(() => {
+    if (!modelPickerOpen && !worktreePickerOpen && !permissionPickerOpen && !projectPickerOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const trigger = modelPickerOpen ? modelTriggerRef.current
+        : worktreePickerOpen ? worktreeTriggerRef.current
+        : permissionPickerOpen ? permissionTriggerRef.current
+        : projectTriggerRef.current;
+      setModelPickerOpen(false);
+      setWorktreePickerOpen(false);
+      setPermissionPickerOpen(false);
+      setProjectPickerOpen(false);
+      trigger?.focus();
+    };
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => document.removeEventListener("keydown", closeOnEscape, true);
+  }, [modelPickerOpen, worktreePickerOpen, permissionPickerOpen, projectPickerOpen]);
 
   const pendingPermission = activeAgent?.pendingPermission ?? null;
   const pendingPermissionAgentId = activeAgent?.id ?? null;
@@ -3034,7 +3112,6 @@ export function AppShell() {
         if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
       }
       setPendingAttachments([]);
-      if (textareaRef.current) textareaRef.current.style.height = "auto";
 
       // Provisional input estimate so the token counter starts rolling the moment
       // the message is sent (real usage arrives from message_update/end events).
@@ -3400,25 +3477,24 @@ export function AppShell() {
         <aside
           className={`studio-sidebar glass-panel relative z-20 flex shrink-0 flex-col ${sidebarCollapsed ? "studio-sidebar-collapsed" : ""}`}
         >
-          {sidebarCollapsed ? (
-            <nav className="sidebar-collapsed-nav" aria-label="折叠侧边栏">
+          <nav className="sidebar-collapsed-nav" aria-label="折叠侧边栏" aria-hidden={!sidebarCollapsed} inert={!sidebarCollapsed}>
               <button
                 type="button"
                 className="sidebar-collapsed-logo"
                 onClick={() => setSidebarCollapsed(false)}
                 aria-label="展开侧边栏"
-                title="展开侧边栏"
+                data-tooltip="展开侧边栏"
               >
                 <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
                 <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
               </button>
               {settingsOpen ? (
                 <>
-                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" title="返回主页"><ArrowLeft size={19} /></button>
-                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" title="外观设置"><Palette size={19} /></button>
-                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" title="模型设置"><Bot size={19} /></button>
-                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" title="个性化设置"><UserRound size={19} /></button>
-                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" title="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" data-tooltip="返回主页"><ArrowLeft size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" data-tooltip="外观设置"><Palette size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" data-tooltip="模型设置"><Bot size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" data-tooltip="个性化设置"><UserRound size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" data-tooltip="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
               ) : (
                 <>
@@ -3427,19 +3503,20 @@ export function AppShell() {
                     className="sidebar-collapsed-action"
                     onClick={() => openNewSessionComposer()}
                     aria-label="新会话"
-                    title="新会话"
+                    data-tooltip="新会话"
                   >
                     <Plus size={20} />
                   </button>
-                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTodosOpen(true); }} aria-label="待办" title="待办"><ListTodo size={19} />{todoWarningBadge}</button>
-                  <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" title="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
-                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" title="查看工作区"><FolderOpen size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" title="Nova Agent GitHub"><GithubMark size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }} aria-label="设置" title="设置"><Settings size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTodosOpen(true); }} aria-label="待办" aria-current={todosOpen ? "page" : undefined} data-tooltip="待办"><ListTodo size={19} />{todoWarningBadge}</button>
+                  <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" aria-current={schedulesOpen ? "page" : undefined} data-tooltip="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
+                  <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" data-tooltip="查看工作区"><FolderOpen size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-github" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" data-tooltip="Nova Agent GitHub"><GithubMark size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }} aria-label="设置" data-tooltip="设置"><Settings size={19} /></button>
                 </>
               )}
-            </nav>
-          ) : settingsOpen ? (
+          </nav>
+          <div className="sidebar-expanded-content" aria-hidden={sidebarCollapsed} inert={sidebarCollapsed}>
+          {settingsOpen ? (
             <div className="settings-sidebar-content">
               <header className="settings-sidebar-header">
                 <button
@@ -3513,6 +3590,7 @@ export function AppShell() {
                   <button
                     type="button"
                     className={`sidebar-nav-row ${todosOpen ? "sidebar-nav-row-active" : ""}`}
+                    aria-current={todosOpen ? "page" : undefined}
                     onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTodosOpen(true); }}
                   >
                     <span className="sidebar-nav-icon">
@@ -3524,6 +3602,7 @@ export function AppShell() {
                   <button
                     type="button"
                     className={`sidebar-nav-row sidebar-nav-row-child ${schedulesOpen ? "sidebar-nav-row-active" : ""}`}
+                    aria-current={schedulesOpen ? "page" : undefined}
                     onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }}
                   >
                     <span className="sidebar-nav-icon">
@@ -3548,6 +3627,7 @@ export function AppShell() {
                     <button
                       className="project-group-title"
                       title={cwd}
+                      aria-expanded={!collapsedProjects.has(cwd)}
                       onClick={() =>
                         setCollapsedProjects((current) => {
                           const next = new Set(current);
@@ -3579,6 +3659,7 @@ export function AppShell() {
                             tabIndex={0}
                             className="project-action"
                             title="新建会话"
+                            onKeyDown={activateSidebarInlineAction}
                             onClick={(event) => {
                               event.stopPropagation();
                               openNewSessionComposer(cwd);
@@ -3591,6 +3672,7 @@ export function AppShell() {
                             tabIndex={0}
                             className="project-action"
                             title="重命名项目"
+                            onKeyDown={activateSidebarInlineAction}
                             onClick={(event) => {
                               event.stopPropagation();
                               setEditingProject({
@@ -3609,8 +3691,8 @@ export function AppShell() {
                         <ChevronDown size={13} />
                       </span>
                     </button>
-                    {!collapsedProjects.has(cwd) && (
-                      <div className="project-agents">
+                    <div className={`project-agents ${collapsedProjects.has(cwd) ? "project-agents-collapsed" : ""}`} aria-hidden={collapsedProjects.has(cwd)} inert={collapsedProjects.has(cwd)}>
+                      <div className="project-agents-content">
                         {(expandedProjects.has(cwd)
                           ? projectAgents
                           : projectAgents.slice(0, SIDEBAR_SESSION_PREVIEW)
@@ -3644,7 +3726,7 @@ export function AppShell() {
                           </button>
                         )}
                       </div>
-                    )}
+                    </div>
                   </section>
                 ))}
               </div>
@@ -3669,6 +3751,7 @@ export function AppShell() {
               </footer>
             </>
           )}
+          </div>
         </aside>
 
         {/* Main */}
@@ -4140,16 +4223,12 @@ export function AppShell() {
           <div
             className="conversation-input-area"
             style={{
-              flexShrink: 0,
-              padding: "60px 24px 56px",
               display: !settingsOpen && conversationView === "chat" ? "flex" : "none",
-              justifyContent: "center",
             }}
           >
             <div
               ref={composerShellRef}
               className="composer-shell"
-              style={{ position: "relative", width: "100%", maxWidth: 660 }}
             >
               {showScrollToBottom && activeAgent && (
                 <button
@@ -4186,15 +4265,7 @@ export function AppShell() {
               )}
               {/* Input card */}
               <div
-                className="nova-input"
-                style={{
-                  overflow: "visible",
-                  ...(isDragOver ? {
-                    outline: "2px dashed #818cf8",
-                    outlineOffset: -2,
-                    background: "rgba(129, 140, 248, 0.06)",
-                  } : {}),
-                }}
+                className={`nova-input${isDragOver ? " nova-input-dragover" : ""}`}
               >
                 {/* Attachment previews */}
                 {pendingAttachments.length > 0 && (() => {
@@ -4203,14 +4274,7 @@ export function AppShell() {
                   const hiddenCount = pendingAttachments.length - MAX_VISIBLE;
                   return (
                   <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                      padding: "10px 12px 0",
-                      maxHeight: 136,
-                      overflow: "hidden",
-                    }}
+                    className="nova-input-attachments"
                   >
                     {visible.map((att) => {
                       const typeInfo = getFileTypeIcon(att.name, att.mimeType);
@@ -4290,6 +4354,7 @@ export function AppShell() {
                 )}
                 <textarea
                   ref={textareaRef}
+                  className="nova-input-textarea"
                   value={input}
                   onChange={(e) => {
                     setInput(e.target.value);
@@ -4299,7 +4364,6 @@ export function AppShell() {
                     setFileMentionMenuDismissed(false);
                     setSelectedSlashCommandIndex(0);
                     setSelectedProjectFileIndex(0);
-                    autoResize();
                   }}
                   onSelect={(e) => setCursorPosition(e.currentTarget.selectionStart)}
                   onPaste={handlePaste}
@@ -4419,54 +4483,28 @@ export function AppShell() {
                   }}
                   placeholder="Ask Nova anything..."
                   rows={1}
-                  style={{
-                    width: "100%",
-                    minHeight: 96,
-                    resize: "none",
-                    background: "transparent",
-                    padding: "18px 20px 8px",
-                    fontSize: 15,
-                    color: "var(--color-text-primary)",
-                    outline: "none",
-                    lineHeight: 1.6,
-                    fontFamily: "inherit",
-                    border: "none",
-                    overflow: "hidden",
-                  }}
                 />
+                <div ref={textareaMeasureRef} className="nova-input-textarea-measure" aria-hidden="true">
+                  {input || "\u200b"}{"\u200b"}
+                </div>
 
                 {/* Bottom toolbar */}
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "8px 12px 12px",
-                  }}
-                >
-                  <button
-                    className="input-attach-button"
-                    onClick={() => fileInputRef.current?.click()}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 32,
-                      height: 32,
-                      borderRadius: 9,
-                      color: "var(--color-text-muted)",
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <Paperclip size={16} />
-                  </button>
+                <div className="nova-input-toolbar">
+                  <div className="nova-input-toolbar-left">
+                    <button
+                      type="button"
+                      className="input-attach-button"
+                      onClick={() => fileInputRef.current?.click()}
+                      aria-label="添加附件"
+                    >
+                      <Paperclip size={16} />
+                    </button>
+                  </div>
                   <input
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    style={{ display: "none" }}
+                    className="nova-input-file-hidden"
                     onChange={(e) => {
                       const files = e.target.files;
                       if (files && files.length > 0) {
@@ -4476,51 +4514,32 @@ export function AppShell() {
                       e.target.value = "";
                     }}
                   />
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      position: "relative",
-                    }}
-                  >
+                  <div className="nova-input-toolbar-right">
                     {/* Model selector - show on homepage (no active agent) or when models are loaded */}
                     {(availableModels.length > 0 || !activeId) && (
-                      <div style={{ position: "relative" }}>
+                      <div className="input-pill-slot">
                         <button
+                          ref={modelTriggerRef}
                           type="button"
-                          className={`input-toolbar-control model-picker-trigger ${modelPickerOpen ? "model-picker-trigger-open" : ""}`}
+                          className={`input-toolbar-control input-pill model-picker-trigger input-model-primary ${modelPickerOpen ? "model-picker-trigger-open" : ""}`}
                           onClick={() => setModelPickerOpen((open) => !open)}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "5px 10px",
-                            borderRadius: 8,
-                            fontSize: 11.5,
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
-                            maxWidth: 180,
-                            overflow: "hidden",
-                          }}
+                          aria-haspopup="listbox"
+                          aria-expanded={modelPickerOpen}
                         >
                           <ProviderLogoMark provider={activeModelProvider} size={15} />
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span className="input-pill-label">
                             {activeModelName}
                           </span>
+                          <ChevronDown size={12} className="input-pill-chevron" />
                         </button>
-                        {modelPickerOpen && (
+                        {modelPickerPresence.rendered && (
                           <div
                             ref={modelPickerRef}
-                            className="model-picker-popover"
-                            style={{
-                              position: "absolute",
-                              right: 0,
-                              bottom: 36,
-                              width: 280,
-                              maxHeight: 360,
-                              overflowY: "auto",
-                            }}
+                            className={`model-picker-popover nova-surface-elevated${modelPickerPresence.visible ? " composer-menu-visible" : ""}${modelPickerOpen ? "" : " composer-menu-closing"}`}
+                            role="listbox"
+                            onKeyDown={handleComposerMenuKeyDown}
+                            inert={!modelPickerOpen}
+                            aria-hidden={!modelPickerOpen}
                           >
                             {availableModels.map((m) => {
                               const isActive = activeModelId === m.id && activeModelProvider === m.provider;
@@ -4528,7 +4547,7 @@ export function AppShell() {
                                 <button
                                   key={`${m.provider}:${m.id}`}
                                   type="button"
-                                  className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                  className={`model-picker-option model-picker-option-row ${isActive ? "model-picker-option-active" : ""}${m.authConfigured ? "" : " model-picker-option-dimmed"}`}
                                   title={m.authConfigured ? undefined : "该 Provider 未配置 API Key"}
                                   onClick={() => {
                                     if (activeAgent) {
@@ -4540,26 +4559,14 @@ export function AppShell() {
                                       setDefaultProvider(m.provider);
                                     }
                                     setModelPickerOpen(false);
-                                  }}
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    width: "100%",
-                                    padding: "6px 10px",
-                                    borderRadius: 7,
-                                    fontSize: 12,
-                                    cursor: "pointer",
-                                    textAlign: "left",
-                                    transition: "all 0.12s ease",
-                                    opacity: m.authConfigured ? 1 : 0.5,
+                                    modelTriggerRef.current?.focus();
                                   }}
                                 >
-                                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
+                                  <span className="model-picker-option-main">
                                     <ProviderLogoMark provider={m.provider} />
-                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                    <span className="model-picker-option-name">{m.name}</span>
                                   </span>
-                                  <span className="model-picker-context" style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
+                                  <span className="model-picker-context">
                                     {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(0)}M` : `${(m.contextWindow / 1000).toFixed(0)}K`}
                                   </span>
                                 </button>
@@ -4571,71 +4578,67 @@ export function AppShell() {
                     )}
                     {/* Worktree isolation - applies to the next agent in this project */}
                     {worktreeToggleVisible && (
-                      <div style={{ position: "relative" }}>
+                      <div className="input-pill-slot">
                         <button
+                          ref={worktreeTriggerRef}
                           type="button"
-                          className={`input-toolbar-control model-picker-trigger ${worktreePickerOpen ? "model-picker-trigger-open" : ""}`}
+                          className={`input-toolbar-control input-pill model-picker-trigger ${worktreePickerOpen ? "model-picker-trigger-open" : ""}`}
                           onClick={() => setWorktreePickerOpen((open) => !open)}
                           title={
                             worktreeAvailable
                               ? "让下一个 Agent 在自己的 git worktree 里工作"
                               : "当前项目不是 git 仓库，无法使用 worktree 隔离"
                           }
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "5px 10px",
-                            borderRadius: 8,
-                            fontSize: 11.5,
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
-                            opacity: worktreeAvailable ? 1 : 0.5,
-                          }}
+                          aria-haspopup="listbox"
+                          aria-expanded={worktreePickerOpen}
                         >
-                          <GitBranch size={12} style={{ flexShrink: 0 }} />
+                          <GitBranch size={13} className="input-pill-icon" />
                           {/* Both labels are four characters wide, so toggling the mode does not
                               resize the chip and shift the chips to its left. */}
-                          <span style={{ whiteSpace: "nowrap" }}>
+                          <span className="input-pill-label">
                             {worktreeEnabled && worktreeAvailable ? "独立目录" : "共用目录"}
                           </span>
+                          <ChevronDown size={12} className="input-pill-chevron" />
                         </button>
-                        {worktreePickerOpen && (
+                        {worktreePickerPresence.rendered && (
                           <div
                             ref={worktreePickerRef}
-                            className="model-picker-popover"
-                            style={{ position: "absolute", right: 0, bottom: 36, width: 268 }}
+                            className={`model-picker-popover model-picker-popover-sm${worktreePickerPresence.visible ? " composer-menu-visible" : ""}${worktreePickerOpen ? "" : " composer-menu-closing"}`}
+                            role="listbox"
+                            onKeyDown={handleComposerMenuKeyDown}
+                            inert={!worktreePickerOpen}
+                            aria-hidden={!worktreePickerOpen}
                           >
-                            <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            <div className="model-picker-provider">
                               新 Agent 的工作目录
                             </div>
                             <button
                               type="button"
-                              className={`model-picker-option ${!worktreeEnabled || !worktreeAvailable ? "model-picker-option-active" : ""}`}
+                              className={`model-picker-option model-picker-option-stack ${!worktreeEnabled || !worktreeAvailable ? "model-picker-option-active" : ""}`}
                               onClick={() => {
                                 setWorktreeEnabled(false);
                                 setWorktreePickerOpen(false);
+                                worktreeTriggerRef.current?.focus();
                               }}
-                              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, width: "100%", padding: "6px 10px" }}
                             >
                               <span>共用项目目录</span>
-                              <span className="model-picker-context" style={{ fontSize: 10 }}>默认。改动直接写进项目</span>
+                              <span className="model-picker-context">默认。改动直接写进项目</span>
                             </button>
                             <button
                               type="button"
                               disabled={!worktreeAvailable}
-                              className={`model-picker-option ${worktreeEnabled && worktreeAvailable ? "model-picker-option-active" : ""}`}
+                              className={`model-picker-option model-picker-option-stack ${worktreeEnabled && worktreeAvailable ? "model-picker-option-active" : ""}${worktreeAvailable ? "" : " model-picker-option-dimmed"}`}
                               onClick={() => {
                                 setWorktreeEnabled(true);
                                 setWorktreePickerOpen(false);
+                                worktreeTriggerRef.current?.focus();
                               }}
-                              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, width: "100%", padding: "6px 10px", opacity: worktreeAvailable ? 1 : 0.5 }}
                             >
                               <span>独立 git worktree</span>
-                              <span className="model-picker-context" style={{ fontSize: 10 }}>并行 Agent 互不覆盖，改完再决定接受或丢弃</span>
+                              <span className="model-picker-context">并行 Agent 互不覆盖，改完再决定接受或丢弃</span>
                             </button>
                             {!worktreeAvailable && (
-                              <div style={{ padding: "4px 10px 8px", fontSize: 10.5, opacity: 0.7 }}>
+                              <div className="model-picker-hint">
                                 当前项目不是 git 仓库，无法使用 worktree 隔离
                               </div>
                             )}
@@ -4644,46 +4647,38 @@ export function AppShell() {
                       </div>
                     )}
                     {/* Homepage selection configures the next session; an active agent updates its live policy. */}
-                    <div style={{ position: "relative" }}>
+                    <div className="input-pill-slot">
                       <button
+                        ref={permissionTriggerRef}
                         type="button"
-                        className={`input-toolbar-control model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
+                        className={`input-toolbar-control input-pill model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
                         onClick={() => setPermissionPickerOpen((open) => !open)}
                         title={activeAgent ? "工具权限模式" : "设置新会话的工具权限模式"}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 5,
-                          padding: "5px 10px",
-                          borderRadius: 8,
-                          fontSize: 11.5,
-                          cursor: "pointer",
-                          transition: "all 0.15s ease",
-                        }}
+                        aria-haspopup="listbox"
+                        aria-expanded={permissionPickerOpen}
                       >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <svg className="input-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <rect x="3" y="11" width="18" height="11" rx="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
                         {/* Every label in TOOL_PERMISSION_MODES is four characters wide, so a
                             shrink-to-fit chip keeps a constant size across modes and never shoves
                             the model picker sideways. */}
-                        <span style={{ whiteSpace: "nowrap" }}>
+                        <span className="input-pill-label">
                           {TOOL_PERMISSION_MODES.find((m) => m.value === selectedToolPermissionMode)?.label ?? selectedToolPermissionMode}
                         </span>
+                        <ChevronDown size={12} className="input-pill-chevron" />
                       </button>
-                      {permissionPickerOpen && (
+                      {permissionPickerPresence.rendered && (
                         <div
                           ref={permissionPickerRef}
-                          className="model-picker-popover"
-                          style={{
-                            position: "absolute",
-                            right: 0,
-                            bottom: 36,
-                            width: 240,
-                          }}
+                          className={`model-picker-popover model-picker-popover-sm${permissionPickerPresence.visible ? " composer-menu-visible" : ""}${permissionPickerOpen ? "" : " composer-menu-closing"}`}
+                          role="listbox"
+                          onKeyDown={handleComposerMenuKeyDown}
+                          inert={!permissionPickerOpen}
+                          aria-hidden={!permissionPickerOpen}
                         >
-                          <div className="model-picker-provider" style={{ padding: "6px 10px 3px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                          <div className="model-picker-provider">
                             {activeAgent ? "工具权限模式" : "新会话权限模式"}
                           </div>
                           {TOOL_PERMISSION_MODES.map((mode) => {
@@ -4692,7 +4687,7 @@ export function AppShell() {
                               <button
                                 key={mode.value}
                                 type="button"
-                                className={`model-picker-option ${isActive ? "model-picker-option-active" : ""}`}
+                                className={`model-picker-option model-picker-option-stack ${isActive ? "model-picker-option-active" : ""}`}
                                 onClick={() => {
                                   if (activeAgent) {
                                     void setToolPermissionMode(activeAgent.id, mode.value);
@@ -4701,190 +4696,114 @@ export function AppShell() {
                                     setDefaultToolPermissionMode(mode.value);
                                   }
                                   setPermissionPickerOpen(false);
-                                }}
-                                style={{
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "flex-start",
-                                  gap: 1,
-                                  width: "100%",
-                                  padding: "6px 10px",
-                                  borderRadius: 7,
-                                  fontSize: 12,
-                                  cursor: "pointer",
-                                  textAlign: "left",
-                                  transition: "all 0.12s ease",
+                                  permissionTriggerRef.current?.focus();
                                 }}
                               >
                                 <span>{mode.label}</span>
-                                <span style={{ fontSize: 10.5, opacity: 0.65 }}>{mode.description}</span>
+                                <span className="model-picker-option-desc">{mode.description}</span>
                               </button>
                             );
                           })}
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className={`input-toolbar-control project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
-                      onClick={() => setProjectPickerOpen((open) => !open)}
-                      title="切换项目"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        padding: "5px 10px",
-                        borderRadius: 8,
-                        fontSize: 11.5,
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                        maxWidth: 180,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <FolderOpen size={12} style={{ flexShrink: 0 }} />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {inputProjectName}
-                      </span>
-                    </button>
-                    {projectPickerOpen && (
-                      <div
-                        ref={projectPickerRef}
-                        className="project-picker-popover"
-                        style={{
-                          position: "absolute",
-                          left: 0,
-                          bottom: 44,
-                          minWidth: 240,
-                          width: "max-content",
-                          maxWidth: 500,
-                          display: "flex",
-                          flexDirection: "column",
-                          maxHeight: "min(56vh, 420px)",
-                          overflow: "hidden",
-                        }}
+                    <div className="input-pill-slot input-pill-slot-project">
+                      <button
+                        ref={projectTriggerRef}
+                        type="button"
+                        className={`input-toolbar-control input-pill project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
+                        onClick={() => setProjectPickerOpen((open) => !open)}
+                        title="切换项目"
+                        aria-haspopup="listbox"
+                        aria-expanded={projectPickerOpen}
                       >
+                        <FolderOpen size={13} className="input-pill-icon" />
+                        <span className="input-pill-label">
+                          {inputProjectName}
+                        </span>
+                        <ChevronDown size={12} className="input-pill-chevron" />
+                      </button>
+                      {projectPickerPresence.rendered && (
                         <div
-                          className="project-picker-title"
-                          style={{
-                            flexShrink: 0,
-                            padding: "4px 8px 5px",
-                            fontSize: 10,
-                            fontWeight: 600,
-                            letterSpacing: "0.06em",
-                          }}
+                          ref={projectPickerRef}
+                          className={`project-picker-popover nova-surface-elevated${projectPickerPresence.visible ? " composer-menu-visible" : ""}${projectPickerOpen ? "" : " composer-menu-closing"}`}
+                          onKeyDown={handleComposerMenuKeyDown}
+                          inert={!projectPickerOpen}
+                          aria-hidden={!projectPickerOpen}
                         >
-                          选择项目
-                        </div>
-                        <div
-                          style={{
-                            flex: 1,
-                            minHeight: 0,
-                            overflowY: "auto",
-                            overscrollBehavior: "contain",
-                          }}
-                        >
-                          {availableProjectCwds.map((cwd) => {
-                            const selected = cwd === inputProjectCwd;
-                            return (
-                              <button
-                                key={cwd}
-                                type="button"
-                                onClick={() => {
-                                  setPendingProjectCwd(cwd);
-                                  setActiveAgent(null);
-                                  setProjectPickerOpen(false);
-                                }}
-                                title={cwd}
-                                className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
-                              >
-                                <FolderOpen size={12} style={{ flexShrink: 0 }} />
-                                <span
-                                  style={{
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    fontSize: 12,
+                          <div className="project-picker-title">
+                            选择项目
+                          </div>
+                          <div className="project-picker-list">
+                            {availableProjectCwds.map((cwd) => {
+                              const selected = cwd === inputProjectCwd;
+                              return (
+                                <button
+                                  key={cwd}
+                                  type="button"
+                                  onClick={() => {
+                                    setPendingProjectCwd(cwd);
+                                    setActiveAgent(null);
+                                    setProjectPickerOpen(false);
+                                    projectTriggerRef.current?.focus();
                                   }}
+                                  title={cwd}
+                                  className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
                                 >
-                                  {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
-                                </span>
-                              </button>
-                            );
-                          })}
+                                  <FolderOpen size={12} style={{ flexShrink: 0 }} />
+                                  <span className="project-picker-option-name">
+                                    {projectNames[cwd] ?? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const selected = await open({
+                                directory: true,
+                                multiple: false,
+                                title: "选择项目文件夹",
+                              });
+                              if (selected) {
+                                setPendingProjectCwd(selected);
+                                setActiveAgent(null);
+                                setProjectPickerOpen(false);
+                              }
+                              projectTriggerRef.current?.focus();
+                            }}
+                            className="project-picker-option project-picker-option-create"
+                          >
+                            <Plus size={12} style={{ flexShrink: 0 }} />
+                            <span>创建新项目</span>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const selected = await open({
-                              directory: true,
-                              multiple: false,
-                              title: "选择项目文件夹",
-                            });
-                            if (selected) {
-                              setPendingProjectCwd(selected);
-                              setActiveAgent(null);
-                              setProjectPickerOpen(false);
-                            }
-                          }}
-                          className="project-picker-option"
-                          style={{
-                            flexShrink: 0,
-                            borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-                            marginTop: 4,
-                            paddingTop: 8,
-                          }}
-                        >
-                          <Plus size={12} style={{ flexShrink: 0 }} />
-                          <span style={{ fontSize: 12 }}>创建新项目</span>
-                        </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                     {/* Abort button (visible during streaming) */}
                     {activeAgent?.status === "streaming" ? (
                       <button
+                        type="button"
                         className="input-action-button input-abort-button"
                         onClick={handleAbort}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 32,
-                          height: 32,
-                          borderRadius: "50%",
-                          background: "#ef4444",
-                          color: "#fff",
-                          border: "none",
-                          cursor: "pointer",
-                        }}
+                        aria-label="停止生成"
                       >
-                        <Square size={12} />
+                        <Square size={13} />
                       </button>
                     ) : (
                       <button
+                        type="button"
                         className="input-action-button input-send-button"
                         onClick={handleSubmit}
                         disabled={!input.trim() || isSending}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 32,
-                          height: 32,
-                          borderRadius: "50%",
-                          background: "#8b93f5",
-                          color: "#fff",
-                          border: "none",
-                          boxShadow: "0 2px 14px rgba(139, 147, 245, 0.45)",
-                          opacity: input.trim() && !isSending ? 1 : 0.55,
-                          cursor:
-                            input.trim() && !isSending
-                              ? "pointer"
-                              : "not-allowed",
-                          transition: "all 0.15s ease",
-                        }}
+                        aria-label="发送消息"
                       >
-                        <ArrowUp size={16} />
+                        {isSending ? (
+                          <LoaderCircle size={18} className="tool-spin" />
+                        ) : (
+                          <ArrowUp size={19} strokeWidth={2.4} />
+                        )}
                       </button>
                     )}
                   </div>
