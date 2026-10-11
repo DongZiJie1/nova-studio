@@ -185,6 +185,11 @@ function ProgressComposer({
           type="button"
           className="todo-progress-composer-submit"
           disabled={busy || submitting || !trimmed}
+          onMouseDown={(event) => {
+            // Keep the textarea focused so an active IME composition does not
+            // consume the first click while committing its text.
+            event.preventDefault();
+          }}
           onClick={() => {
             void (async () => {
               setSubmitting(true);
@@ -271,6 +276,11 @@ function ProgressEntryCard({
               type="button"
               className="todo-progress-composer-submit"
               disabled={busy || submitting || !content.trim()}
+              onMouseDown={(event) => {
+                // Match the new-entry button: the first click must save even
+                // while the textarea is composing text.
+                event.preventDefault();
+              }}
               onClick={() => {
                 void (async () => {
                   setSubmitting(true);
