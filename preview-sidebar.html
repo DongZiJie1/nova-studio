@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh" data-theme="midnight">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nova sidebar polish preview</title>
+  <script type="module" src="/src/App.css"></script>
+  <style>
+    body { margin: 0; min-width: 720px; background: #0b1021; font-family: var(--font-sans); }
+    .preview-layout { display: flex; height: 100vh; }
+    .preview-main { flex: 1; padding: 80px 56px; color: #dce5ff; background: radial-gradient(circle at 72% 30%, #26375f, #0d1328 58%, #090d1b); }
+    .preview-main h1 { margin: 0 0 8px; font-size: 38px; font-weight: 640; letter-spacing: -.035em; }
+    .preview-main p { color: #99a6c3; }
+    .sidebar-expanded-content { min-height: 0; }
+    .sidebar-collapsed-nav { box-sizing: border-box; }
+    .preview-active .agent-card { background: var(--sidebar-active); box-shadow: inset 0 1px 0 rgba(221, 229, 255, .11); }
+  </style>
+</head>
+<body>
+  <div class="preview-layout" data-custom-background="true">
+    <aside class="studio-sidebar glass-panel relative z-20 flex shrink-0 flex-col" id="sidebar">
+      <nav class="sidebar-collapsed-nav" aria-label="折叠侧边栏" aria-hidden="true" inert>
+        <button type="button" class="sidebar-collapsed-logo" data-tooltip="展开侧边栏" aria-label="展开侧边栏" id="expand"><img src="/images/nova-avatar-dark.jpg" alt="Nova"></button>
+        <button type="button" class="sidebar-collapsed-action" data-tooltip="新会话" aria-label="新会话">＋</button>
+        <button type="button" class="sidebar-collapsed-action" data-tooltip="待办" aria-label="待办">☷<span class="sidebar-todo-warning-badge">7</span></button>
+        <button type="button" class="sidebar-collapsed-action" data-tooltip="定时任务" aria-label="定时任务">◷<span class="sidebar-todo-warning-badge">1</span></button>
+        <button type="button" class="sidebar-collapsed-action" data-tooltip="查看工作区" aria-label="查看工作区">▱</button>
+        <button type="button" class="sidebar-collapsed-action sidebar-collapsed-github" data-tooltip="Nova Agent GitHub" aria-label="Nova Agent GitHub">◉</button>
+        <button type="button" class="sidebar-collapsed-action sidebar-collapsed-settings" data-tooltip="设置" aria-label="设置">⚙</button>
+      </nav>
+      <div class="sidebar-expanded-content">
+        <header class="sidebar-header">
+          <div class="sidebar-brand"><span class="sidebar-brand-mark"><img src="/images/nova-avatar-dark.jpg" alt="Nova"></span><span class="sidebar-brand-name">Nova</span><span class="sidebar-brand-badge">STUDIO</span><button type="button" class="sidebar-collapse-button" id="collapse" aria-label="收起侧边栏">▣</button></div>
+          <nav class="sidebar-nav" aria-label="快捷入口">
+            <button type="button" class="sidebar-nav-row"><span class="sidebar-nav-icon">＋</span><span class="sidebar-nav-label">新会话</span></button>
+            <button type="button" class="sidebar-nav-row"><span class="sidebar-nav-icon">☷</span><span class="sidebar-nav-label">待办</span><span class="sidebar-todo-warning-badge">7</span></button>
+            <button type="button" class="sidebar-nav-row sidebar-nav-row-child"><span class="sidebar-nav-icon">◷</span><span class="sidebar-nav-label">定时任务</span><span class="sidebar-todo-warning-badge">1</span></button>
+          </nav>
+        </header>
+        <div class="sidebar-workspace-heading"><span>工作区</span><span class="sidebar-project-count">2</span></div>
+        <div class="agent-tree flex-1 overflow-y-auto">
+          <section class="project-group">
+            <button type="button" class="project-group-title" id="project-toggle" aria-expanded="true"><span class="project-group-icon">▱</span><span class="project-group-text"><span class="project-group-name">RL</span></span><span class="project-group-meta"><span class="project-agent-count">24</span></span><span class="project-group-caret">⌄</span></button>
+            <div class="project-agents" id="project-agents"><div class="project-agents-content">
+              <div class="agent-tree-node"><button type="button" class="agent-card agent-card-active"><span class="agent-text"><span class="agent-name">训练流水线与模型评估任务</span></span><span class="agent-last-time">昨天</span></button></div>
+              <div class="agent-tree-node"><button type="button" class="agent-card"><span class="agent-text"><span class="agent-name">长期会话标题示例：非常长的研究工作区项目任务名称</span></span><span class="agent-last-time">4天前</span></button></div>
+              <div class="agent-tree-node"><button type="button" class="agent-card"><span class="agent-text"><span class="agent-name">实验记录整理</span></span><span class="agent-last-time">23天前</span></button></div>
+              <button type="button" class="project-agents-toggle">展开显示</button>
+            </div></div>
+          </section>
+          <section class="project-group">
+            <button type="button" class="project-group-title"><span class="project-group-icon">▱</span><span class="project-group-text"><span class="project-group-name">very-long-workspace-name-that-should-truncate-correctly</span></span><span class="project-group-meta"><span class="project-agent-count">123</span></span><span class="project-group-caret">⌄</span></button>
+            <div class="project-agents"><div class="project-agents-content"><div class="agent-tree-node"><button type="button" class="agent-card"><span class="agent-text"><span class="agent-name">另一工作区中的会话</span></span><span class="agent-last-time">今天</span></button></div></div></div>
+          </section>
+        </div>
+        <footer class="sidebar-footer"><button type="button" class="sidebar-settings-button">◉ <span>GitHub</span></button><button type="button" class="sidebar-settings-button">⚙ <span>设置</span></button></footer>
+      </div>
+    </aside>
+    <main class="preview-main"><h1>Ship faster with Nova.</h1><p>Sidebar material and motion preview</p></main>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.has('theme')) document.documentElement.dataset.theme = params.get('theme');
+    if (params.has('background')) document.querySelector('.preview-layout').dataset.customBackground = params.get('background');
+    if (params.get('session') === 'none') document.querySelector('.agent-card-active').classList.remove('agent-card-active');
+    if (params.get('nav') === 'todos') {
+      document.querySelectorAll('.sidebar-nav-row')[1].classList.add('sidebar-nav-row-active');
+      document.querySelectorAll('.sidebar-collapsed-action')[1].classList.add('sidebar-settings-button-active');
+    }
+    const sidebar = document.querySelector('#sidebar');
+    const collapsedNav = sidebar.querySelector('.sidebar-collapsed-nav');
+    const expandedContent = sidebar.querySelector('.sidebar-expanded-content');
+    function setCollapsed(value) {
+      sidebar.classList.toggle('studio-sidebar-collapsed', value);
+      collapsedNav.inert = !value;
+      expandedContent.inert = value;
+      collapsedNav.setAttribute('aria-hidden', String(!value));
+      expandedContent.setAttribute('aria-hidden', String(value));
+    }
+    document.querySelector('#collapse').onclick = () => setCollapsed(true);
+    document.querySelector('#expand').onclick = () => setCollapsed(false);
+    document.querySelector('#project-toggle').onclick = (event) => {
+      const agents = document.querySelector('#project-agents');
+      const value = agents.classList.toggle('project-agents-collapsed');
+      agents.inert = value;
+      event.currentTarget.setAttribute('aria-expanded', String(!value));
+      event.currentTarget.querySelector('.project-group-caret').classList.toggle('project-group-caret-collapsed', value);
+    };
+  </script>
+</body>
+</html>

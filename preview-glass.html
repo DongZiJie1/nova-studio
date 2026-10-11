@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Composer preview</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; }
+      #bg-layer { position: fixed; inset: 0; overflow: hidden; }
+      #bg-layer .bg-image {
+        position: absolute; inset: 0;
+        background-image: url(/images/arctic-dawn-journey.jpg);
+        background-size: cover; background-position: center;
+      }
+      #bg-layer .bg-veil {
+        position: absolute; inset: 0;
+        background: radial-gradient(ellipse 66% 58% at 50% 48%, transparent 0%, rgba(5,8,14,0.035) 58%, rgba(5,8,14,0.16) 100%);
+      }
+      #bg-layer .bg-dark { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,12,20,0.46), rgba(8,12,20,0.52)); }
+      .pv-hero { text-align: center; color: #fff; }
+      .pv-hero h2 { font-family: var(--font-sans); font-size: 62px; font-weight: 720; letter-spacing: -0.035em; margin: 0; }
+      .pv-hero p { margin-top: 22px; font-size: 18px; color: var(--color-text-secondary); }
+    </style>
+    <script type="module" src="/src/App.css"></script>
+  </head>
+  <body>
+    <div id="root-shell" class="relative h-screen w-screen overflow-hidden" data-custom-background="true">
+      <div id="bg-layer">
+        <div class="bg-image"></div>
+        <div class="bg-veil"></div>
+        <div class="bg-dark"></div>
+      </div>
+
+      <main class="studio-main relative w-full h-full flex flex-col overflow-hidden" style="height:100vh">
+        <div class="conversation-dock">
+          <div class="conversation-dock-main">
+            <div class="conversation-scroll flex-1 overflow-y-auto flex flex-col items-center px-6 justify-center">
+              <div class="empty-state-hero text-center max-w-6xl w-full">
+                <div class="pv-hero">
+                  <h2>Ship faster with Nova in <span style="background:linear-gradient(135deg,#a78bfa,#818cf8,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">RL</span>.</h2>
+                  <p>From idea to code, from concept to creation.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="conversation-input-area" id="input-area" style="display:flex">
+              <div class="composer-shell">
+                <div class="nova-input" id="composer">
+                  <textarea class="nova-input-textarea" id="ta" rows="1" placeholder="Ask Nova anything..."></textarea>
+                  <div class="nova-input-textarea-measure" id="ta-measure" aria-hidden="true">&#8203;</div>
+                  <div class="nova-input-toolbar">
+                    <div class="nova-input-toolbar-left">
+                      <button type="button" class="input-attach-button" aria-label="添加附件">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                      </button>
+                    </div>
+                    <div class="nova-input-toolbar-right">
+                      <div class="input-pill-slot">
+                        <button type="button" class="input-toolbar-control input-pill model-picker-trigger input-model-primary">
+                          <span class="model-picker-logo" style="width:15px;height:15px;border-radius:4px;background:linear-gradient(135deg,#8b5cf6,#6366f1);display:inline-block"></span>
+                          <span class="input-pill-label">mimo-v2.6-pro</span>
+                          <svg class="input-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                        <div class="model-picker-popover nova-surface-elevated" id="model-pop" style="display:none">
+                          <div class="model-picker-provider">MODEL</div>
+                          <button type="button" class="model-picker-option model-picker-option-row model-picker-option-active"><span class="model-picker-option-main"><span class="model-picker-logo"></span><span class="model-picker-option-name">mimo-v2.6-pro</span></span><span class="model-picker-context">256K</span></button>
+                          <button type="button" class="model-picker-option model-picker-option-row"><span class="model-picker-option-main"><span class="model-picker-logo"></span><span class="model-picker-option-name">claude-opus-4-8</span></span><span class="model-picker-context">1M</span></button>
+                        </div>
+                      </div>
+                      <div class="input-pill-slot">
+                        <button type="button" class="input-toolbar-control input-pill model-picker-trigger">
+                          <svg class="input-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/></svg>
+                          <span class="input-pill-label">Reasoning</span>
+                          <svg class="input-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                      </div>
+                      <div class="input-pill-slot input-pill-slot-project">
+                        <button type="button" class="input-toolbar-control input-pill project-picker-trigger">
+                          <svg class="input-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="3" r="2"/><path d="M6 5v12"/><circle cx="6" cy="19" r="2"/><path d="M18 6a6 6 0 0 1-6 6H6"/><circle cx="18" cy="4" r="2"/></svg>
+                          <span class="input-pill-label">共用目录</span>
+                          <svg class="input-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                      </div>
+                      <div class="input-pill-slot">
+                        <button type="button" class="input-toolbar-control input-pill model-picker-trigger">
+                          <svg class="input-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                          <span class="input-pill-label">Tools</span>
+                          <svg class="input-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                      </div>
+                      <button type="button" class="input-action-button input-send-button" id="send" disabled aria-label="发送消息">
+                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const p = new URLSearchParams(location.search);
+      const theme = p.get("theme") || "arctic-dawn";
+      const custom = p.get("custom") || "true";
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme === "arctic-dawn" ? "light" : "dark";
+      document.getElementById("root-shell").dataset.customBackground = custom;
+      if (p.get("nogb") === "1") document.querySelectorAll(".bg-image,.bg-veil,.bg-dark").forEach(e => e.remove());
+      if (p.get("focus") === "1") document.getElementById("ta").focus();
+      if (p.get("multi") === "1") {
+        const ta = document.getElementById("ta");
+        ta.value = "第一行内容\n第二行内容\n第三行内容\n第四行内容\n第五行内容\n第六行内容\n第七行";
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 148) + "px";
+        document.getElementById("send").disabled = false;
+      }
+      if (p.get("menu") === "1") {
+        const popover = document.getElementById("model-pop");
+        popover.style.display = "";
+        requestAnimationFrame(() => popover.classList.add("composer-menu-visible"));
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            popover.classList.remove("composer-menu-visible");
+            popover.classList.add("composer-menu-closing");
+          }
+        });
+      }
+      if (p.get("text") === "1") { document.getElementById("send").disabled = false; document.getElementById("ta").value = "帮我看看这个仓库的结构"; }
+    </script>
+    <script type="module">
+      import { resizeComposerTextarea } from "/src/components/layout/composer-resize.ts";
+      const textarea = document.getElementById("ta");
+      const measure = document.getElementById("ta-measure");
+      const resize = () => {
+        measure.textContent = `${textarea.value || "\u200b"}\u200b`;
+        resizeComposerTextarea(textarea, measure);
+      };
+      textarea.addEventListener("input", resize);
+      const shell = document.querySelector(".composer-shell");
+      let width = shell.clientWidth;
+      new ResizeObserver(() => {
+        if (shell.clientWidth !== width) {
+          width = shell.clientWidth;
+          resize();
+        }
+      }).observe(shell);
+      resize();
+    </script>
+  </body>
+</html>
