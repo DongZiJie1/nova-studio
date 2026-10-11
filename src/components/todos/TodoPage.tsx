@@ -1,13 +1,14 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   Minus,
   Network,
@@ -1067,7 +1068,14 @@ function CreateTodoModal({
     topic: "",
     ...seed,
   });
+  const formRef = useRef(form);
+  const updateForm = (next: CreateTodoInput) => {
+    formRef.current = next;
+    setForm(next);
+  };
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [composingTitle, setComposingTitle] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1078,21 +1086,26 @@ function CreateTodoModal({
   }, [onClose, saving]);
 
   const submit = async () => {
-    if (!form.title.trim() || saving) return;
-    // Commit any in-flight IME composition so the first click sees the real title.
+    if (savingRef.current) return;
+    // Blur commits an active IME composition and any draft tag before reading
+    // the form. The ref is updated synchronously by those input handlers.
     (document.activeElement as HTMLElement | null)?.blur?.();
+    const current = formRef.current;
+    if (!current.title.trim()) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       onCreated(
         await createTodo({
-          ...form,
-          tags: form.tags ?? [],
-          projectPath: form.projectPath || undefined,
-          dueAt: form.dueAt || undefined,
+          ...current,
+          tags: current.tags ?? [],
+          projectPath: current.projectPath || undefined,
+          dueAt: current.dueAt || undefined,
         }),
       );
     } catch (reason) {
       onError(String(reason));
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -1138,7 +1151,12 @@ function CreateTodoModal({
               autoFocus
               value={form.title}
               maxLength={120}
-              onChange={(event) => setForm({ ...form, title: event.target.value })}
+              onChange={(event) => updateForm({ ...formRef.current, title: event.target.value })}
+              onCompositionStart={() => setComposingTitle(true)}
+              onCompositionEnd={(event) => {
+                updateForm({ ...formRef.current, title: event.currentTarget.value });
+                setComposingTitle(false);
+              }}
               placeholder="需要完成什么？"
             />
           </label>
@@ -1150,25 +1168,25 @@ function CreateTodoModal({
               value={form.description}
               maxLength={50000}
               rows={4}
-              onChange={(event) => setForm({ ...form, description: event.target.value })}
+              onChange={(event) => updateForm({ ...formRef.current, description: event.target.value })}
               placeholder="补充背景、目标或验收要求…"
             />
           </label>
           <div className="todo-modal-grid">
             <div className="todo-date-field-label">
               <span>截止日期</span>
-              <TodoDateField value={form.dueAt ?? ""} onChange={(dueAt) => setForm({ ...form, dueAt })} />
+              <TodoDateField value={form.dueAt ?? ""} onChange={(dueAt) => updateForm({ ...formRef.current, dueAt })} />
             </div>
           </div>
           <TopicField
             items={items}
             topic={form.topic || form.tags?.[0] || ""}
-            onChange={(topic) => setForm({ ...form, topic })}
+            onChange={(topic) => updateForm({ ...formRef.current, topic })}
           />
           <TodoTagField
             tags={form.tags ?? []}
             suggestions={tagSuggestions}
-            onChange={(tags) => setForm({ ...form, tags })}
+            onChange={(tags) => updateForm({ ...formRef.current, tags })}
           />
           <div className="todo-date-field-label">
             <span>所属项目</span>
@@ -1187,7 +1205,7 @@ function CreateTodoModal({
                   icon: <FolderKanban className="todo-property-leading-icon" size={14} />,
                 })),
               ]}
-              onChange={(projectPath) => setForm({ ...form, projectPath })}
+              onChange={(projectPath) => updateForm({ ...formRef.current, projectPath })}
             />
           </div>
         </div>
@@ -1199,7 +1217,7 @@ function CreateTodoModal({
           <button
             type="button"
             className="todo-primary-button"
-            disabled={saving || !form.title.trim()}
+            disabled={saving || (!form.title.trim() && !composingTitle)}
             onMouseDown={(event) => {
               // Don't let the active input blur on mousedown — that swallows the
               // click when an IME composition is open (first click feels dead).
@@ -1299,6 +1317,10 @@ function TodoDetail({
     projectPath !== (todo.projectPath ?? "") ||
     dueAt !== (todo.dueAt?.slice(0, 10) ?? "");
   const draft: TodoDraft = { id: todo.id, title, description, status, priority, tags, projectPath, dueAt, topic };
+  const draftRef = useRef(draft);
+  useLayoutEffect(() => {
+    draftRef.current = draft;
+  });
 
   return (
     <aside
@@ -1499,7 +1521,11 @@ function TodoDetail({
                 className="todo-nova-button"
                 disabled={busy || !title.trim()}
                 title="交给 Nova 处理（未保存的修改会先保存）"
-                onClick={() => onRun(draft)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  flushSync(() => (document.activeElement as HTMLElement | null)?.blur?.());
+                  onRun(draftRef.current);
+                }}
               >
                 <Sparkles size={14} />
                 Nova 协作
@@ -1510,7 +1536,12 @@ function TodoDetail({
             type="button"
             className="todo-primary-button"
             disabled={busy || !dirty || !title.trim()}
-            onClick={() => void onSave(draft)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              // Commit a focused tag or IME input before reading the draft.
+              flushSync(() => (document.activeElement as HTMLElement | null)?.blur?.());
+              void onSave(draftRef.current);
+            }}
           >
             {busy ? <LoaderCircle className="todo-spinner" size={15} /> : <Check size={15} />}
             保存更改
