@@ -11693,6 +11693,13 @@ body {
   pointer-events: none;
 }
 
+/* Protect transcript text locally while keeping the rest of a photo bright.
+   The center of the reading column gets the contrast the old full-window
+   overlay supplied; the scene and sidebar retain their original colours. */
+[data-custom-background="true"] .studio-main-has-messages::before {
+  background: radial-gradient(ellipse 64% 92% at 50% 48%, rgba(5, 8, 14, 0.34), rgba(5, 8, 14, 0.16) 68%, transparent 100%);
+}
+
 /* The photo contrast veil must not tint the default light scene grey. */
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-main::before {
   content: none;

@@ -131,7 +131,9 @@ export const Background = memo(function Background() {
           <div
             className="absolute inset-0"
             style={{
-              background: "linear-gradient(180deg, rgba(8,12,20,0.46), rgba(8,12,20,0.52))",
+              // Keep the scene vivid. The transcript has its own local contrast
+              // veil, so the whole window does not need a heavy dark wash.
+              background: "linear-gradient(180deg, rgba(8,12,20,0.25), rgba(8,12,20,0.32))",
             }}
           />
         </>
