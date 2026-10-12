@@ -11408,10 +11408,12 @@ body {
   text-shadow: none;
 }
 
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-workspace-heading,
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-settings-button,
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-collapse-button {
-  color: #9ca5b7;
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-workspace-heading {
+  color: var(--sidebar-muted);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] :is(.sidebar-settings-button, .sidebar-collapse-button) {
+  color: var(--sidebar-copy);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-new-session {
@@ -11445,7 +11447,7 @@ body {
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar .project-agent-count,
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-project-count {
-  color: #aab8e8;
+  color: var(--sidebar-muted);
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.065);
   box-shadow: none;
@@ -15761,6 +15763,27 @@ body {
   border-right-color: rgba(215, 231, 255, 0.14);
   background: var(--scene-shell-surface);
   box-shadow: 3px 0 16px rgba(4, 9, 22, 0.08), inset -1px 0 rgba(235, 243, 255, 0.055);
+}
+
+/* Keep navigation legible over bright areas of a custom scene. */
+[data-custom-background="true"] .studio-sidebar {
+  --sidebar-heading: #f8faff;
+  --sidebar-copy: rgba(248, 250, 255, 0.96);
+  --sidebar-muted: rgba(237, 244, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(5, 10, 22, 0.42);
+}
+
+[data-custom-background="true"] .studio-sidebar :is(.settings-category-button, .settings-back-button, .sidebar-collapse-button, .sidebar-settings-button) {
+  color: var(--sidebar-copy);
+}
+
+[data-custom-background="true"] .studio-sidebar :is(.project-agents-toggle, .sidebar-nav-row-child) {
+  color: var(--sidebar-muted);
+}
+
+[data-custom-background="true"] .studio-sidebar :is(.settings-category-button-active, .sidebar-nav-row-child.sidebar-nav-row-active),
+[data-custom-background="true"] .studio-sidebar :is(.settings-category-button, .settings-back-button, .sidebar-collapse-button, .project-agents-toggle, .sidebar-nav-row-child):hover {
+  color: var(--sidebar-heading);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .sidebar-new-chat {
