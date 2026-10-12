@@ -3579,7 +3579,7 @@ export function AppShell() {
                 <nav className="sidebar-nav" aria-label="快捷入口">
                   <button
                     type="button"
-                    className="sidebar-nav-row"
+                    className="sidebar-nav-row sidebar-new-chat"
                     onClick={() => openNewSessionComposer()}
                   >
                     <span className="sidebar-nav-icon">

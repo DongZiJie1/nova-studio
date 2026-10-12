@@ -15464,29 +15464,38 @@ body {
   }
 }
 
-/* Sidebar material and motion. The rail is the quiet foundation beneath the
-   composer; only interactive rows receive a brighter glass surface. */
+/* One frosted pane samples the full-window scene in Background.tsx. Keep the
+   scrollable content and footer transparent so they do not hide that scene. */
 .studio-sidebar {
   --sidebar-ease: var(--nova-ease-fluid);
-  --sidebar-hover: var(--nova-state-hover);
-  --sidebar-active: var(--nova-state-active);
-  --sidebar-edge: var(--nova-state-edge);
+  --sidebar-hover: rgba(185, 205, 236, 0.09);
+  --sidebar-active: rgba(155, 185, 225, 0.18);
+  --sidebar-edge: rgba(232, 241, 255, 0.11);
   --sidebar-heading: var(--nova-foundation-heading);
-  --sidebar-copy: var(--nova-foundation-copy);
-  --sidebar-muted: var(--nova-foundation-muted);
+  --sidebar-copy: rgba(239, 244, 255, 0.9);
+  --sidebar-muted: rgba(209, 222, 242, 0.67);
   color: var(--sidebar-copy);
   width: 268px;
   min-width: 0;
-  border-right: 1px solid var(--nova-foundation-edge);
-  background: var(--nova-foundation-surface);
-  box-shadow: var(--nova-foundation-shadow);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  border-right: 1px solid rgba(215, 231, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
+  box-shadow: 3px 0 16px rgba(4, 9, 22, 0.08), inset -1px 0 rgba(235, 243, 255, 0.055);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
   transition: width var(--nova-motion-collapse) var(--sidebar-ease);
 }
 
 .studio-sidebar::after {
-  content: none;
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  height: 84px;
+  border: 0;
+  background: linear-gradient(180deg, rgba(221, 237, 255, 0.075), transparent);
+  pointer-events: none;
 }
 
 .studio-sidebar.studio-sidebar-collapsed {
@@ -15685,10 +15694,36 @@ body {
 }
 
 .studio-sidebar .sidebar-footer {
-  border-top-color: rgba(197, 211, 248, 0.08);
+  border-top-color: rgba(211, 229, 255, 0.105);
+  background: linear-gradient(180deg, rgba(38, 55, 81, 0.045), rgba(17, 29, 48, 0.12));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.studio-sidebar .sidebar-new-chat {
+  border: 1px solid rgba(226, 239, 255, 0.1);
+  background: linear-gradient(180deg, rgba(219, 234, 255, 0.11), rgba(172, 201, 240, 0.055));
+  box-shadow: inset 0 1px 0 rgba(240, 248, 255, 0.12);
+}
+
+.studio-sidebar .sidebar-new-chat:hover {
+  border-color: rgba(230, 242, 255, 0.21);
+  background: linear-gradient(180deg, rgba(224, 239, 255, 0.18), rgba(177, 205, 239, 0.09));
+  box-shadow: inset 0 1px 0 rgba(247, 251, 255, 0.2);
+}
+
+.studio-sidebar :is(.sidebar-nav-row-active, .sidebar-settings-button-active, .settings-category-button-active, .agent-card-active),
+.studio-sidebar :is(.sidebar-nav-row-active, .sidebar-settings-button-active, .settings-category-button-active, .agent-card-active):hover {
+  background: linear-gradient(105deg, rgba(184, 211, 246, 0.21), rgba(135, 170, 215, 0.105));
+  box-shadow: inset 0 1px 0 rgba(239, 246, 255, 0.15);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar {
+  --sidebar-hover: rgba(65, 100, 162, 0.08);
+  --sidebar-active: rgba(76, 110, 191, 0.14);
+  --sidebar-edge: rgba(255, 255, 255, 0.42);
+  --sidebar-copy: var(--nova-foundation-copy);
+  --sidebar-muted: var(--nova-foundation-muted);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-right-color: var(--nova-foundation-edge);
@@ -15697,11 +15732,26 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-right-color: var(--nova-foundation-edge);
-  background: var(--nova-foundation-surface);
-  box-shadow: var(--nova-foundation-shadow);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
+  border-right-color: rgba(215, 231, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
+  box-shadow: 3px 0 16px rgba(4, 9, 22, 0.08), inset -1px 0 rgba(235, 243, 255, 0.055);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .sidebar-new-chat {
+  border-color: rgba(91, 119, 162, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(223, 235, 251, 0.42));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-theme="midnight"] .studio-sidebar,
+  [data-custom-background="true"] .studio-sidebar {
+    background: linear-gradient(180deg, rgba(21, 30, 49, 0.95), rgba(12, 20, 35, 0.97));
+  }
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar > .sidebar-collapsed-nav {
