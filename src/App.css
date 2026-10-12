@@ -5231,16 +5231,17 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-page {
-  background: rgba(239, 246, 255, 0.76);
+  background: var(--nova-foundation-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
-[data-custom-background="true"] .todo-page {
+[data-custom-background="true"] .todo-page,
+:root[data-theme="midnight"] [data-custom-background="false"] .todo-page {
   color: #dce3ee;
-  background:
-    linear-gradient(110deg, rgba(8, 12, 20, 0.3), rgba(8, 12, 20, 0.18) 55%, rgba(8, 12, 20, 0.28)),
-    rgba(10, 15, 24, 0.18);
-  backdrop-filter: blur(16px) saturate(128%);
-  -webkit-backdrop-filter: blur(16px) saturate(128%);
+  background: var(--scene-shell-surface);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
 }
 
 .todo-page {
@@ -11700,6 +11701,14 @@ body {
   background: radial-gradient(ellipse 64% 92% at 50% 48%, rgba(5, 8, 14, 0.34), rgba(5, 8, 14, 0.16) 68%, transparent 100%);
 }
 
+/* Todo and schedule pages already have a glass pane, so the chat-only
+   contrast layers must not darken or blur just the right half. */
+.studio-main-task-page::before,
+.studio-main-task-page::after,
+[data-custom-background="true"] .studio-main-task-page::before {
+  content: none;
+}
+
 /* The photo contrast veil must not tint the default light scene grey. */
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-main::before {
   content: none;
@@ -12093,12 +12102,21 @@ body {
 /* Scene-aware local materials. These values tint very lightly and let the
    backdrop provide the dominant colour instead of painting a fixed card. */
 [data-custom-background="true"] {
+  --scene-shell-surface:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
   --scene-panel-film: rgba(18, 24, 35, 0.22);
   --scene-panel-highlight: rgba(255, 255, 255, 0.045);
   --scene-local-film: rgba(255, 255, 255, 0.035);
   --scene-local-border: rgba(255, 255, 255, 0.09);
   --model-picker-film: rgba(18, 24, 35, 0.54);
   --model-picker-item-film: rgba(255, 255, 255, 0.075);
+}
+
+:root[data-theme="midnight"] [data-custom-background="false"] {
+  --scene-shell-surface:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] {
@@ -15742,9 +15760,7 @@ body {
   backdrop-filter: var(--nova-filter-floating);
   -webkit-backdrop-filter: var(--nova-filter-floating);
   border-right-color: rgba(215, 231, 255, 0.14);
-  background:
-    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
-    rgba(12, 18, 29, 0.19);
+  background: var(--scene-shell-surface);
   box-shadow: 3px 0 16px rgba(4, 9, 22, 0.08), inset -1px 0 rgba(235, 243, 255, 0.055);
 }
 
@@ -15756,7 +15772,9 @@ body {
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root[data-theme="midnight"] .studio-sidebar,
-  [data-custom-background="true"] .studio-sidebar {
+  :root[data-theme="midnight"] [data-custom-background="false"] .todo-page,
+  [data-custom-background="true"] .studio-sidebar,
+  [data-custom-background="true"] .todo-page {
     background: linear-gradient(180deg, rgba(21, 30, 49, 0.95), rgba(12, 20, 35, 0.97));
   }
 }
