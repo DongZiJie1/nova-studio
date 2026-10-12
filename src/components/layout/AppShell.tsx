@@ -3722,7 +3722,7 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${todosOpen || schedulesOpen ? "studio-main-task-page" : ""} relative w-full flex flex-col overflow-hidden`}>
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${todosOpen || schedulesOpen || settingsOpen ? "studio-main-glass-page" : ""} relative w-full flex flex-col overflow-hidden`}>
           {todosOpen && <TodoPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onRunTodo={handleRunTodo} onOpenSession={(todo) => { if (todo.agentId) handleSelectAgent(todo.agentId); }} />}
           {schedulesOpen && (
             <SchedulePage
