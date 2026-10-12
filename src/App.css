@@ -15745,12 +15745,12 @@ body {
 }
 
 .studio-sidebar .sidebar-new-chat {
-  border: 1px solid rgba(226, 239, 255, 0.1);
-  background: linear-gradient(180deg, rgba(219, 234, 255, 0.11), rgba(172, 201, 240, 0.055));
-  box-shadow: inset 0 1px 0 rgba(240, 248, 255, 0.12);
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
-.studio-sidebar .sidebar-new-chat:hover {
+.studio-sidebar .sidebar-new-chat:is(:hover, :focus-visible) {
   border-color: rgba(230, 242, 255, 0.21);
   background: linear-gradient(180deg, rgba(224, 239, 255, 0.18), rgba(177, 205, 239, 0.09));
   box-shadow: inset 0 1px 0 rgba(247, 251, 255, 0.2);
@@ -15805,8 +15805,14 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .sidebar-new-chat {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .sidebar-new-chat:is(:hover, :focus-visible) {
   border-color: rgba(91, 119, 162, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(223, 235, 251, 0.42));
+  background: var(--sidebar-hover);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
