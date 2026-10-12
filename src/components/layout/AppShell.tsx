@@ -1931,7 +1931,6 @@ export function AppShell() {
   const setDefaultProvider = useSettingsStore((s) => s.setDefaultProvider);
   const setDefaultToolPermissionMode = useSettingsStore((s) => s.setDefaultToolPermissionMode);
   const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
-  const setWorktreeEnabled = useSettingsStore((s) => s.setWorktreeEnabled);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
@@ -1995,13 +1994,9 @@ export function AppShell() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [permissionPickerOpen, setPermissionPickerOpen] = useState(false);
-  const [worktreePickerOpen, setWorktreePickerOpen] = useState(false);
   const projectPickerPresence = useMenuPresence(projectPickerOpen);
   const modelPickerPresence = useMenuPresence(modelPickerOpen);
   const permissionPickerPresence = useMenuPresence(permissionPickerOpen);
-  const worktreePickerPresence = useMenuPresence(worktreePickerOpen);
-  // Whether the project staged for the next agent is a git repo (worktrees need one).
-  const [worktreeAvailable, setWorktreeAvailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
@@ -2043,11 +2038,9 @@ export function AppShell() {
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const permissionPickerRef = useRef<HTMLDivElement>(null);
-  const worktreePickerRef = useRef<HTMLDivElement>(null);
   const projectTriggerRef = useRef<HTMLButtonElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const permissionTriggerRef = useRef<HTMLButtonElement>(null);
-  const worktreeTriggerRef = useRef<HTMLButtonElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -2231,22 +2224,6 @@ export function AppShell() {
   const inputProjectCwd = activeAgent?.projectCwd ?? activeAgent?.cwd ?? welcomeProjectCwd;
   const inputProjectName =
     projectNames[inputProjectCwd] ?? inputProjectCwd.split(/[\\/]/).filter(Boolean).pop() ?? inputProjectCwd;
-  // The worktree switch applies to the next agent, so it is only offered before one exists.
-  const worktreeToggleVisible = !activeAgent;
-  useEffect(() => {
-    if (!worktreeToggleVisible) return;
-    let cancelled = false;
-    void checkWorktreeAvailable(welcomeProjectCwd)
-      .then((available) => {
-        if (!cancelled) setWorktreeAvailable(available);
-      })
-      .catch(() => {
-        if (!cancelled) setWorktreeAvailable(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [worktreeToggleVisible, welcomeProjectCwd]);
   const agentSenderLabels = useMemo(
     () => Object.fromEntries(agents.map((agent) => [
       agent.id,
@@ -2763,35 +2740,22 @@ export function AppShell() {
   }, [permissionPickerOpen]);
 
   useEffect(() => {
-    if (!worktreePickerOpen) return;
-    const closePicker = (event: MouseEvent) => {
-      if (!worktreePickerRef.current?.contains(event.target as Node) && !worktreeTriggerRef.current?.contains(event.target as Node)) {
-        setWorktreePickerOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", closePicker);
-    return () => document.removeEventListener("mousedown", closePicker);
-  }, [worktreePickerOpen]);
-
-  useEffect(() => {
-    if (!modelPickerOpen && !worktreePickerOpen && !permissionPickerOpen && !projectPickerOpen) return;
+    if (!modelPickerOpen && !permissionPickerOpen && !projectPickerOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
       const trigger = modelPickerOpen ? modelTriggerRef.current
-        : worktreePickerOpen ? worktreeTriggerRef.current
         : permissionPickerOpen ? permissionTriggerRef.current
         : projectTriggerRef.current;
       setModelPickerOpen(false);
-      setWorktreePickerOpen(false);
       setPermissionPickerOpen(false);
       setProjectPickerOpen(false);
       trigger?.focus();
     };
     document.addEventListener("keydown", closeOnEscape, true);
     return () => document.removeEventListener("keydown", closeOnEscape, true);
-  }, [modelPickerOpen, worktreePickerOpen, permissionPickerOpen, projectPickerOpen]);
+  }, [modelPickerOpen, permissionPickerOpen, projectPickerOpen]);
 
   const pendingPermission = activeAgent?.pendingPermission ?? null;
   const pendingPermissionAgentId = activeAgent?.id ?? null;
@@ -3029,11 +2993,12 @@ export function AppShell() {
       // Spawn agent if none exists
       if (!agentId) {
         const cwd = welcomeProjectCwd;
+        const canUseWorktree = worktreeEnabled ? await checkWorktreeAvailable(cwd).catch(() => false) : false;
         const info = await spawnAgent(
           cwd,
           defaultModel || undefined,
           defaultProvider || undefined,
-          worktreeEnabled && worktreeAvailable ? true : undefined,
+          worktreeEnabled && canUseWorktree ? true : undefined,
         );
 
         // The homepage policy belongs to the next session. Queue it before the
@@ -4591,76 +4556,6 @@ export function AppShell() {
                                 </button>
                               );
                             })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {/* Worktree isolation - applies to the next agent in this project */}
-                    {worktreeToggleVisible && (
-                      <div className="input-pill-slot">
-                        <button
-                          ref={worktreeTriggerRef}
-                          type="button"
-                          className={`input-toolbar-control input-pill model-picker-trigger ${worktreePickerOpen ? "model-picker-trigger-open" : ""}`}
-                          onClick={() => setWorktreePickerOpen((open) => !open)}
-                          title={
-                            worktreeAvailable
-                              ? "让下一个 Agent 在自己的 git worktree 里工作"
-                              : "当前项目不是 git 仓库，无法使用 worktree 隔离"
-                          }
-                          aria-haspopup="listbox"
-                          aria-expanded={worktreePickerOpen}
-                        >
-                          <GitBranch size={13} className="input-pill-icon" />
-                          {/* Both labels are four characters wide, so toggling the mode does not
-                              resize the chip and shift the chips to its left. */}
-                          <span className="input-pill-label">
-                            {worktreeEnabled && worktreeAvailable ? "独立目录" : "共用目录"}
-                          </span>
-                          <ChevronDown size={12} className="input-pill-chevron" />
-                        </button>
-                        {worktreePickerPresence.rendered && (
-                          <div
-                            ref={worktreePickerRef}
-                            className={`model-picker-popover model-picker-popover-sm${worktreePickerPresence.visible ? " composer-menu-visible" : ""}${worktreePickerOpen ? "" : " composer-menu-closing"}`}
-                            role="listbox"
-                            onKeyDown={handleComposerMenuKeyDown}
-                            inert={!worktreePickerOpen}
-                            aria-hidden={!worktreePickerOpen}
-                          >
-                            <div className="model-picker-provider">
-                              新 Agent 的工作目录
-                            </div>
-                            <button
-                              type="button"
-                              className={`model-picker-option model-picker-option-stack ${!worktreeEnabled || !worktreeAvailable ? "model-picker-option-active" : ""}`}
-                              onClick={() => {
-                                setWorktreeEnabled(false);
-                                setWorktreePickerOpen(false);
-                                worktreeTriggerRef.current?.focus();
-                              }}
-                            >
-                              <span>共用项目目录</span>
-                              <span className="model-picker-context">默认。改动直接写进项目</span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!worktreeAvailable}
-                              className={`model-picker-option model-picker-option-stack ${worktreeEnabled && worktreeAvailable ? "model-picker-option-active" : ""}${worktreeAvailable ? "" : " model-picker-option-dimmed"}`}
-                              onClick={() => {
-                                setWorktreeEnabled(true);
-                                setWorktreePickerOpen(false);
-                                worktreeTriggerRef.current?.focus();
-                              }}
-                            >
-                              <span>独立 git worktree</span>
-                              <span className="model-picker-context">并行 Agent 互不覆盖，改完再决定接受或丢弃</span>
-                            </button>
-                            {!worktreeAvailable && (
-                              <div className="model-picker-hint">
-                                当前项目不是 git 仓库，无法使用 worktree 隔离
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>
