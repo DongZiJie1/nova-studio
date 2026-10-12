@@ -4,8 +4,10 @@ import { useUiStore } from "../../stores/ui-store";
 export const Background = memo(function Background() {
   const customBgUrl = useUiStore((s) => s.customBgUrl);
   const backgroundBlur = useUiStore((s) => s.backgroundBlur);
+  const backgroundDim = useUiStore((s) => s.backgroundDim);
   const theme = useUiStore((s) => s.theme);
   const isDawn = theme === "arctic-dawn";
+  const dim = backgroundDim / 100;
 
   return (
     <div className="app-background-layer fixed inset-0 overflow-hidden">
@@ -125,15 +127,15 @@ export const Background = memo(function Background() {
           <div
             className="absolute inset-0"
             style={{
-              background: "radial-gradient(ellipse 66% 58% at 50% 48%, transparent 0%, rgba(5,8,14,0.035) 58%, rgba(5,8,14,0.16) 100%)",
+              background: `radial-gradient(ellipse 66% 58% at 50% 48%, transparent 0%, rgba(5,8,14,${dim * 0.117}) 58%, rgba(5,8,14,${dim * 0.533}) 100%)`,
             }}
           />
           <div
             className="absolute inset-0"
             style={{
-              // Keep the scene vivid. The transcript has its own local contrast
-              // veil, so the whole window does not need a heavy dark wash.
-              background: "linear-gradient(180deg, rgba(8,12,20,0.25), rgba(8,12,20,0.32))",
+              // The user controls the scene darkness; transcript contrast is
+              // handled separately over the reading area.
+              background: `linear-gradient(180deg, rgba(8,12,20,${dim * 0.833}), rgba(8,12,20,${dim * 1.067}))`,
             }}
           />
         </>

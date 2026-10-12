@@ -1938,6 +1938,8 @@ export function AppShell() {
   const setCustomBgUrl = useUiStore((s) => s.setCustomBgUrl);
   const backgroundBlur = useUiStore((s) => s.backgroundBlur);
   const setBackgroundBlur = useUiStore((s) => s.setBackgroundBlur);
+  const backgroundDim = useUiStore((s) => s.backgroundDim);
+  const setBackgroundDim = useUiStore((s) => s.setBackgroundDim);
 
   const [input, setInput] = useState("");
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
@@ -3831,6 +3833,23 @@ export function AppShell() {
                         aria-label="背景整体模糊强度"
                       />
                       <span className="settings-blur-scale"><span>清晰</span><span>模糊</span></span>
+                    </label>
+                    <label className={`settings-blur-control ${customBgUrl ? "" : "settings-blur-control-disabled"}`}>
+                      <span className="settings-blur-label">
+                        <span>背景暗度</span>
+                        <output>{backgroundDim}%</output>
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="70"
+                        step="1"
+                        value={backgroundDim}
+                        disabled={!customBgUrl}
+                        onChange={(event) => setBackgroundDim(Number(event.target.value))}
+                        aria-label="背景暗度"
+                      />
+                      <span className="settings-blur-scale"><span>明亮</span><span>深色</span></span>
                     </label>
                   </div>
                   </>
