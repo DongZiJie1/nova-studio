@@ -4108,10 +4108,10 @@ export function AppShell() {
                   )}
                 </h2>
                 <p
+                  className="hero-tagline"
                   style={{
                     marginTop: 22,
                     fontSize: "clamp(15px, 1.15vw, 18px)",
-                    color: "var(--color-text-secondary)",
                     letterSpacing: "0.01em",
                   }}
                 >

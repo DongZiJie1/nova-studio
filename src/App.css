@@ -766,6 +766,15 @@ body {
     drop-shadow(0 0 44px color-mix(in srgb, var(--color-accent-end) 28%, transparent));
 }
 
+.hero-tagline {
+  color: var(--color-text-secondary);
+}
+
+[data-custom-background="true"] .hero-tagline {
+  color: #f3f5fa;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), 0 3px 12px rgba(0, 0, 0, 0.55);
+}
+
 .nova-input {
   position: relative;  border: 1px solid var(--input-border);  transition:
     border-color 0.2s ease,
@@ -5242,6 +5251,18 @@ body {
   background: var(--scene-shell-surface);
   backdrop-filter: var(--nova-filter-floating);
   -webkit-backdrop-filter: var(--nova-filter-floating);
+}
+
+/* Keep the photo visible while giving text a consistent local contrast. */
+[data-custom-background="true"] .todo-page {
+  --color-text-primary: #f4f6fb;
+  --color-text-secondary: #d1d9e7;
+  --color-text-muted: #b4bfd0;
+  --text-heading: #f4f6fb;
+  --text-placeholder: #bdc8d9;
+  --todo-panel: rgba(18, 23, 34, 0.42);
+  --todo-film: rgba(24, 30, 43, 0.48);
+  --todo-border: rgba(220, 231, 249, 0.18);
 }
 
 .todo-page {
@@ -15105,7 +15126,7 @@ body {
 
 :root[data-theme] [data-custom-background="true"] .nova-input {
   --c-text: #eef1f7;
-  --c-placeholder: #9aa3b5;
+  --c-placeholder: #e1e6f0;
   --c-scrollbar: rgba(255, 255, 255, 0.16);
   --c-glass-bg: var(--nova-floating-surface);
   --c-glass-shadow: var(--nova-floating-shadow);
@@ -15175,7 +15196,12 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:hover {
-  --c-edge: rgba(90, 122, 168, 0.26);
+  --c-edge: rgba(79, 125, 243, 0.48);
+  --c-glass-shadow:
+    0 30px 68px -25px rgba(49, 83, 142, 0.29),
+    0 0 0 3px rgba(79, 125, 243, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(70, 101, 145, 0.12);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:focus-within {
@@ -15273,6 +15299,11 @@ body {
   --c-rim-corner: rgba(231, 240, 255, 0.38);
 }
 
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:hover:not(:focus-within) {
+  --c-rim-top: rgba(94, 139, 234, 0.66);
+  --c-rim-corner: rgba(94, 139, 234, 0.38);
+}
+
 :root[data-theme] [data-custom-background] .nova-input:focus-within {
   --c-rim-top: rgba(202, 211, 255, 0.82);
   --c-rim-corner: rgba(179, 193, 255, 0.46);
@@ -15352,7 +15383,7 @@ body {
   font-weight: 400;
 }
 
-.nova-input:focus-within .nova-input-textarea::placeholder { opacity: 0.72; }
+.nova-input:focus-within .nova-input-textarea::placeholder { opacity: 1; }
 
 /* ── Paint the capsules from the same material ─────────────────────────── */
 

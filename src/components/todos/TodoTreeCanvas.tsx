@@ -163,14 +163,16 @@ function TopicTree({
                 {overdueCount} 逾期
               </span>
             )}
-            <span
-              className={`task-topic-warning-count ${warningCount > 0 ? "task-topic-warning-active" : ""}`}
-              role="status"
-              aria-label={`${label}：${warningCount} 个警告待办`}
-              title={`${warningCount} 个未完成待办将在 10 天内截止`}
-            >
-              {warningCount} 警告
-            </span>
+            {warningCount > 0 && (
+              <span
+                className="task-topic-warning-count task-topic-warning-active"
+                role="status"
+                aria-label={`${label}：${warningCount} 个警告待办`}
+                title={`${warningCount} 个未完成待办将在 10 天内截止`}
+              >
+                {warningCount} 警告
+              </span>
+            )}
           </h2>
           <span>
             {completed} / {items.length} 已完成
