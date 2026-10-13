@@ -158,9 +158,11 @@ function ProgressComposer({
 }) {
   // Follow the timeline upward: open at previous+10 (or previous when already high).
   const [content, setContent] = useState("");
+  const contentRef = useRef("");
   const [percent, setPercent] = useState(() => Math.min(100, previousPercent === 0 ? 0 : previousPercent + 10));
   const [submitting, setSubmitting] = useState(false);
-  const trimmed = content.trim();
+  const submittingRef = useRef(false);
+  const [composingText, setComposingText] = useState(false);
 
   return (
     <div className="todo-progress-composer">
@@ -174,7 +176,16 @@ function ProgressComposer({
         maxLength={5000}
         value={content}
         autoFocus
-        onChange={(event) => setContent(event.target.value)}
+        onChange={(event) => {
+          contentRef.current = event.target.value;
+          setContent(event.target.value);
+        }}
+        onCompositionStart={() => setComposingText(true)}
+        onCompositionEnd={(event) => {
+          contentRef.current = event.currentTarget.value;
+          setContent(event.currentTarget.value);
+          setComposingText(false);
+        }}
         placeholder="这次完成了什么？支持 Markdown…"
       />
       <div className="todo-progress-composer-actions">
@@ -184,14 +195,26 @@ function ProgressComposer({
         <button
           type="button"
           className="todo-progress-composer-submit"
-          disabled={busy || submitting || !trimmed}
+          disabled={busy || submitting || (!content.trim() && !composingText)}
+          onMouseDown={(event) => {
+            // Keep the textarea focused so an active IME composition does not
+            // consume the first click while committing its text.
+            event.preventDefault();
+          }}
           onClick={() => {
+            if (submittingRef.current) return;
+            (document.activeElement as HTMLElement | null)?.blur?.();
+            const text = contentRef.current.trim();
+            if (!text) return;
+            submittingRef.current = true;
             void (async () => {
               setSubmitting(true);
               try {
-                await onSubmit(trimmed, percent);
+                await onSubmit(text, percent);
+                contentRef.current = "";
                 setContent("");
               } finally {
+                submittingRef.current = false;
                 setSubmitting(false);
               }
             })();
@@ -218,11 +241,15 @@ function ProgressEntryCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState(entry.content);
+  const contentRef = useRef(entry.content);
   const [percent, setPercent] = useState(() => (hasPercent(entry.percent) ? entry.percent : 0));
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const [composingText, setComposingText] = useState(false);
 
   useEffect(() => {
     setContent(entry.content);
+    contentRef.current = entry.content;
     setPercent(hasPercent(entry.percent) ? entry.percent : 0);
     setEditing(false);
   }, [entry]);
@@ -259,7 +286,16 @@ function ProgressEntryCard({
             rows={3}
             maxLength={5000}
             value={content}
-            onChange={(event) => setContent(event.target.value)}
+            onChange={(event) => {
+              contentRef.current = event.target.value;
+              setContent(event.target.value);
+            }}
+            onCompositionStart={() => setComposingText(true)}
+            onCompositionEnd={(event) => {
+              contentRef.current = event.currentTarget.value;
+              setContent(event.currentTarget.value);
+              setComposingText(false);
+            }}
             autoFocus
           />
           <PercentField value={percent} min={0} onChange={setPercent} defaultStep={5} />
@@ -270,14 +306,25 @@ function ProgressEntryCard({
             <button
               type="button"
               className="todo-progress-composer-submit"
-              disabled={busy || submitting || !content.trim()}
+              disabled={busy || submitting || (!content.trim() && !composingText)}
+              onMouseDown={(event) => {
+                // Match the new-entry button: the first click must save even
+                // while the textarea is composing text.
+                event.preventDefault();
+              }}
               onClick={() => {
+                if (submittingRef.current) return;
+                (document.activeElement as HTMLElement | null)?.blur?.();
+                const text = contentRef.current.trim();
+                if (!text) return;
+                submittingRef.current = true;
                 void (async () => {
                   setSubmitting(true);
                   try {
-                    await onEdit(content.trim(), percent);
+                    await onEdit(text, percent);
                     setEditing(false);
                   } finally {
+                    submittingRef.current = false;
                     setSubmitting(false);
                   }
                 })();

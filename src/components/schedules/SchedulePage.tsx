@@ -29,8 +29,8 @@ import {
 } from "./schedule-rule";
 import { CreateScheduleModal } from "./CreateScheduleModal";
 import { ScheduleDetail } from "./ScheduleDetail";
-import "./schedules.css";
 import "../todos/task-trees.css";
+import "./schedules.css";
 
 interface SchedulePageProps {
   projects: Array<{ path: string; name: string }>;
@@ -110,7 +110,7 @@ export function SchedulePage({ projects, onOpenSession }: SchedulePageProps) {
   const enabledCount = state.items.filter((item) => item.enabled).length;
 
   return (
-    <section className="todo-page task-page">
+    <section className="todo-page task-page schedule-page">
       <header className="task-page-header">
         <div>
           <span className="todo-eyebrow">NOVA SCHEDULES</span>
@@ -189,13 +189,12 @@ export function SchedulePage({ projects, onOpenSession }: SchedulePageProps) {
               >
                 <div className="schedule-row-title">
                   <strong>{task.title}</strong>
-                  <span className={`schedule-chip schedule-chip-${task.lastRunStatus ?? "idle"}`}>
-                    {task.lastRunStatus
-                      ? RUN_STATUS_LABELS[task.lastRunStatus]
-                      : task.enabled
-                        ? "待触发"
-                        : "已停用"}
-                  </span>
+                  {!task.enabled ? <span className="schedule-chip schedule-chip-disabled">已停用</span> : null}
+                  {task.lastRunStatus || task.enabled ? (
+                    <span className={`schedule-chip schedule-chip-${task.lastRunStatus ?? "idle"}`}>
+                      {task.lastRunStatus ? RUN_STATUS_LABELS[task.lastRunStatus] : "待触发"}
+                    </span>
+                  ) : null}
                   <span className="schedule-chip schedule-chip-permission">
                     {PERMISSION_LABELS[task.permissionMode]}
                   </span>

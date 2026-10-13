@@ -766,6 +766,15 @@ body {
     drop-shadow(0 0 44px color-mix(in srgb, var(--color-accent-end) 28%, transparent));
 }
 
+.hero-tagline {
+  color: var(--color-text-secondary);
+}
+
+[data-custom-background="true"] .hero-tagline {
+  color: #f3f5fa;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), 0 3px 12px rgba(0, 0, 0, 0.55);
+}
+
 .nova-input {
   position: relative;  border: 1px solid var(--input-border);  transition:
     border-color 0.2s ease,
@@ -5231,16 +5240,29 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-page {
-  background: rgba(239, 246, 255, 0.76);
+  background: var(--nova-foundation-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
-[data-custom-background="true"] .todo-page {
+[data-custom-background="true"] .todo-page,
+:root[data-theme="midnight"] [data-custom-background="false"] .todo-page {
   color: #dce3ee;
-  background:
-    linear-gradient(110deg, rgba(8, 12, 20, 0.3), rgba(8, 12, 20, 0.18) 55%, rgba(8, 12, 20, 0.28)),
-    rgba(10, 15, 24, 0.18);
-  backdrop-filter: blur(16px) saturate(128%);
-  -webkit-backdrop-filter: blur(16px) saturate(128%);
+  background: var(--scene-shell-surface);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
+}
+
+/* Keep the photo visible while giving text a consistent local contrast. */
+[data-custom-background="true"] .todo-page {
+  --color-text-primary: #f4f6fb;
+  --color-text-secondary: #d1d9e7;
+  --color-text-muted: #b4bfd0;
+  --text-heading: #f4f6fb;
+  --text-placeholder: #bdc8d9;
+  --todo-panel: rgba(18, 23, 34, 0.42);
+  --todo-film: rgba(24, 30, 43, 0.48);
+  --todo-border: rgba(220, 231, 249, 0.18);
 }
 
 .todo-page {
@@ -9834,48 +9856,59 @@ body {
   top: 10px;
   left: 16px;
   display: grid;
-  grid-template-columns: repeat(2, 76px);
-  gap: 3px;
-  padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);}
+  width: 178px;
+  height: 44px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 78%, transparent);
+  border-radius: 12px;
+  color: var(--color-text-primary);
+  font: inherit;
+  cursor: pointer;
+}
 
 .conversation-view-switcher::before {
   content: "";
   position: absolute;
   z-index: 0;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: 76px;
-  border: 1px solid color-mix(in srgb, var(--color-accent-start) 32%, transparent);
-  border-radius: 9px;  transform: translateX(0);  pointer-events: none;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 2);
+  border: 1px solid color-mix(in srgb, var(--color-border-glass) 90%, transparent);
+  border-radius: 9px;
+  pointer-events: none;
+  transition: transform 180ms ease;
 }
 
 .conversation-view-switcher[data-active-view="trajectory"]::before {
-  transform: translateX(79px);
+  transform: translateX(100%);
 }
 
-.conversation-view-switcher button {
+.conversation-view-option {
   position: relative;
   z-index: 1;
   display: flex;
-  height: 30px;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
+  gap: 7px;
   color: var(--color-text-muted);
-  background: transparent;
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: color 180ms ease;
 }
 
-.conversation-view-switcher button:hover,
-.conversation-view-switcher .conversation-view-option-active {
-  color: var(--color-accent-start);
+.conversation-view-switcher[data-active-view="chat"] .conversation-view-option:first-child,
+.conversation-view-switcher[data-active-view="trajectory"] .conversation-view-option:last-child {
+  color: var(--color-text-primary);
+}
+
+.conversation-view-switcher:focus-visible {
+  outline: 2px solid var(--color-accent-start);
+  outline-offset: 3px;
 }
 
 /* ─── Session trajectory ─── */
@@ -10672,15 +10705,18 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] .conversation-view-switcher::before {
-  border-color: rgba(79, 125, 243, 0.28);
-  background: rgba(111, 154, 255, 0.13);
-  box-shadow: 0 4px 18px rgba(79, 125, 243, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  border-color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: 0 4px 14px rgba(48, 72, 108, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
-:root[data-theme="arctic-dawn"] .conversation-view-switcher button,
-:root[data-theme="arctic-dawn"] .conversation-view-switcher button:hover,
-:root[data-theme="arctic-dawn"] .conversation-view-switcher .conversation-view-option-active {
-  color: #111827;
+:root[data-theme="arctic-dawn"] .conversation-view-switcher .conversation-view-option {
+  color: #66758b;
+}
+
+:root[data-theme="arctic-dawn"] .conversation-view-switcher[data-active-view="chat"] .conversation-view-option:first-child,
+:root[data-theme="arctic-dawn"] .conversation-view-switcher[data-active-view="trajectory"] .conversation-view-option:last-child {
+  color: #25334a;
 }
 
 :root[data-theme="arctic-dawn"] .trajectory-node {
@@ -11180,7 +11216,7 @@ body {
 
 .conversation-view-switcher {
   border-color: rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
+  border-radius: 12px;
   background: rgba(20, 26, 38, 0.42);
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(28px) saturate(145%);
@@ -11188,10 +11224,9 @@ body {
 }
 
 .conversation-view-switcher::before {
-  border-color: rgba(202, 210, 255, 0.17);
-  background: linear-gradient(145deg, rgba(154, 169, 255, 0.19), rgba(108, 114, 255, 0.11));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.17);
-  transition: transform 220ms ease-out;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent), rgba(255, 255, 255, 0.12);
+  box-shadow: 0 3px 10px rgba(5, 10, 22, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .conversation-task-summary {
@@ -11407,10 +11442,12 @@ body {
   text-shadow: none;
 }
 
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-workspace-heading,
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-settings-button,
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-collapse-button {
-  color: #9ca5b7;
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-workspace-heading {
+  color: var(--sidebar-muted);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] :is(.sidebar-settings-button, .sidebar-collapse-button) {
+  color: var(--sidebar-copy);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-new-session {
@@ -11444,7 +11481,7 @@ body {
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar .project-agent-count,
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .sidebar-project-count {
-  color: #aab8e8;
+  color: var(--sidebar-muted);
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.065);
   box-shadow: none;
@@ -11466,17 +11503,17 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher::before {
-  border-color: rgba(196, 207, 255, 0.17);
-  background: linear-gradient(145deg, rgba(150, 166, 255, 0.2), rgba(108, 114, 255, 0.12));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent), rgba(255, 255, 255, 0.12);
+  box-shadow: 0 3px 10px rgba(5, 10, 22, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher button {
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher .conversation-view-option {
   color: #8f99ac;
 }
 
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher button:hover,
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher .conversation-view-option-active {
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher[data-active-view="chat"] .conversation-view-option:first-child,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher[data-active-view="trajectory"] .conversation-view-option:last-child {
   color: #dce2f8;
 }
 
@@ -11693,6 +11730,21 @@ body {
   pointer-events: none;
 }
 
+/* Protect transcript text locally while keeping the rest of a photo bright.
+   The center of the reading column gets the contrast the old full-window
+   overlay supplied; the scene and sidebar retain their original colours. */
+[data-custom-background="true"] .studio-main-has-messages::before {
+  background: radial-gradient(ellipse 64% 92% at 50% 48%, rgba(5, 8, 14, 0.34), rgba(5, 8, 14, 0.16) 68%, transparent 100%);
+}
+
+/* Full-page surfaces already have a glass pane, so the chat-only
+   contrast layers must not darken or blur just the right half. */
+.studio-main-glass-page::before,
+.studio-main-glass-page::after,
+[data-custom-background="true"] .studio-main-glass-page::before {
+  content: none;
+}
+
 /* The photo contrast veil must not tint the default light scene grey. */
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-main::before {
   content: none;
@@ -11876,15 +11928,14 @@ body {
   }
 }
 
-/* Settings must stay in the dark Liquid Glass material system when a photo
-   background is active, even if the selected semantic theme is Arctic Dawn. */
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .settings-page {
+/* Settings share the same full-height pane as the sidebar and task pages. */
+[data-custom-background="true"] .settings-page,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .settings-page,
+:root[data-theme="midnight"] [data-custom-background="false"] .settings-page {
   color: #dce3ee;
-  background:
-    linear-gradient(110deg, rgba(8, 12, 20, 0.3), rgba(8, 12, 20, 0.18) 55%, rgba(8, 12, 20, 0.28)),
-    rgba(10, 15, 24, 0.18);
-  backdrop-filter: blur(16px) saturate(128%);
-  -webkit-backdrop-filter: blur(16px) saturate(128%);
+  background: var(--scene-shell-surface);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .settings-page-header h1,
@@ -12019,9 +12070,9 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .settings-page {
-  background: rgba(224, 234, 247, 0.24);
-  backdrop-filter: blur(20px) saturate(128%);
-  -webkit-backdrop-filter: blur(20px) saturate(128%);
+  background: var(--nova-foundation-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .settings-card {
@@ -12086,12 +12137,21 @@ body {
 /* Scene-aware local materials. These values tint very lightly and let the
    backdrop provide the dominant colour instead of painting a fixed card. */
 [data-custom-background="true"] {
+  --scene-shell-surface:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
   --scene-panel-film: rgba(18, 24, 35, 0.22);
   --scene-panel-highlight: rgba(255, 255, 255, 0.045);
   --scene-local-film: rgba(255, 255, 255, 0.035);
   --scene-local-border: rgba(255, 255, 255, 0.09);
   --model-picker-film: rgba(18, 24, 35, 0.54);
   --model-picker-item-film: rgba(255, 255, 255, 0.075);
+}
+
+:root[data-theme="midnight"] [data-custom-background="false"] {
+  --scene-shell-surface:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] {
@@ -13775,6 +13835,24 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
 }
 
+/* Activity names need their own stable surface when a photo sits behind the chat. */
+[data-custom-background="true"] .activity-item .activity-kind {
+  padding: 2px 8px;
+  border: 1px solid rgba(225, 233, 255, 0.3);
+  border-radius: 8px;
+  color: #f5f7ff !important;
+  background: rgba(25, 31, 48, 0.92);
+  box-shadow: 0 1px 5px rgba(8, 12, 25, 0.22);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+[data-custom-background="true"] .thinking-card .activity-kind {
+  border-color: rgba(220, 194, 255, 0.45);
+  color: #ebd8ff !important;
+  background: rgba(43, 28, 65, 0.94);
+}
+
 /* ─── Docked workbench sidebar (file review / temporary chat) ─── */
 
 .conversation-dock {
@@ -15061,7 +15139,7 @@ body {
 
 :root[data-theme] [data-custom-background="true"] .nova-input {
   --c-text: #eef1f7;
-  --c-placeholder: #9aa3b5;
+  --c-placeholder: #e1e6f0;
   --c-scrollbar: rgba(255, 255, 255, 0.16);
   --c-glass-bg: var(--nova-floating-surface);
   --c-glass-shadow: var(--nova-floating-shadow);
@@ -15131,7 +15209,12 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:hover {
-  --c-edge: rgba(90, 122, 168, 0.26);
+  --c-edge: rgba(79, 125, 243, 0.48);
+  --c-glass-shadow:
+    0 30px 68px -25px rgba(49, 83, 142, 0.29),
+    0 0 0 3px rgba(79, 125, 243, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(70, 101, 145, 0.12);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:focus-within {
@@ -15229,6 +15312,11 @@ body {
   --c-rim-corner: rgba(231, 240, 255, 0.38);
 }
 
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .nova-input:hover:not(:focus-within) {
+  --c-rim-top: rgba(94, 139, 234, 0.66);
+  --c-rim-corner: rgba(94, 139, 234, 0.38);
+}
+
 :root[data-theme] [data-custom-background] .nova-input:focus-within {
   --c-rim-top: rgba(202, 211, 255, 0.82);
   --c-rim-corner: rgba(179, 193, 255, 0.46);
@@ -15308,7 +15396,7 @@ body {
   font-weight: 400;
 }
 
-.nova-input:focus-within .nova-input-textarea::placeholder { opacity: 0.72; }
+.nova-input:focus-within .nova-input-textarea::placeholder { opacity: 1; }
 
 /* ── Paint the capsules from the same material ─────────────────────────── */
 
@@ -15464,29 +15552,38 @@ body {
   }
 }
 
-/* Sidebar material and motion. The rail is the quiet foundation beneath the
-   composer; only interactive rows receive a brighter glass surface. */
+/* One frosted pane samples the full-window scene in Background.tsx. Keep the
+   scrollable content and footer transparent so they do not hide that scene. */
 .studio-sidebar {
   --sidebar-ease: var(--nova-ease-fluid);
-  --sidebar-hover: var(--nova-state-hover);
-  --sidebar-active: var(--nova-state-active);
-  --sidebar-edge: var(--nova-state-edge);
+  --sidebar-hover: rgba(185, 205, 236, 0.09);
+  --sidebar-active: rgba(155, 185, 225, 0.18);
+  --sidebar-edge: rgba(232, 241, 255, 0.11);
   --sidebar-heading: var(--nova-foundation-heading);
-  --sidebar-copy: var(--nova-foundation-copy);
-  --sidebar-muted: var(--nova-foundation-muted);
+  --sidebar-copy: rgba(239, 244, 255, 0.9);
+  --sidebar-muted: rgba(209, 222, 242, 0.67);
   color: var(--sidebar-copy);
   width: 268px;
   min-width: 0;
-  border-right: 1px solid var(--nova-foundation-edge);
-  background: var(--nova-foundation-surface);
-  box-shadow: var(--nova-foundation-shadow);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  border-right: 1px solid rgba(215, 231, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(230, 241, 255, 0.055), transparent 22%, rgba(4, 9, 18, 0.09)),
+    rgba(12, 18, 29, 0.19);
+  box-shadow: 3px 0 16px rgba(4, 9, 22, 0.08), inset -1px 0 rgba(235, 243, 255, 0.055);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
   transition: width var(--nova-motion-collapse) var(--sidebar-ease);
 }
 
 .studio-sidebar::after {
-  content: none;
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  height: 84px;
+  border: 0;
+  background: linear-gradient(180deg, rgba(221, 237, 255, 0.075), transparent);
+  pointer-events: none;
 }
 
 .studio-sidebar.studio-sidebar-collapsed {
@@ -15685,10 +15782,36 @@ body {
 }
 
 .studio-sidebar .sidebar-footer {
-  border-top-color: rgba(197, 211, 248, 0.08);
+  border-top-color: rgba(211, 229, 255, 0.105);
+  background: linear-gradient(180deg, rgba(38, 55, 81, 0.045), rgba(17, 29, 48, 0.12));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.studio-sidebar .sidebar-new-chat {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.studio-sidebar .sidebar-new-chat:is(:hover, :focus-visible) {
+  border-color: rgba(230, 242, 255, 0.21);
+  background: linear-gradient(180deg, rgba(224, 239, 255, 0.18), rgba(177, 205, 239, 0.09));
+  box-shadow: inset 0 1px 0 rgba(247, 251, 255, 0.2);
+}
+
+.studio-sidebar :is(.sidebar-nav-row-active, .sidebar-settings-button-active, .settings-category-button-active, .agent-card-active),
+.studio-sidebar :is(.sidebar-nav-row-active, .sidebar-settings-button-active, .settings-category-button-active, .agent-card-active):hover {
+  background: linear-gradient(105deg, rgba(184, 211, 246, 0.21), rgba(135, 170, 215, 0.105));
+  box-shadow: inset 0 1px 0 rgba(239, 246, 255, 0.15);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar {
+  --sidebar-hover: rgba(65, 100, 162, 0.08);
+  --sidebar-active: rgba(76, 110, 191, 0.14);
+  --sidebar-edge: rgba(255, 255, 255, 0.42);
+  --sidebar-copy: var(--nova-foundation-copy);
+  --sidebar-muted: var(--nova-foundation-muted);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-right-color: var(--nova-foundation-edge);
@@ -15697,11 +15820,56 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-right-color: var(--nova-foundation-edge);
-  background: var(--nova-foundation-surface);
-  box-shadow: var(--nova-foundation-shadow);
+  backdrop-filter: var(--nova-filter-floating);
+  -webkit-backdrop-filter: var(--nova-filter-floating);
+  border-right-color: rgba(215, 231, 255, 0.14);
+  background: var(--scene-shell-surface);
+  box-shadow: 3px 0 16px rgba(4, 9, 22, 0.08), inset -1px 0 rgba(235, 243, 255, 0.055);
+}
+
+/* Keep navigation legible over bright areas of a custom scene. */
+[data-custom-background="true"] .studio-sidebar {
+  --sidebar-heading: #f8faff;
+  --sidebar-copy: rgba(248, 250, 255, 0.96);
+  --sidebar-muted: rgba(237, 244, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(5, 10, 22, 0.42);
+}
+
+[data-custom-background="true"] .studio-sidebar :is(.settings-category-button, .settings-back-button, .sidebar-collapse-button, .sidebar-settings-button) {
+  color: var(--sidebar-copy);
+}
+
+[data-custom-background="true"] .studio-sidebar :is(.project-agents-toggle, .sidebar-nav-row-child) {
+  color: var(--sidebar-muted);
+}
+
+[data-custom-background="true"] .studio-sidebar :is(.settings-category-button-active, .sidebar-nav-row-child.sidebar-nav-row-active),
+[data-custom-background="true"] .studio-sidebar :is(.settings-category-button, .settings-back-button, .sidebar-collapse-button, .project-agents-toggle, .sidebar-nav-row-child):hover {
+  color: var(--sidebar-heading);
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .sidebar-new-chat {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .studio-sidebar .sidebar-new-chat:is(:hover, :focus-visible) {
+  border-color: rgba(91, 119, 162, 0.16);
+  background: var(--sidebar-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-theme="midnight"] .studio-sidebar,
+  :root[data-theme="midnight"] [data-custom-background="false"] .todo-page,
+  :root[data-theme="midnight"] [data-custom-background="false"] .settings-page,
+  [data-custom-background="true"] .studio-sidebar,
+  [data-custom-background="true"] .todo-page,
+  [data-custom-background="true"] .settings-page,
+  :root[data-theme="arctic-dawn"] [data-custom-background="true"] .settings-page {
+    background: linear-gradient(180deg, rgba(21, 30, 49, 0.95), rgba(12, 20, 35, 0.97));
+  }
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar > .sidebar-collapsed-nav {
@@ -15816,4 +15984,28 @@ body {
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
   }
+}
+
+/* Counts share the compact sidebar alert shape. Slate distinguishes ordinary
+   workspace and project totals from the red task alerts. */
+.studio-sidebar .sidebar-project-count,
+.studio-sidebar .project-agent-count,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar .sidebar-project-count,
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar .project-agent-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(223, 231, 247, 0.24);
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(160deg, #77849e, #56647f);
+  box-shadow: 0 1px 4px rgba(16, 11, 27, 0.19), inset 0 1px 0 rgba(255, 255, 255, 0.19);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }

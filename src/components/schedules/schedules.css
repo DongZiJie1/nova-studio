@@ -16,6 +16,21 @@
 
 /* ── List ─────────────────────────────────────────────────────────── */
 
+.schedule-page .todo-eyebrow {
+  color: var(--color-text-primary);
+  opacity: 0.88;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.22);
+}
+.schedule-page .task-page-header h1 small {
+  margin-left: 4px;
+  border: 1px solid var(--task-glass-edge);
+  color: var(--color-text-primary);
+  background: var(--task-glass-bg);
+  box-shadow: var(--task-glass-shadow);
+  backdrop-filter: blur(12px) saturate(125%);
+  -webkit-backdrop-filter: blur(12px) saturate(125%);
+}
+
 .schedule-list {
   flex: 1;
   min-height: 0;
@@ -50,7 +65,7 @@
 }
 
 .schedule-row-disabled {
-  opacity: 0.62;
+  opacity: 1;
 }
 
 .schedule-row-main {
@@ -150,6 +165,12 @@
   border-color: var(--todo-border);
   background: color-mix(in srgb, var(--color-text-muted) 10%, var(--todo-film));
   color: var(--color-text-muted);
+}
+
+.schedule-chip-disabled {
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-text-secondary) 52%, transparent);
+  background: color-mix(in srgb, var(--color-text-secondary) 18%, transparent);
 }
 
 /* ── Banner ───────────────────────────────────────────────────────── */
@@ -439,14 +460,195 @@
 /* ── Arctic Dawn light scene (no photo) ───────────────────────────── */
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-row {
-  background: #fafdff;
-  box-shadow: 0 4px 12px #34548508;
+  background: var(--task-glass-bg);
+  box-shadow: var(--task-glass-shadow);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-prompt-block,
 :root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-run-list li {
-  background: #f4f8fd;
-  box-shadow: none;
+  background: var(--task-detail-section);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* Match the task list glass: a clear rim and a soft white glow inside on hover. */
+.schedule-page .schedule-row,
+.schedule-page .todo-empty {
+  border-color: var(--task-glass-edge);
+  background: var(--task-glass-bg);
+  box-shadow: var(--task-glass-shadow);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+}
+.schedule-page .schedule-row {
+  min-height: 104px;
+  padding: 18px 20px;
+  border-color: color-mix(in srgb, var(--task-glass-edge) 78%, white);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 40%),
+    color-mix(in srgb, var(--task-detail-glass) 78%, transparent);
+  box-shadow: 0 10px 30px rgba(5, 10, 22, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.27);
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+}
+.schedule-page .schedule-row-main {
+  justify-content: center;
+  gap: 11px;
+}
+.schedule-page .schedule-row-title strong {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.schedule-page .schedule-row-meta {
+  gap: 10px 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.schedule-page .schedule-row-meta span:nth-child(2) {
+  color: var(--color-text-primary);
+  font-weight: 620;
+}
+.schedule-page .schedule-row-actions {
+  gap: 7px;
+  align-self: center;
+}
+.schedule-page .schedule-row-actions .task-toolbar-button {
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-text-primary);
+}
+.schedule-page .schedule-row:hover {
+  border-color: var(--task-glass-hover-edge);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18), transparent 40%),
+    color-mix(in srgb, var(--task-detail-glass) 88%, transparent);
+  box-shadow: var(--task-glass-hover-shadow);
+  transform: none;
+}
+.schedule-page .schedule-chip {
+  border-color: var(--task-glass-edge);
+  background: var(--task-glass-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.13);
+}
+.schedule-page .schedule-row-actions .task-toolbar-button,
+.schedule-page .schedule-error-banner button {
+  border: 1px solid var(--task-glass-edge);
+  border-radius: 10px;
+  background: var(--task-glass-bg);
+  box-shadow: var(--task-glass-shadow);
+  transform: none;
+}
+.schedule-page .schedule-row-actions .task-toolbar-button:hover:not(:disabled),
+.schedule-page .schedule-error-banner button:hover {
+  border-color: var(--task-glass-hover-edge);
+  background: var(--task-glass-hover);
+  box-shadow: var(--task-glass-hover-shadow);
+  transform: none;
+}
+
+/* Detail inherits the task detail panel; extend its glass to schedule content. */
+.schedule-page .schedule-detail-backdrop .schedule-prompt-block,
+.schedule-page .schedule-detail-backdrop .schedule-run-list li {
+  border-color: var(--task-detail-edge);
+  background: var(--task-detail-section);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px) saturate(125%);
+  -webkit-backdrop-filter: blur(12px) saturate(125%);
+}
+.schedule-page .schedule-detail-backdrop .todo-detail-footer-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px 0;
+  border-top: 1px solid var(--task-detail-edge);
+}
+.schedule-page .schedule-detail-backdrop .todo-detail-footer-actions > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 38px;
+  min-width: 0;
+  padding: 0 13px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.schedule-page .schedule-detail-backdrop .todo-detail-footer-actions > button svg {
+  flex: 0 0 auto;
+}
+.schedule-page .schedule-detail-backdrop .todo-secondary-button,
+.schedule-page .schedule-detail-backdrop .schedule-run-list .task-toolbar-button {
+  border: 1px solid var(--task-detail-edge);
+  border-radius: 10px;
+  color: var(--color-text-primary);
+  background: var(--task-detail-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(12px) saturate(125%);
+  -webkit-backdrop-filter: blur(12px) saturate(125%);
+  transform: none;
+}
+.schedule-page .schedule-detail-backdrop .todo-secondary-button:hover:not(:disabled),
+.schedule-page .schedule-detail-backdrop .schedule-run-list .task-toolbar-button:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.52);
+  background: var(--task-detail-control);
+  box-shadow: inset 0 0 22px var(--task-detail-glow), inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  transform: none;
+}
+.schedule-page .schedule-detail-backdrop .schedule-danger { color: #e26d6d; }
+
+/* The create/edit dialog is portaled outside the page, so it carries its own
+   glass tokens and keeps the same feedback as the detail controls. */
+.schedule-modal,
+:root:has([data-custom-background="true"]) .todo-modal.schedule-modal {
+  --schedule-glass: rgba(22, 27, 39, 0.66);
+  --schedule-control: rgba(255, 255, 255, 0.075);
+  --schedule-edge: rgba(255, 255, 255, 0.19);
+  --schedule-glow: rgba(255, 255, 255, 0.18);
+  border-color: var(--schedule-edge);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), transparent 46%), var(--schedule-glass);
+  box-shadow: 0 28px 76px rgba(5, 8, 18, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(34px) saturate(145%);
+  -webkit-backdrop-filter: blur(34px) saturate(145%);
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .schedule-modal {
+  --schedule-glass: rgba(233, 241, 253, 0.72);
+  --schedule-control: rgba(255, 255, 255, 0.38);
+  --schedule-edge: rgba(255, 255, 255, 0.52);
+  --schedule-glow: rgba(255, 255, 255, 0.48);
+}
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-modal-fields input,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-modal-fields textarea,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-modal-fields select,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .schedule-weekday-row button,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-secondary-button,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-primary-button,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) header .todo-icon-button {
+  border-color: var(--schedule-edge);
+  background: var(--schedule-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transform: none;
+}
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-modal-fields input:focus,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-modal-fields textarea:focus,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-modal-fields select:focus,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .schedule-weekday-row button:hover,
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-secondary-button:hover:not(:disabled),
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .todo-primary-button:hover:not(:disabled),
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) header .todo-icon-button:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.52);
+  background: var(--schedule-control);
+  box-shadow: inset 0 0 22px var(--schedule-glow), inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  transform: none;
+}
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .schedule-weekday-row button[aria-pressed="true"],
+:is(.schedule-modal, :root:has([data-custom-background="true"]) .todo-modal.schedule-modal) .task-view-switch button[aria-pressed="true"] {
+  border-color: rgba(255, 255, 255, 0.52);
+  color: var(--color-text-primary);
+  background: var(--schedule-control);
+  box-shadow: inset 0 0 16px var(--schedule-glow), inset 0 1px 0 rgba(255, 255, 255, 0.36);
 }
 
 /* ── Nested nav under 待办 ──────────────────────────────────────────
