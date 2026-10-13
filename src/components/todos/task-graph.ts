@@ -2,16 +2,20 @@ import type { TodoItem } from "../../lib/tauri-bridge";
 
 export const topicOf = (todo: TodoItem): string => todo.topic || todo.tags?.[0] || "未分类";
 
-export type TaskState = "completed" | "in_progress" | "ready";
+export type TaskState = "completed" | "abandoned" | "in_progress" | "ready";
+
+export const isClosedTodo = (todo: TodoItem): boolean => todo.status === "completed" || todo.status === "abandoned";
 
 /** Todos are a flat list inside a topic, so the stored status is the whole state. */
 export function taskState(todo: TodoItem): TaskState {
   if (todo.status === "completed") return "completed";
+  if (todo.status === "abandoned") return "abandoned";
   return todo.status === "in_progress" ? "in_progress" : "ready";
 }
 
 export const STATE_LABEL: Record<TaskState, string> = {
   completed: "已完成",
+  abandoned: "已放弃",
   in_progress: "进行中",
   ready: "可开始",
 };
@@ -35,8 +39,8 @@ export type DeadlineTone = "overdue" | "warning" | "reminder" | "gentle" | "neut
  * Past-due open items get their own "overdue" tone so they never blend into the
  * "due within 10 days" warning bucket.
  */
-export function deadlineTone(dueAt: string | undefined, completed: boolean, now = new Date()): DeadlineTone {
-  if (!dueAt || completed) return "neutral";
+export function deadlineTone(dueAt: string | undefined, closed: boolean, now = new Date()): DeadlineTone {
+  if (!dueAt || closed) return "neutral";
   const date = dueAt.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "neutral";
   const dueDay = Date.parse(`${date}T00:00:00Z`);
@@ -50,8 +54,8 @@ export function deadlineTone(dueAt: string | undefined, completed: boolean, now 
 }
 
 /** Calendar days late (positive) or until due (negative/zero); null when undated or completed. */
-export function deadlineDeltaDays(dueAt: string | undefined, completed: boolean, now = new Date()): number | null {
-  const tone = deadlineTone(dueAt, completed, now);
+export function deadlineDeltaDays(dueAt: string | undefined, closed: boolean, now = new Date()): number | null {
+  const tone = deadlineTone(dueAt, closed, now);
   if (tone === "neutral" || !dueAt) return null;
   const dueDay = Date.parse(`${dueAt.slice(0, 10)}T00:00:00Z`);
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
@@ -72,11 +76,12 @@ const TONE_RANK: Record<DeadlineTone, number> = {
  * gentle → undated), then by calendar date, then original order.
  */
 export function compareTodoDeadline(a: TodoItem, b: TodoItem, now = new Date()): number {
-  const completedOrder = Number(a.status === "completed") - Number(b.status === "completed");
-  if (completedOrder) return completedOrder;
+  const closedRank = (todo: TodoItem) => todo.status === "abandoned" ? 2 : todo.status === "completed" ? 1 : 0;
+  const closedOrder = closedRank(a) - closedRank(b);
+  if (closedOrder) return closedOrder;
   const toneOrder =
-    TONE_RANK[deadlineTone(a.dueAt, a.status === "completed", now)] -
-    TONE_RANK[deadlineTone(b.dueAt, b.status === "completed", now)];
+    TONE_RANK[deadlineTone(a.dueAt, isClosedTodo(a), now)] -
+    TONE_RANK[deadlineTone(b.dueAt, isClosedTodo(b), now)];
   if (toneOrder) return toneOrder;
   const aDate = a.dueAt?.slice(0, 10) || "9999-99-99";
   const bDate = b.dueAt?.slice(0, 10) || "9999-99-99";
@@ -110,7 +115,7 @@ export function sortTopicsByUrgency<T extends { items: TodoItem[] }>(topics: T[]
   return topics.map((topic) => {
     const counts = { overdue: 0, warning: 0, reminder: 0, gentle: 0, neutral: 0 };
     for (const todo of topic.items) {
-      counts[deadlineTone(todo.dueAt, todo.status === "completed", now)]++;
+      counts[deadlineTone(todo.dueAt, isClosedTodo(todo), now)]++;
     }
     return { topic, counts };
   }).sort((a, b) =>

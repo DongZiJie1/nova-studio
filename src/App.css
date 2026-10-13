@@ -2154,8 +2154,12 @@ body {
 .todo-tool-item-completed {
   --todo-tool-tone: var(--color-success);
 }
+.todo-tool-item-abandoned {
+  --todo-tool-tone: var(--color-text-secondary);
+}
 
-.todo-tool-item-completed .todo-tool-title-row strong {
+.todo-tool-item-completed .todo-tool-title-row strong,
+.todo-tool-item-abandoned .todo-tool-title-row strong {
   color: var(--color-text-secondary);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
@@ -5895,7 +5899,9 @@ body {
   white-space: nowrap;
 }
 
-:root[data-theme="midnight"] .todo-tag {
+:root[data-theme="midnight"] .todo-tag,
+[data-custom-background="true"] .todo-tag,
+:root:has([data-custom-background="true"]) .todo-modal .todo-tag {
   border-color: hsl(var(--todo-tag-hue, 215) 62% 68% / 0.32);
   background: hsl(var(--todo-tag-hue, 215) 62% 62% / 0.18);
   color: hsl(var(--todo-tag-hue, 215) 72% 82%);
@@ -5912,6 +5918,13 @@ body {
   padding-right: 3px;
 }
 
+.todo-tag-editor .todo-tag-editable {
+  min-height: 25px;
+  padding: 2px 6px 2px 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
 .todo-tag-editable button {
   display: grid;
   width: 14px;
@@ -5923,7 +5936,7 @@ body {
   color: inherit;
   background: transparent;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.8;
   transition: opacity 140ms ease, background 140ms ease;
 }
 
@@ -6561,6 +6574,9 @@ body {
 
 .todo-detail-status-completed {
   color: var(--color-success);
+}
+.todo-detail-status-abandoned {
+  color: var(--color-text-secondary);
 }
 
 /* Open items past their due date: red pill next to the status chip. */
@@ -7578,6 +7594,9 @@ body {
 
 .todo-property-status-completed {
   --todo-property-tone: var(--color-success);
+}
+.todo-property-status-abandoned {
+  --todo-property-tone: var(--color-text-secondary);
 }
 
 .todo-property-priority-high {

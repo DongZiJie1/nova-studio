@@ -335,7 +335,7 @@ export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemory
   return invoke<UserMemoryState>("set_user_memory_enabled", { enabled });
 }
 
-export type TodoStatus = "pending" | "in_progress" | "completed";
+export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned";
 export type TodoPriority = "low" | "medium" | "high";
 
 export interface TodoHistoryEntry {

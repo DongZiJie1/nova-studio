@@ -11,6 +11,7 @@ import {
 import { createPortal, flushSync } from "react-dom";
 import {
   Minus,
+  Ban,
   Network,
   Maximize2,
   CalendarDays,
@@ -51,7 +52,7 @@ import {
 } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
 import { TodoTreeCanvas, TaskStatusIcon, TodoDeadline } from "./TodoTreeCanvas";
-import { compareTodoDeadline, deadlineTone, STATE_LABEL, taskState, topicOf } from "./task-graph";
+import { compareTodoDeadline, deadlineTone, isClosedTodo, STATE_LABEL, taskState, topicOf } from "./task-graph";
 import { latestProgress, ProgressTimeline, progressPercent } from "./ProgressTimeline";
 import "./task-trees.css";
 import { Markdown } from "../chat/Markdown";
@@ -815,15 +816,16 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
     });
   }, [tagKeys]);
   const completed = state.items.filter((todo) => todo.status === "completed").length;
-  const openCount = state.items.length - completed;
-  const isOverdue = (todo: TodoItem) => todo.status !== "completed" && deadlineTone(todo.dueAt, false) === "overdue";
+  const abandoned = state.items.filter((todo) => todo.status === "abandoned").length;
+  const openCount = state.items.length - completed - abandoned;
+  const isOverdue = (todo: TodoItem) => !isClosedTodo(todo) && deadlineTone(todo.dueAt, false) === "overdue";
   const overdueCount = state.items.filter(isOverdue).length;
   const today = localDateKey();
   const weekEnd = new Date();
   weekEnd.setDate(weekEnd.getDate() + (7 - (weekEnd.getDay() || 7)));
   const weekEndKey = localDateKey(weekEnd);
   const toggleTodo = (todo: TodoItem) =>
-    void mutate(() => updateTodo({ id: todo.id, status: todo.status === "completed" ? "pending" : "completed" }));
+    void mutate(() => updateTodo({ id: todo.id, status: isClosedTodo(todo) ? "pending" : "completed" }));
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !creating) setSelectedId(null);
@@ -841,11 +843,11 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
       (todo) =>
         filter === "all" ||
         (filter === "today"
-          ? todo.dueAt?.slice(0, 10) === today && todo.status !== "completed"
+          ? todo.dueAt?.slice(0, 10) === today && !isClosedTodo(todo)
           : filter === "week"
-            ? !!todo.dueAt && todo.dueAt.slice(0, 10) <= weekEndKey && todo.status !== "completed"
+            ? !!todo.dueAt && todo.dueAt.slice(0, 10) <= weekEndKey && !isClosedTodo(todo)
           : filter === "overdue"
-            ? deadlineTone(todo.dueAt, todo.status === "completed") === "overdue"
+            ? deadlineTone(todo.dueAt, isClosedTodo(todo)) === "overdue"
             : taskState(todo) === filter),
     )
     .filter((todo) => selectedTopics.size === 0 || selectedTopics.has(topicOf(todo).toLocaleLowerCase()))
@@ -859,7 +861,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           <p>把复杂的想法，拆成可执行的步骤。</p>
         </div>
         <div className="task-header-actions">
-          <div className="task-today-card"><CalendarDays size={16} /><span>{new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}<small>今天还有 {state.items.filter((todo) => todo.status !== "completed" && todo.dueAt?.slice(0, 10) === today).length} 个到期任务</small></span></div>
+          <div className="task-today-card"><CalendarDays size={16} /><span>{new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}<small>今天还有 {state.items.filter((todo) => !isClosedTodo(todo) && todo.dueAt?.slice(0, 10) === today).length} 个到期任务</small></span></div>
           {state.items.length > 0 && <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
             <Plus size={16} />新建任务
           </button>}
@@ -881,7 +883,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           )}
         </label>
         <span className="task-summary">
-          {openCount} 项待处理 · {completed} 项已完成
+          {openCount} 项待处理 · {completed} 项已完成 · {abandoned} 项已放弃
         </span>
         <div className="task-toolbar-actions">
           <button
@@ -915,6 +917,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                 <option value="ready">可开始</option>
                 <option value="in_progress">进行中</option>
                 <option value="completed">已完成</option>
+                <option value="abandoned">已放弃</option>
               </select>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
@@ -926,8 +929,8 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           {[
             { key: "all", label: "全部", count: state.items.length },
             { key: "overdue", label: "已逾期", count: overdueCount },
-            { key: "today", label: "今天", count: state.items.filter((todo) => todo.status !== "completed" && todo.dueAt?.slice(0, 10) === today).length },
-            { key: "week", label: "本周", count: state.items.filter((todo) => todo.status !== "completed" && !!todo.dueAt && todo.dueAt.slice(0, 10) <= weekEndKey).length },
+            { key: "today", label: "今天", count: state.items.filter((todo) => !isClosedTodo(todo) && todo.dueAt?.slice(0, 10) === today).length },
+            { key: "week", label: "本周", count: state.items.filter((todo) => !isClosedTodo(todo) && !!todo.dueAt && todo.dueAt.slice(0, 10) <= weekEndKey).length },
           ].map((option) => (
             <button key={option.key} className={`${filter === option.key ? "task-filter-active " : ""}task-filter-${option.key}`} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>
               {option.label} <span>{option.count}</span>
@@ -983,11 +986,11 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                       <button
                         className={`task-status task-status-${taskState(todo)}`}
                         disabled={busy}
-                        aria-label={`切换完成状态：${todo.title}`}
+                        aria-label={`${isClosedTodo(todo) ? "重新打开" : "完成"}：${todo.title}`}
                         onClick={() => toggleTodo(todo)}
                       >
                         <span className="task-list-status-glyph" aria-hidden="true">
-                          {taskState(todo) === "completed" ? <Check size={14} /> : null}
+                          {taskState(todo) === "completed" ? <Check size={14} /> : taskState(todo) === "abandoned" ? <Ban size={14} /> : null}
                         </span>
                       </button>
                       <div className="task-flat-title">
@@ -1002,7 +1005,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                         </span>
                       </div>
                       {progressPercent(todo) !== undefined && <div className="task-list-progress"><span>{progressPercent(todo)}%</span><i><b style={{ width: `${progressPercent(todo)}%` }} /></i></div>}
-                      <div className="task-list-deadline"><TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} list /></div>
+                      <div className="task-list-deadline"><TodoDeadline dueAt={todo.dueAt} closed={isClosedTodo(todo)} list /></div>
                     </article>
                 ))}
               </div>
@@ -1012,7 +1015,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
       )}
       <footer className="task-canvas-footer">
         <div className="task-legend">
-          {(["completed", "in_progress", "ready"] as const).map((status) => (
+          {(["completed", "abandoned", "in_progress", "ready"] as const).map((status) => (
             <span className={`task-status-${status}`} key={status}>
               <TaskStatusIcon state={status} />
               {STATE_LABEL[status]}
@@ -1525,9 +1528,9 @@ function TodoDetail({
         <section className="todo-detail-hero">
           <div className="todo-detail-hero-meta">
             <span className={`todo-detail-status todo-detail-status-${status}`}>
-              {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : "已完成"}
+              {status === "pending" ? "待处理" : status === "in_progress" ? "进行中" : status === "abandoned" ? "已放弃" : "已完成"}
             </span>
-            {deadlineTone(todo.dueAt, todo.status === "completed") === "overdue" && (
+            {deadlineTone(dueAt, status === "completed" || status === "abandoned") === "overdue" && (
               <span className="todo-detail-overdue-badge" role="status">
                 已逾期
               </span>
@@ -1558,6 +1561,11 @@ function TodoDetail({
                     value: "completed",
                     label: "已完成",
                     icon: <CheckCircle2 className="todo-property-leading-icon" size={14} />,
+                  },
+                  {
+                    value: "abandoned",
+                    label: "已放弃",
+                    icon: <Ban className="todo-property-leading-icon" size={14} />,
                   },
                 ]}
                 onChange={(next) => setStatus(next as TodoStatus)}
@@ -1665,7 +1673,7 @@ function TodoDetail({
           ) : (
             <ol className="todo-history-list">
               {[...todo.history].reverse().map((entry, index) => {
-                const statusLabel = (value: string | null) => value === "pending" ? "待处理" : value === "in_progress" ? "进行中" : value === "completed" ? "已完成" : "未设置";
+                const statusLabel = (value: string | null) => value === "pending" ? "待处理" : value === "in_progress" ? "进行中" : value === "completed" ? "已完成" : value === "abandoned" ? "已放弃" : "未设置";
                 const isDueAt = entry.type === "due_at_changed";
                 const from = isDueAt ? (entry.from || "未设置") : statusLabel(entry.from);
                 const to = isDueAt ? (entry.to || "未设置") : statusLabel(entry.to);
@@ -1701,7 +1709,7 @@ function TodoDetail({
               Nova 会话
             </button>
           ) : (
-            todo.status !== "completed" && (
+            status !== "completed" && status !== "abandoned" && (
               <button
                 type="button"
                 className="todo-nova-button"
