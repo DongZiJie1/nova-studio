@@ -22,11 +22,9 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Circle,
-  CircleDot,
   Clock3,
   FileText,
   FolderKanban,
-  Flame,
   ListTodo,
   LoaderCircle,
   PenLine,
@@ -622,13 +620,109 @@ function useDialogFocus(ref: RefObject<HTMLElement | null>) {
   }, [ref]);
 }
 
+type TaskFilterOption = { key: string; label: string; count: number };
+
+function TaskMultiFilter({
+  label,
+  options,
+  selected,
+  onChange,
+  icon,
+  open,
+  setOpen,
+}: {
+  label: string;
+  options: TaskFilterOption[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  icon: ReactNode;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    searchRef.current?.focus();
+    const closeOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+  const matching = options.filter((option) => option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  return (
+    <div
+      className="task-multi-filter"
+      ref={rootRef}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !open) return;
+        event.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`task-multi-filter-trigger${selected.size ? " task-filter-active" : ""}`}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => {
+          if (!open) setSearch("");
+          setOpen(!open);
+        }}
+      >
+        {icon}
+        <span>{selected.size ? `${label} · ${selected.size}` : `所有${label}`}</span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="task-multi-filter-menu" role="dialog" aria-label={`筛选${label}`}>
+          <label className="task-multi-filter-search">
+            <Search size={14} aria-hidden="true" />
+            <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`搜索${label}…`} aria-label={`搜索${label}`} />
+          </label>
+          <div className="task-multi-filter-options">
+            {matching.length === 0 ? <p className="task-multi-filter-empty">没有匹配的{label}</p> : matching.map((option) => (
+              <button
+                type="button"
+                className="task-multi-filter-option"
+                key={option.key}
+                aria-pressed={selected.has(option.key)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  const next = new Set(selected);
+                  if (next.has(option.key)) next.delete(option.key);
+                  else next.add(option.key);
+                  onChange(next);
+                }}
+              >
+                <span>{option.label}</span>
+                <small>{option.count}</small>
+              </button>
+            ))}
+          </div>
+          <div className="task-multi-filter-footer">
+            <span>已选 {selected.size} / {options.length}</span>
+            {selected.size > 0 && <button type="button" onClick={() => onChange(new Set())}>清空选择</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) {
   const [state, setState] = useState<TodoState>({ version: 1, items: [] });
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"tree" | "list">("list");
   const [filter, setFilter] = useState("all");
-  const [activeTopic, setActiveTopic] = useState<string | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState(new Set(["completed"]));
+  const [selectedTopics, setSelectedTopics] = useState<Set<string>>(() => new Set());
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
+  const [openMultiFilter, setOpenMultiFilter] = useState<"topic" | "tag" | null>(null);
   const [zoom, setZoom] = useState(1);
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -682,7 +776,44 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   };
   const selected = state.items.find((todo) => todo.id === selectedId);
   const topics = [...new Map(state.items.map((todo) => [topicOf(todo).toLocaleLowerCase(), topicOf(todo)])).values()];
-  const tagSuggestions = [...new Set(state.items.flatMap((todo) => todo.tags ?? []))];
+  const topicCounts = new Map<string, number>();
+  for (const todo of state.items) {
+    const key = topicOf(todo).toLocaleLowerCase();
+    topicCounts.set(key, (topicCounts.get(key) ?? 0) + 1);
+  }
+  const topicOptions = topics.map((topic) => ({
+    key: topic.toLocaleLowerCase(),
+    label: topic,
+    count: topicCounts.get(topic.toLocaleLowerCase()) ?? 0,
+  }));
+  const topicKeys = topics.map((topic) => topic.toLocaleLowerCase()).join("\u0000");
+  useEffect(() => {
+    const available = new Set(topicKeys ? topicKeys.split("\u0000") : []);
+    setSelectedTopics((previous) => {
+      const retained = [...previous].filter((topic) => available.has(topic));
+      return retained.length === previous.size ? previous : new Set(retained);
+    });
+  }, [topicKeys]);
+  const tagSuggestions = [...new Map(state.items.flatMap((todo) => todo.tags ?? []).map((tag) => [tag.toLocaleLowerCase(), tag])).values()];
+  const tagCounts = new Map<string, number>();
+  for (const todo of state.items) {
+    for (const tag of new Set((todo.tags ?? []).map((item) => item.toLocaleLowerCase()))) {
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+  const tagOptions = tagSuggestions.map((tag) => ({
+    key: tag.toLocaleLowerCase(),
+    label: tag,
+    count: tagCounts.get(tag.toLocaleLowerCase()) ?? 0,
+  }));
+  const tagKeys = tagSuggestions.map((tag) => tag.toLocaleLowerCase()).join("\u0000");
+  useEffect(() => {
+    const available = new Set(tagKeys ? tagKeys.split("\u0000") : []);
+    setSelectedTags((previous) => {
+      const retained = [...previous].filter((tag) => available.has(tag));
+      return retained.length === previous.size ? previous : new Set(retained);
+    });
+  }, [tagKeys]);
   const completed = state.items.filter((todo) => todo.status === "completed").length;
   const openCount = state.items.length - completed;
   const isOverdue = (todo: TodoItem) => todo.status !== "completed" && deadlineTone(todo.dueAt, false) === "overdue";
@@ -717,17 +848,11 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
             ? deadlineTone(todo.dueAt, todo.status === "completed") === "overdue"
             : taskState(todo) === filter),
     )
-    .filter((todo) => !activeTopic || topicOf(todo).toLocaleLowerCase() === activeTopic.toLocaleLowerCase())
+    .filter((todo) => selectedTopics.size === 0 || selectedTopics.has(topicOf(todo).toLocaleLowerCase()))
+    .filter((todo) => selectedTags.size === 0 || todo.tags.some((tag) => selectedTags.has(tag.toLocaleLowerCase())))
     .sort(compareTodoDeadline);
-  const listGroups = [
-    { key: "overdue", label: "已逾期", icon: Flame, items: visible.filter(isOverdue) },
-    { key: "progress", label: "进行中", icon: CircleDot, items: visible
-      .filter((todo) => !isOverdue(todo) && todo.status !== "completed")
-      .sort((a, b) => (a.dueAt?.slice(0, 10) || "9999-99-99").localeCompare(b.dueAt?.slice(0, 10) || "9999-99-99") || a.order - b.order) },
-    { key: "completed", label: "已完成", icon: CheckCircle2, items: visible.filter((todo) => todo.status === "completed") },
-  ];
   return (
-    <section ref={pageRef} className="todo-page task-page">
+    <section ref={pageRef} className="todo-page task-page todo-task-page">
       <header className="task-page-header">
         <div>
           <h1>待办</h1>
@@ -758,39 +883,43 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         <span className="task-summary">
           {openCount} 项待处理 · {completed} 项已完成
         </span>
-        <div className="task-view-switch">
-          <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>
-            <ListTodo size={15} />
-            列表
-          </button>
-          <button aria-pressed={mode === "tree"} onClick={() => setMode("tree")}>
-            <Network size={15} />
-            分栏
-          </button>
-        </div>
-        {mode === "tree" ? (
+        <div className="task-toolbar-actions">
           <button
-            className="task-toolbar-button"
-            onClick={() =>
-              setCollapsed(collapsed.size ? new Set() : new Set(topics.map((topic) => topic.toLocaleLowerCase())))
-            }
+            type="button"
+            className="task-view-slider"
+            data-mode={mode}
+            role="switch"
+            aria-checked={mode === "tree"}
+            aria-label="分栏视图"
+            onClick={() => setMode(mode === "list" ? "tree" : "list")}
           >
-            <Maximize2 size={15} />
-            {collapsed.size ? "展开全部" : "折叠全部"}
+            <span className="task-view-slider-option"><ListTodo size={15} aria-hidden="true" />列表</span>
+            <span className="task-view-slider-option"><Network size={15} aria-hidden="true" />分栏</span>
           </button>
-        ) : (
-          <label className="task-status-filter">
-            <select aria-label="任务状态" value={filter} onChange={(event) => setFilter(event.target.value)}>
-              <option value="all">全部状态</option>
-              <option value="overdue">已逾期</option>
-              <option value="today">今天到期</option>
-              <option value="ready">可开始</option>
-              <option value="in_progress">进行中</option>
-              <option value="completed">已完成</option>
-            </select>
-            <ChevronDown size={14} aria-hidden="true" />
-          </label>
-        )}
+          {mode === "tree" ? (
+            <button
+              className="task-toolbar-button"
+              onClick={() =>
+                setCollapsed(collapsed.size ? new Set() : new Set(topics.map((topic) => topic.toLocaleLowerCase())))
+              }
+            >
+              <Maximize2 size={15} />
+              {collapsed.size ? "展开全部" : "折叠全部"}
+            </button>
+          ) : (
+            <label className="task-status-filter">
+              <select aria-label="任务状态" value={filter} onChange={(event) => setFilter(event.target.value)}>
+                <option value="all">全部状态</option>
+                <option value="overdue">已逾期</option>
+                <option value="today">今天到期</option>
+                <option value="ready">可开始</option>
+                <option value="in_progress">进行中</option>
+                <option value="completed">已完成</option>
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </label>
+          )}
+        </div>
       </div>
       {mode === "list" && (
         <div className="task-quick-filters" aria-label="快捷筛选">
@@ -800,17 +929,17 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
             { key: "today", label: "今天", count: state.items.filter((todo) => todo.status !== "completed" && todo.dueAt?.slice(0, 10) === today).length },
             { key: "week", label: "本周", count: state.items.filter((todo) => todo.status !== "completed" && !!todo.dueAt && todo.dueAt.slice(0, 10) <= weekEndKey).length },
           ].map((option) => (
-            <button key={option.key} className={filter === option.key ? "task-filter-active" : ""} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>
+            <button key={option.key} className={`${filter === option.key ? "task-filter-active " : ""}task-filter-${option.key}`} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>
               {option.label} <span>{option.count}</span>
             </button>
           ))}
-          {topics.length > 0 && <span className="task-filter-divider" aria-hidden="true" />}
-          {topics.length > 0 && <span className="task-filter-label">主题</span>}
-          {topics.map((topic) => (
-            <button key={topic} className={activeTopic === topic ? "task-filter-active" : ""} aria-pressed={activeTopic === topic} onClick={() => setActiveTopic(activeTopic === topic ? null : topic)}>
-              <span className="task-filter-dot" />{topic}
-            </button>
-          ))}
+          {(topicOptions.length > 0 || tagOptions.length > 0) && <span className="task-filter-divider" aria-hidden="true" />}
+          {topicOptions.length > 0 && (
+            <TaskMultiFilter label="主题" icon={<FolderKanban size={14} aria-hidden="true" />} options={topicOptions} selected={selectedTopics} onChange={setSelectedTopics} open={openMultiFilter === "topic"} setOpen={(open) => setOpenMultiFilter(open ? "topic" : null)} />
+          )}
+          {tagOptions.length > 0 && (
+            <TaskMultiFilter label="标签" icon={<Tag size={14} aria-hidden="true" />} options={tagOptions} selected={selectedTags} onChange={setSelectedTags} open={openMultiFilter === "tag"} setOpen={(open) => setOpenMultiFilter(open ? "tag" : null)} />
+          )}
         </div>
       )}
       {loading ? (
@@ -840,49 +969,45 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
       ) : (
         <div className="task-flat-list">
           {visible.length === 0 && <div className="todo-empty">没有符合条件的任务</div>}
-          {listGroups.filter((group) => group.items.length > 0).map((group) => {
-            const Icon = group.icon;
-            const collapsedGroup = collapsedGroups.has(group.key);
-            return (
-              <section className={`task-list-group task-list-group-${group.key}`} key={group.key}>
-                <button className="task-list-group-header" aria-expanded={!collapsedGroup} onClick={() => setCollapsedGroups((previous) => {
-                  const next = new Set(previous);
-                  if (next.has(group.key)) next.delete(group.key);
-                  else next.add(group.key);
-                  return next;
-                })}>
-                  <span className="task-list-group-label"><Icon size={16} />{group.label}<span>{group.items.length}</span></span>
-                  <ChevronDown size={16} className={collapsedGroup ? "task-list-group-chevron" : ""} />
-                </button>
-                {!collapsedGroup && <div className="task-list-group-rows">
-                  {group.items.map((todo) => (
+          {visible.length > 0 && (
+            <div className="task-list-group task-list-panel">
+              <div className="task-list-group-rows">
+                {visible.map((todo) => (
                     <article className={`task-list-row task-list-row-${taskState(todo)}`} key={todo.id}>
+                      <button
+                        type="button"
+                        className="task-list-row-open"
+                        aria-label={`查看${todo.title}详情`}
+                        onClick={() => setSelectedId(todo.id)}
+                      />
                       <button
                         className={`task-status task-status-${taskState(todo)}`}
                         disabled={busy}
                         aria-label={`切换完成状态：${todo.title}`}
                         onClick={() => toggleTodo(todo)}
                       >
-                        <TaskStatusIcon state={taskState(todo)} />
+                        <span className="task-list-status-glyph" aria-hidden="true">
+                          {taskState(todo) === "completed" ? <Check size={14} /> : null}
+                        </span>
                       </button>
-                      <button className="task-flat-title" onClick={() => setSelectedId(todo.id)}>
+                      <div className="task-flat-title">
                         <strong>{todo.title}</strong>
                         <span className="task-flat-meta">
                           <span className="task-flat-topic">{topicOf(todo)}</span>
-                          <span>{STATE_LABEL[taskState(todo)]}</span>
+                          <span className={`task-flat-state task-flat-state-${taskState(todo)}`}>
+                            {taskState(todo) === "ready" ? "未开始" : STATE_LABEL[taskState(todo)]}
+                          </span>
                           {todo.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
                           {latestProgress(todo) && <span className="task-flat-latest">{latestProgress(todo)?.content.slice(0, 24)}</span>}
                         </span>
-                      </button>
+                      </div>
                       {progressPercent(todo) !== undefined && <div className="task-list-progress"><span>{progressPercent(todo)}%</span><i><b style={{ width: `${progressPercent(todo)}%` }} /></i></div>}
-                      <div className="task-list-deadline"><TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} /></div>
-                      <button className="task-list-more" aria-label={`查看${todo.title}详情`} onClick={() => setSelectedId(todo.id)}>···</button>
+                      <div className="task-list-deadline"><TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} list /></div>
                     </article>
-                  ))}
-                </div>}
-              </section>
-            );
-          })}
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <footer className="task-canvas-footer">

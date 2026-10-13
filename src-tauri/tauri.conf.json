@@ -21,6 +21,7 @@
         "theme": "Light",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "acceptFirstMouse": true,
         "decorations": true,
         "transparent": false,
         "backgroundColor": "#edf4fd",

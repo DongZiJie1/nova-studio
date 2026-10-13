@@ -21,7 +21,7 @@ import {
   topicOf,
 } from "./task-graph";
 
-export function TodoDeadline({ dueAt, completed = false }: { dueAt?: string; completed?: boolean }) {
+export function TodoDeadline({ dueAt, completed = false, list = false }: { dueAt?: string; completed?: boolean; list?: boolean }) {
   if (!dueAt) return null;
   const date = dueAt.slice(0, 10);
   const tone = deadlineTone(dueAt, completed);
@@ -29,11 +29,16 @@ export function TodoDeadline({ dueAt, completed = false }: { dueAt?: string; com
   const lateDays = overdue ? deadlineDeltaDays(dueAt, completed) : null;
   return (
     <span
-      className={`task-deadline task-deadline-${tone}`}
+      className={`task-deadline task-deadline-${tone}${list ? " task-deadline-list" : ""}`}
       title={overdue ? `截止日期 ${date}，已逾期 ${lateDays ?? 0} 天` : `截止日期 ${date}`}
     >
       {overdue ? <AlertTriangle size={14} aria-hidden="true" /> : <CalendarDays size={14} aria-hidden="true" />}
-      {overdue ? (
+      {list ? (
+        <span className="task-deadline-copy">
+          <span>{overdue ? `已逾期 ${lateDays ?? 0} 天` : "截止日期"}</span>
+          <time dateTime={date}>{date}</time>
+        </span>
+      ) : overdue ? (
         <span>
           已逾期{lateDays && lateDays > 0 ? ` ${lateDays} 天` : ""} · <time dateTime={date}>{date}</time>
         </span>

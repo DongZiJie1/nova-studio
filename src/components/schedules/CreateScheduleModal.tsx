@@ -122,7 +122,7 @@ export function CreateScheduleModal({
     >
       <form
         ref={modalRef}
-        className="todo-modal"
+        className="todo-modal schedule-modal"
         onSubmit={(event) => void submit(event)}
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"

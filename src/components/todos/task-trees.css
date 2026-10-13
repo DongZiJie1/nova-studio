@@ -367,7 +367,7 @@
 .task-detail-backdrop {
   position: absolute;
   inset: 0;
-  z-index: 6;
+  z-index: 20;
   display: flex;
   justify-content: flex-end;
   background: #07162930;
@@ -1749,4 +1749,709 @@
   border-color: color-mix(in srgb, var(--task-success) 55%, var(--task-glass-edge));
   background: color-mix(in srgb, var(--task-success) 18%, transparent);
   color: var(--task-success);
+}
+
+/* The task detail uses the same glass language as the list toolbar. Keep the
+   backdrop visible through every layer, including on a custom photo. */
+.task-page {
+  --task-detail-glass: rgba(22, 27, 39, 0.66);
+  --task-detail-section: rgba(255, 255, 255, 0.065);
+  --task-detail-control: rgba(255, 255, 255, 0.075);
+  --task-detail-edge: rgba(255, 255, 255, 0.19);
+  --task-detail-glow: rgba(255, 255, 255, 0.18);
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-page {
+  --task-detail-glass: rgba(233, 241, 253, 0.72);
+  --task-detail-section: rgba(255, 255, 255, 0.3);
+  --task-detail-control: rgba(255, 255, 255, 0.38);
+  --task-detail-edge: rgba(255, 255, 255, 0.52);
+  --task-detail-glow: rgba(255, 255, 255, 0.48);
+}
+.task-page .task-detail-backdrop .todo-detail,
+[data-custom-background="true"] .task-page .task-detail-backdrop .todo-detail {
+  border-color: var(--task-detail-edge);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), transparent 46%), var(--task-detail-glass);
+  box-shadow: 0 28px 76px rgba(5, 8, 18, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(34px) saturate(145%);
+  -webkit-backdrop-filter: blur(34px) saturate(145%);
+}
+.task-page .task-detail-backdrop .todo-detail-section,
+.task-page .task-detail-backdrop .todo-description-preview,
+.task-page .task-detail-backdrop .todo-progress-composer,
+.task-page .task-detail-backdrop .todo-progress-entry-editor,
+.task-page .task-detail-backdrop .todo-progress-entry,
+.task-page .task-detail-backdrop .todo-history-list li {
+  border-color: var(--task-detail-edge);
+  background: var(--task-detail-section);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px) saturate(125%);
+  -webkit-backdrop-filter: blur(12px) saturate(125%);
+}
+.task-page .task-detail-backdrop .todo-detail-properties:focus-within {
+  position: relative;
+  z-index: 1;
+}
+.task-page .task-detail-backdrop .todo-tag-suggestions {
+  border-color: var(--task-detail-edge);
+  background: rgba(25, 30, 42, 0.96);
+  box-shadow: 0 14px 36px rgba(5, 8, 18, 0.3);
+  color: var(--color-text-primary);
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-page .task-detail-backdrop .todo-tag-suggestions {
+  background: rgba(245, 249, 255, 0.98);
+}
+.task-page .task-detail-backdrop .todo-property-control,
+.task-page .task-detail-backdrop .todo-tag-editor,
+.task-page .task-detail-backdrop .todo-detail-fields input,
+.task-page .task-detail-backdrop .todo-detail-fields textarea,
+.task-page .task-detail-backdrop .todo-detail-fields select,
+.task-page .task-detail-backdrop .todo-progress-composer textarea,
+.task-page .task-detail-backdrop .todo-progress-entry-editor textarea {
+  border-color: var(--task-detail-edge);
+  background: var(--task-detail-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.task-page .task-detail-backdrop .todo-detail-fields .todo-tag-editor input,
+.task-page .task-detail-backdrop .todo-detail-fields .todo-tag-editor input:focus {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.task-page .task-detail-backdrop .todo-property-control:hover,
+.task-page .task-detail-backdrop .todo-property-control:focus-within,
+.task-page .task-detail-backdrop .todo-detail-fields input:focus,
+.task-page .task-detail-backdrop .todo-detail-fields textarea:focus,
+.task-page .task-detail-backdrop .todo-detail-fields select:focus {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: var(--task-detail-control);
+  box-shadow: inset 0 0 19px var(--task-detail-glow), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.task-page .task-detail-backdrop .todo-detail-close,
+.task-page .task-detail-backdrop .todo-description-heading button,
+.task-page .task-detail-backdrop .todo-description-empty-cta,
+.task-page .task-detail-backdrop .todo-progress-append-button,
+.task-page .task-detail-backdrop .todo-progress-composer-actions button,
+.task-page .task-detail-backdrop .todo-progress-entry-actions button,
+.task-page .task-detail-backdrop .todo-progress-expand,
+.task-page .task-detail-backdrop .todo-nova-button,
+.task-page .task-detail-backdrop .todo-delete-button,
+.task-page .task-detail-backdrop .todo-primary-button {
+  border-color: var(--task-detail-edge);
+  background: var(--task-detail-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(12px) saturate(125%);
+  -webkit-backdrop-filter: blur(12px) saturate(125%);
+  transform: none;
+}
+.task-page .task-detail-backdrop .todo-detail-close:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-description-heading button:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-description-empty-cta:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-progress-append-button:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-progress-composer-actions button:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-progress-entry-actions button:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-progress-expand:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-nova-button:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-delete-button:hover:not(:disabled),
+.task-page .task-detail-backdrop .todo-primary-button:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.52);
+  background: var(--task-detail-control);
+  box-shadow: inset 0 0 22px var(--task-detail-glow), inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  transform: none;
+}
+
+/* The overdue group shares the sidebar alert's muted berry tone. */
+.task-page .task-list-group-overdue {
+  --group-tone: #c45b63;
+  --group-wash: rgba(196, 91, 99, 0.25);
+  --group-surface: rgba(91, 38, 51, 0.5);
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-page .task-list-group-overdue {
+  --group-tone: #a83e51;
+  --group-surface: rgba(250, 225, 230, 0.8);
+}
+.task-page .task-filter-overdue.task-filter-active {
+  border-color: rgba(196, 91, 99, 0.68);
+  color: var(--color-text-primary);
+  background: linear-gradient(160deg, rgba(196, 91, 99, 0.36), rgba(168, 62, 81, 0.24));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26), inset 0 0 18px rgba(196, 91, 99, 0.18);
+}
+
+/* Full-row detail target with an independent status control. */
+.task-page .task-flat-list .task-list-row {
+  position: relative;
+  grid-template-columns: 28px minmax(0, 1fr) 90px 180px;
+  column-gap: 16px;
+}
+.task-page .task-list-row .task-status { grid-column: 1; }
+.task-page .task-list-row .task-flat-title { grid-column: 2; }
+.task-page .task-list-row .task-list-progress { grid-column: 3; }
+.task-page .task-list-row .task-list-deadline { grid-column: 4; }
+.task-page .task-list-row-open {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.task-page .task-list-row-open:focus-visible {
+  outline: 2px solid var(--task-glass-hover-edge);
+  outline-offset: -2px;
+}
+.task-page .task-list-row .task-status {
+  position: relative;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.task-page .task-list-row .task-status:hover:not(:disabled) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.task-list-status-glyph {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--color-text-secondary);
+  border-radius: 50%;
+  place-items: center;
+  color: #fff;
+  background: transparent;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.task-list-row .task-status:hover .task-list-status-glyph {
+  border-color: var(--color-text-primary);
+  box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.16);
+}
+.task-list-row .task-status-in_progress .task-list-status-glyph {
+  border-color: #79a9ff;
+}
+.task-list-row .task-status-in_progress .task-list-status-glyph::after {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #79a9ff;
+  box-shadow: 0 0 8px rgba(121, 169, 255, 0.45);
+  content: "";
+}
+.task-list-row .task-status-completed .task-list-status-glyph {
+  border-color: var(--task-success);
+  background: var(--task-success);
+}
+.task-page .task-list-row .task-status-completed {
+  background: transparent;
+}
+.task-flat-meta .task-flat-state {
+  font-weight: 650;
+}
+.task-flat-meta .task-flat-state-ready {
+  color: var(--color-text-secondary);
+}
+.task-flat-meta .task-flat-state-in_progress {
+  color: #93b8ff;
+}
+.task-flat-meta .task-flat-state-completed {
+  color: var(--task-success);
+}
+.task-page .task-list-deadline {
+  min-width: 0;
+  justify-content: flex-start;
+}
+.task-page .task-list-deadline .task-deadline-list {
+  display: grid;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  min-height: 40px;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 9px;
+  padding: 3px 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-overflow: clip;
+  white-space: normal;
+}
+.task-page .task-list-deadline .task-deadline-list .task-deadline-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.task-page .task-list-deadline .task-deadline-list .task-deadline-copy > span {
+  color: var(--color-text-secondary);
+  font-weight: 550;
+}
+.task-page .task-list-deadline .task-deadline-list time {
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+}
+.task-page .task-list-deadline .task-deadline-overdue {
+  border: 0;
+  background: transparent;
+  color: #f0a1a9;
+}
+.task-page .task-list-deadline .task-deadline-list:not(.task-deadline-overdue) svg {
+  color: var(--color-text-secondary);
+}
+.task-page .task-list-deadline .task-deadline-overdue .task-deadline-copy > span {
+  color: #f0a1a9;
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-page .task-list-deadline .task-deadline-overdue .task-deadline-copy > span {
+  color: #a83e51;
+}
+@container todo-page (max-width: 760px) {
+  .task-page .task-flat-list .task-list-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+  .task-page .task-list-deadline {
+    grid-column: 2;
+    grid-row: 2;
+    width: auto;
+  }
+}
+
+/* Filter hover should only catch a little light, not turn into a bright pill. */
+.task-page .task-quick-filters button:hover,
+.task-page .task-quick-filters button.task-filter-active:hover {
+  border-color: rgba(255, 255, 255, 0.38);
+  background: var(--task-glass-bg);
+  box-shadow: 0 4px 12px rgba(5, 10, 22, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 0 10px rgba(255, 255, 255, 0.08);
+}
+.task-page .task-quick-filters button.task-filter-active:hover {
+  background: var(--task-glass-selected-bg);
+}
+.task-page .task-quick-filters button.task-filter-overdue.task-filter-active:hover {
+  border-color: rgba(196, 91, 99, 0.68);
+  background: linear-gradient(160deg, rgba(196, 91, 99, 0.36), rgba(168, 62, 81, 0.24));
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-page .task-quick-filters button:hover,
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .task-page .task-quick-filters button.task-filter-active:hover {
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 4px 12px rgba(58, 87, 133, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.65), inset 0 0 10px rgba(255, 255, 255, 0.22);
+}
+
+/* One control scale per toolbar row: header 48, tools 44, filters 36. */
+.todo-task-page .task-page-header {
+  gap: 16px;
+}
+.todo-task-page .task-header-actions {
+  gap: 10px;
+}
+.todo-task-page .task-header-actions .task-today-card,
+.todo-task-page .task-header-actions .todo-primary-button {
+  box-sizing: border-box;
+  height: 48px;
+  min-height: 48px;
+  border-radius: 12px;
+}
+.todo-task-page .task-header-actions .task-today-card {
+  padding: 0 13px;
+}
+.todo-task-page .task-toolbar {
+  gap: 10px;
+  padding-top: 12px;
+  padding-bottom: 9px;
+}
+.todo-task-page .task-toolbar .todo-search {
+  box-sizing: border-box;
+  height: 44px;
+  border-radius: 11px;
+}
+.todo-task-page .task-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+.todo-task-page .task-view-slider {
+  position: relative;
+  display: grid;
+  width: 178px;
+  height: 44px;
+  padding: 3px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  border: 1px solid var(--task-glass-edge);
+  border-radius: 12px;
+  color: var(--color-text-primary);
+  background: var(--task-glass-bg);
+  box-shadow: var(--task-glass-shadow);
+  backdrop-filter: var(--nova-filter-control);
+  -webkit-backdrop-filter: var(--nova-filter-control);
+  cursor: pointer;
+}
+.todo-task-page .task-view-slider::before {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 2);
+  border: 1px solid var(--task-glass-selected-edge);
+  border-radius: 9px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent), var(--task-glass-selected-bg);
+  box-shadow: var(--task-glass-shadow), inset 0 0 14px rgba(255, 255, 255, 0.14);
+  content: "";
+  transition: transform 180ms ease;
+}
+.todo-task-page .task-view-slider[data-mode="tree"]::before {
+  transform: translateX(100%);
+}
+.todo-task-page .task-view-slider-option {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  opacity: 0.68;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+.todo-task-page .task-view-slider[data-mode="list"] .task-view-slider-option:first-child,
+.todo-task-page .task-view-slider[data-mode="tree"] .task-view-slider-option:last-child {
+  opacity: 1;
+}
+.todo-task-page .task-view-slider:focus-visible {
+  outline: 2px solid var(--color-accent-start);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .todo-task-page .task-view-slider::before,
+  .todo-task-page .task-view-slider-option {
+    transition: none;
+  }
+}
+.todo-task-page .task-toolbar-actions .task-view-switch {
+  gap: 6px;
+}
+.todo-task-page .task-toolbar-actions .task-view-switch button,
+.todo-task-page .task-toolbar-actions .task-toolbar-button,
+.todo-task-page .task-toolbar-actions .task-status-filter select {
+  box-sizing: border-box;
+  height: 44px;
+  min-height: 44px;
+  border-radius: 11px;
+  padding-top: 0;
+  padding-bottom: 0;
+  white-space: nowrap;
+}
+.todo-task-page .task-toolbar-actions .task-view-switch button {
+  min-width: 82px;
+  padding-right: 12px;
+  padding-left: 12px;
+}
+.todo-task-page .task-toolbar-actions .task-status-filter select {
+  min-width: 120px;
+  padding-left: 13px;
+}
+.todo-task-page .task-quick-filters {
+  gap: 8px;
+  padding-top: 8px;
+  padding-bottom: 15px;
+}
+.todo-task-page .task-quick-filters button {
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+.todo-task-page .task-quick-filters button.task-filter-active {
+  border-color: var(--task-glass-selected-edge);
+  background: var(--task-glass-selected-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 0 10px rgba(255, 255, 255, 0.08);
+}
+.todo-task-page .task-quick-filters button.task-filter-overdue.task-filter-active {
+  border-color: rgba(196, 91, 99, 0.68);
+  background: linear-gradient(160deg, rgba(196, 91, 99, 0.36), rgba(168, 62, 81, 0.24));
+}
+@container todo-page (max-width: 900px) {
+  .todo-task-page .task-page-header,
+  .todo-task-page .task-toolbar {
+    flex-wrap: wrap;
+  }
+  .todo-task-page .task-toolbar-actions {
+    margin-left: auto;
+  }
+}
+
+/* All groups and rows share one translucent material. Status is conveyed by
+   text and icons instead of painting whole tasks in separate colors. */
+.todo-task-page {
+  --task-list-panel: rgba(25, 30, 40, 0.24);
+  --task-list-row: rgba(255, 255, 255, 0.035);
+  --task-list-row-hover: rgba(255, 255, 255, 0.065);
+  --task-list-rim: rgba(236, 242, 255, 0.2);
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-task-page {
+  --task-list-panel: rgba(222, 233, 249, 0.3);
+  --task-list-row: rgba(255, 255, 255, 0.2);
+  --task-list-row-hover: rgba(255, 255, 255, 0.34);
+  --task-list-rim: rgba(255, 255, 255, 0.62);
+}
+.todo-task-page .task-list-group {
+  border-color: var(--task-list-rim);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.04), transparent 54%), var(--task-list-panel);
+  box-shadow: 0 8px 22px rgba(5, 10, 22, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px) saturate(115%);
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
+}
+.todo-task-page .task-list-group-header,
+.todo-task-page .task-list-group-header:hover {
+  min-height: 45px;
+  padding: 9px 17px;
+  border-bottom: 1px solid var(--task-list-rim);
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: none;
+}
+.todo-task-page .task-list-group-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.todo-task-page .task-list-group-progress .task-list-group-label {
+  color: var(--color-text-primary);
+}
+.todo-task-page .task-list-group-rows {
+  padding: 8px;
+}
+.todo-task-page .task-flat-list .task-list-row {
+  min-height: 68px;
+  padding: 10px 15px;
+  border: 1px solid var(--task-list-rim);
+  border-radius: 12px;
+  background: var(--task-list-row);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.todo-task-page .task-flat-list .task-list-row + .task-list-row {
+  margin-top: 6px;
+}
+.todo-task-page .task-flat-list .task-list-row:hover {
+  border-color: color-mix(in srgb, var(--task-list-rim) 70%, white);
+  background: var(--task-list-row-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 0 14px rgba(255, 255, 255, 0.055);
+}
+.todo-task-page .task-list-group-completed .task-list-row {
+  opacity: 1;
+}
+.todo-task-page .task-list-row .task-flat-title {
+  gap: 6px;
+}
+.todo-task-page .task-list-row .task-flat-title strong {
+  font-size: 13px;
+}
+.todo-task-page .task-flat-meta {
+  gap: 7px;
+}
+.todo-task-page .task-flat-meta .task-flat-topic,
+.todo-task-page .task-flat-meta .task-flat-state {
+  display: inline-flex;
+  min-height: 20px;
+  padding: 1px 7px;
+  align-items: center;
+  border: 1px solid var(--task-list-rim);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  background: var(--task-list-row);
+  font-size: 10px;
+  font-weight: 600;
+}
+.todo-task-page .task-flat-meta .task-flat-state::before {
+  content: none;
+}
+
+/* Today's date is read-only context, so it should not look actionable. */
+.todo-task-page .task-header-actions .task-today-card {
+  width: auto;
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  padding: 0 7px 0 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-primary);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.todo-task-page .task-header-actions .task-today-card svg {
+  color: var(--color-text-secondary);
+}
+.todo-task-page .task-header-actions .task-today-card small {
+  color: var(--color-text-secondary);
+}
+
+/* A searchable multi-select keeps the topic filter compact as topics grow. */
+.todo-task-page .task-quick-filters {
+  position: relative;
+  z-index: 10;
+}
+.todo-task-page .task-multi-filter {
+  position: relative;
+  flex: 0 0 auto;
+}
+.todo-task-page .task-multi-filter-trigger {
+  min-width: 122px;
+  justify-content: space-between;
+}
+.todo-task-page .task-multi-filter-trigger > span {
+  flex: 1;
+  text-align: left;
+  opacity: 1;
+}
+.todo-task-page .task-multi-filter-trigger > svg:last-child {
+  flex: 0 0 auto;
+  transition: transform 150ms ease;
+}
+.todo-task-page .task-multi-filter-trigger[aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
+}
+.todo-task-page .task-multi-filter-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  width: min(306px, calc(100vw - 48px));
+  max-height: min(390px, 58vh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(236, 242, 255, 0.25);
+  border-radius: 14px;
+  color: var(--color-text-primary);
+  background: rgba(25, 30, 42, 0.76);
+  box-shadow: 0 18px 46px rgba(4, 8, 18, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+}
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] .todo-task-page .task-multi-filter-menu {
+  border-color: rgba(255, 255, 255, 0.68);
+  background: rgba(230, 239, 252, 0.86);
+  box-shadow: 0 18px 46px rgba(53, 75, 109, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+.todo-task-page .task-multi-filter-search {
+  display: flex;
+  height: 42px;
+  margin: 8px;
+  padding: 0 11px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--task-glass-edge);
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.07);
+}
+.todo-task-page .task-multi-filter-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+}
+.todo-task-page .task-multi-filter-search input::placeholder {
+  color: var(--color-text-muted);
+}
+.todo-task-page .task-multi-filter-options {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+.todo-task-page .task-multi-filter-options .task-multi-filter-option {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.todo-task-page .task-multi-filter-options .task-multi-filter-option:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 24%, transparent);
+  background: color-mix(in srgb, var(--color-accent-start) 9%, transparent);
+}
+.todo-task-page .task-multi-filter-options .task-multi-filter-option[aria-pressed="true"],
+.todo-task-page .task-multi-filter-options .task-multi-filter-option[aria-pressed="true"]:hover {
+  border-color: color-mix(in srgb, var(--color-accent-start) 48%, transparent);
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-accent-start) 20%, var(--task-glass-bg));
+}
+.todo-task-page .task-multi-filter-options .task-multi-filter-option:focus-visible {
+  outline: 2px solid var(--color-accent-start);
+  outline-offset: -2px;
+}
+.todo-task-page .task-multi-filter-option span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.todo-task-page .task-multi-filter-option[aria-pressed="true"] span {
+  opacity: 1;
+  font-weight: 650;
+}
+.todo-task-page .task-multi-filter-option small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.todo-task-page .task-multi-filter-empty {
+  margin: 0;
+  padding: 18px 10px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+.todo-task-page .task-multi-filter-footer {
+  display: flex;
+  min-height: 44px;
+  padding: 7px 11px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--task-glass-edge);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.todo-task-page .task-multi-filter-footer button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11px;
 }

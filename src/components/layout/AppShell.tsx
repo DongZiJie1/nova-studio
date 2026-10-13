@@ -3832,24 +3832,18 @@ export function AppShell() {
             </section>
           )}
           {!settingsOpen && activeAgent && (
-            <div className="conversation-view-switcher" data-active-view={conversationView}>
-              <button
-                type="button"
-                className={conversationView === "chat" ? "conversation-view-option-active" : ""}
-                onClick={() => setConversationView("chat")}
-              >
-                <MessageCircle size={14} />
-                <span>对话</span>
-              </button>
-              <button
-                type="button"
-                className={conversationView === "trajectory" ? "conversation-view-option-active" : ""}
-                onClick={() => setConversationView("trajectory")}
-              >
-                <Route size={14} />
-                <span>轨迹</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              className="conversation-view-switcher"
+              data-active-view={conversationView}
+              role="switch"
+              aria-checked={conversationView === "trajectory"}
+              aria-label="轨迹视图"
+              onClick={() => setConversationView(conversationView === "chat" ? "trajectory" : "chat")}
+            >
+              <span className="conversation-view-option"><MessageCircle size={15} aria-hidden="true" />对话</span>
+              <span className="conversation-view-option"><Route size={15} aria-hidden="true" />轨迹</span>
+            </button>
           )}
           {/* Content area + docked workbench sidebar */}
           <div className={`conversation-dock${!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen ? " conversation-dock-open" : ""}${dockResizing ? " conversation-dock-resizing" : ""}`}>

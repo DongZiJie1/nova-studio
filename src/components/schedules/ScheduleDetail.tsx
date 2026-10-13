@@ -29,7 +29,7 @@ export function ScheduleDetail({
 }) {
   return (
     <div
-      className="task-detail-backdrop"
+      className="task-detail-backdrop schedule-detail-backdrop"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onClose();
       }}
