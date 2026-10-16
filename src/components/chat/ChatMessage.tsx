@@ -1,7 +1,9 @@
 import { memo, useRef, useState } from "react";
 import { User, FileText, FileCode, FileJson, FileType, Image as ImageIcon, File, ChevronRight, Wrench, Copy, Check, ThumbsUp, ThumbsDown, GitFork, MessageCircle, Route, RotateCcw, Info } from "lucide-react";
 import type { ChatMessage as ChatMessageData, ToolCall } from "../../stores/agent-store";
-import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
+import type { AgentAvatarId } from "../../lib/agent-avatars";
+import { NovaAvatarImage } from "../common/NovaAvatarImage";
+import { useSettingsStore } from "../../stores/settings-store";
 import { Markdown } from "./Markdown";
 import { ThinkingCard } from "./ThinkingCard";
 import { ToolCallCard } from "./ToolCallCard";
@@ -99,6 +101,13 @@ function getAttIcon(name: string, mimeType: string): { icon: typeof FileText; co
   return { icon: File, color: "#6b7280" };
 }
 
+function UserAvatar() {
+  const avatar = useSettingsStore((state) => state.userAvatar);
+  return <div className="msg-avatar msg-avatar-user">
+    {avatar ? <img src={avatar} alt="用户头像" /> : <User size={20} strokeWidth={2.25} />}
+  </div>;
+}
+
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], {
     hour: "2-digit",
@@ -179,10 +188,11 @@ export const ChatMessage = memo(function ChatMessage({
 }) {
   const [copied, setCopied] = useState(false);
   if (message.role === "notice") {
+    const isError = /^(?:Error:|错误[:：]|失败[:：])/i.test(message.content.trim());
     // System-level remark about the session (e.g. a turn stopped by the runtime limit).
     return (
       <div className="msg-row msg-row-special">
-        <div className="msg-notice" role="status">
+        <div className={`msg-notice ${isError ? "msg-notice-error" : ""}`} role="status">
           <Info size={13} />
           <span>{message.content}</span>
         </div>
@@ -206,7 +216,7 @@ export const ChatMessage = memo(function ChatMessage({
     <div className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"}`}>
       {!isUser && (
         <div className="msg-avatar msg-avatar-nova">
-          <img src={agentAvatarSrc(avatarId)} alt="Nova" />
+          <NovaAvatarImage avatarId={avatarId} />
         </div>
       )}
       <div className="msg-column">
@@ -300,11 +310,7 @@ export const ChatMessage = memo(function ChatMessage({
           </div>
         )}
       </div>
-      {isUser && (
-        <div className="msg-avatar msg-avatar-user">
-          <User size={20} strokeWidth={2.25} />
-        </div>
-      )}
+      {isUser && <UserAvatar />}
     </div>
   );
 });

@@ -5,7 +5,7 @@ import { deleteUserMemory, getUserMemory, saveUserMemory, setUserMemoryEnabled, 
 
 const EMPTY: UserMemoryState = { version: 3, enabled: true, sections: [] };
 
-export function PersonalizationSettings() {
+export function MemorySettings() {
   const [state, setState] = useState(EMPTY);
   const [editing, setEditing] = useState<UserMemorySection | "new" | null>(null);
   const [title, setTitle] = useState("");
@@ -29,7 +29,7 @@ export function PersonalizationSettings() {
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!title.trim() || !content.trim()) return; setSaving(true); try { setState(await saveUserMemory({ sectionId: editing === "new" ? undefined : editing?.id, title, content })); cancel(); setError(null); } catch (reason) { setError(String(reason)); } finally { setSaving(false); } };
 
   return <>
-    <header className="settings-page-header"><h1>记忆摘要</h1><p>{lastUpdated ? `更新于 ${new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastUpdated))}` : "初始为空 · 标题和内容均可自定义"}</p></header>
+    <header className="settings-page-header"><h1>记忆</h1><p>{lastUpdated ? `更新于 ${new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastUpdated))}` : "初始为空 · 标题和内容均可自定义"}</p></header>
     <div className="settings-card personalization-status-card"><div className="settings-card-copy"><h2>使用记忆</h2><p>{state.enabled ? "Nova 会在每次新会话开始前读取这份用户档案。" : "记忆已停用，不会读取或更新用户档案。"}</p></div><button type="button" className={`personalization-toggle ${state.enabled ? "personalization-toggle-on" : ""}`} disabled={loading || saving} onClick={() => void setUserMemoryEnabled(!state.enabled).then(setState).catch((reason) => setError(String(reason)))}><span />{state.enabled ? "已开启" : "已停用"}</button></div>
     <section className="settings-card personalization-list-card memory-summary-card">
       <div className="personalization-list-header"><div className="settings-card-copy"><h2>用户档案</h2><p>Section 会根据你的身份和偏好自然生长，不使用固定分类。</p></div><button type="button" className="personalization-save" disabled={!state.enabled} onClick={() => beginEdit("new")}><Plus size={15} />新建 Section</button></div>

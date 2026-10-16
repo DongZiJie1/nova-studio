@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
-import { agentAvatarSrc, type AgentAvatarId } from "../../lib/agent-avatars";
+import type { AgentAvatarId } from "../../lib/agent-avatars";
+import { NovaAvatarImage } from "../common/NovaAvatarImage";
 
 const STREAM_RENDER_INTERVAL_MS = 100;
 
@@ -33,7 +34,7 @@ export function StreamingText({ content, avatarId }: { content: string; avatarId
   return (
     <div className="msg-row msg-row-assistant">
       <div className="msg-avatar msg-avatar-nova">
-        <img src={agentAvatarSrc(avatarId)} alt="Nova" />
+        <NovaAvatarImage avatarId={avatarId} />
       </div>
       <div className="msg-column">
         <div className="msg-meta">

@@ -1871,6 +1871,11 @@
   -webkit-backdrop-filter: blur(12px) saturate(125%);
   transform: none;
 }
+/* Glass action surfaces need the theme foreground, including progress submits. */
+.task-page .task-detail-backdrop .todo-progress-append-button,
+.task-page .task-detail-backdrop .todo-progress-composer-actions .todo-progress-composer-submit {
+  color: var(--color-text-primary);
+}
 .task-page .task-detail-backdrop .todo-detail-close:hover:not(:disabled),
 .task-page .task-detail-backdrop .todo-description-heading button:hover:not(:disabled),
 .task-page .task-detail-backdrop .todo-description-empty-cta:hover:not(:disabled),

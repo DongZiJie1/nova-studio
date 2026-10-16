@@ -66,7 +66,8 @@ import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMess
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
-import { PersonalizationSettings } from "../settings/PersonalizationSettings";
+import { MemorySettings } from "../settings/MemorySettings";
+import { ProfileSettings } from "../settings/ProfileSettings";
 import { useTodoWarningCount } from "../todos/useTodoWarningCount";
 import { useScheduleCount } from "../schedules/useScheduleCount";
 import { TodoPage } from "../todos/TodoPage";
@@ -77,7 +78,8 @@ import { ThinkingCard } from "../chat/ThinkingCard";
 import { Markdown } from "../chat/Markdown";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
-import { agentAvatarSrc, getOrAssignAgentAvatar } from "../../lib/agent-avatars";
+import { getOrAssignAgentAvatar } from "../../lib/agent-avatars";
+import { NovaAvatarImage } from "../common/NovaAvatarImage";
 import {
   BUILTIN_SLASH_COMMANDS,
   matchingSlashCommands,
@@ -120,6 +122,7 @@ import {
   RotateCcw,
   Bot,
   UserRound,
+  Brain,
   GitBranch,
   GitMerge,
   Trash2,
@@ -1601,7 +1604,7 @@ const BatchTaskPanel = memo(function BatchTaskPanel({
                     const statusLabel = running ? "进行中" : failed ? "异常" : taskStatus === "completed" ? "已完成" : "已结束";
                     return (
                       <button key={agent.id} type="button" className="agent-workbench-agent" onClick={() => onSelectAgent(agent.id)} title={agent.id}>
-                        <img src={agentAvatarSrc(agent.avatarId)} alt="" />
+                        <NovaAvatarImage avatarId={agent.avatarId} alt="" />
                         <span className="agent-workbench-agent-name">{agentDisplayName(agent, agentNames)}</span>
                         <span className={`agent-workbench-agent-status ${running ? "is-running" : failed ? "is-error" : "is-completed"}`}>
                           <i />{statusLabel}
@@ -2012,7 +2015,7 @@ export function AppShell() {
       {scheduleCount > 99 ? "99+" : scheduleCount}
     </span>
   ) : null;
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "personalization" | "activity">("appearance");
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "memory" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -2042,6 +2045,7 @@ export function AppShell() {
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const permissionTriggerRef = useRef<HTMLButtonElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
+  const conversationInputRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaMeasureRef = useRef<HTMLDivElement>(null);
@@ -2096,6 +2100,19 @@ export function AppShell() {
     observer.observe(shell);
     return () => observer.disconnect();
   }, [autoResize]);
+
+  useLayoutEffect(() => {
+    const input = conversationInputRef.current;
+    const scroll = scrollRef.current;
+    if (!input || !scroll) return;
+    const updateInset = () => {
+      scroll.style.setProperty("--conversation-composer-height", `${input.offsetHeight}px`);
+    };
+    updateInset();
+    const observer = new ResizeObserver(updateInset);
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, []);
 
   const agentNavigationKey = agents.map((agent) => [
     agent.id,
@@ -3452,7 +3469,7 @@ export function AppShell() {
                 aria-label="展开侧边栏"
                 data-tooltip="展开侧边栏"
               >
-                <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
+                <span className="sidebar-collapsed-wordmark" aria-hidden="true">N</span>
                 <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
               </button>
               {settingsOpen ? (
@@ -3460,6 +3477,7 @@ export function AppShell() {
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" data-tooltip="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" data-tooltip="外观设置"><Palette size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" data-tooltip="模型设置"><Bot size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "memory" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("memory")} aria-label="记忆设置" data-tooltip="记忆设置"><Brain size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" data-tooltip="个性化设置"><UserRound size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" data-tooltip="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
                 </>
@@ -3514,6 +3532,10 @@ export function AppShell() {
                     <Bot size={16} />
                     <span>模型</span>
                   </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "memory" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("memory")}>
+                    <Brain size={16} />
+                    <span>记忆</span>
+                  </button>
                   <button type="button" className={`settings-category-button ${settingsSection === "personalization" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("personalization")}>
                     <UserRound size={16} />
                     <span>个性化</span>
@@ -3528,20 +3550,18 @@ export function AppShell() {
             <>
               <header className="sidebar-header">
                 <div className="sidebar-brand">
-                  <span className="sidebar-brand-mark">
-                    <img src={theme === "arctic-dawn" ? "/images/nova-avatar.jpg" : "/images/nova-avatar-dark.jpg"} alt="Nova" />
+                  <span className="sidebar-brand-banner">
+                    <span className="sidebar-brand-name"><strong>NOVA</strong><span>STUDIO</span></span>
+                    <button
+                      type="button"
+                      className="sidebar-collapse-button"
+                      onClick={() => setSidebarCollapsed(true)}
+                      aria-label="收起侧边栏"
+                      title="收起侧边栏"
+                    >
+                      <PanelLeftClose size={16} />
+                    </button>
                   </span>
-                  <span className="sidebar-brand-name">Nova</span>
-                  <span className="sidebar-brand-badge">STUDIO</span>
-                  <button
-                    type="button"
-                    className="sidebar-collapse-button"
-                    onClick={() => setSidebarCollapsed(true)}
-                    aria-label="收起侧边栏"
-                    title="收起侧边栏"
-                  >
-                    <PanelLeftClose size={16} />
-                  </button>
                 </div>
                 <nav className="sidebar-nav" aria-label="快捷入口">
                   <button
@@ -3823,8 +3843,10 @@ export function AppShell() {
                     models={availableModels}
                     onSaved={refreshModelCatalog}
                   />
+                ) : settingsSection === "memory" ? (
+                  <MemorySettings />
                 ) : settingsSection === "personalization" ? (
-                  <PersonalizationSettings />
+                  <ProfileSettings />
                 ) : (
                   <ActivityHeatmap />
                 )}
@@ -4199,6 +4221,7 @@ export function AppShell() {
 
           {/* Input area */}
           <div
+            ref={conversationInputRef}
             className="conversation-input-area"
             style={{
               display: !settingsOpen && conversationView === "chat" ? "flex" : "none",
@@ -4475,7 +4498,7 @@ export function AppShell() {
                       onClick={() => fileInputRef.current?.click()}
                       aria-label="添加附件"
                     >
-                      <Paperclip size={16} />
+                      <Paperclip size={15} />
                     </button>
                   </div>
                   <input
@@ -4499,7 +4522,7 @@ export function AppShell() {
                         <button
                           ref={modelTriggerRef}
                           type="button"
-                          className={`input-toolbar-control input-pill model-picker-trigger input-model-primary ${modelPickerOpen ? "model-picker-trigger-open" : ""}`}
+                          className={`input-toolbar-control input-pill composer-picker-trigger model-picker-trigger input-model-primary ${modelPickerOpen ? "model-picker-trigger-open" : ""}`}
                           onClick={() => setModelPickerOpen((open) => !open)}
                           aria-haspopup="listbox"
                           aria-expanded={modelPickerOpen}
@@ -4513,19 +4536,20 @@ export function AppShell() {
                         {modelPickerPresence.rendered && (
                           <div
                             ref={modelPickerRef}
-                            className={`model-picker-popover nova-surface-elevated${modelPickerPresence.visible ? " composer-menu-visible" : ""}${modelPickerOpen ? "" : " composer-menu-closing"}`}
+                            className={`model-picker-popover composer-picker-popover nova-surface-elevated${modelPickerPresence.visible ? " composer-menu-visible" : ""}${modelPickerOpen ? "" : " composer-menu-closing"}`}
                             role="listbox"
                             onKeyDown={handleComposerMenuKeyDown}
                             inert={!modelPickerOpen}
                             aria-hidden={!modelPickerOpen}
                           >
+                            <div className="composer-picker-heading">选择模型</div>
                             {availableModels.map((m) => {
                               const isActive = activeModelId === m.id && activeModelProvider === m.provider;
                               return (
                                 <button
                                   key={`${m.provider}:${m.id}`}
                                   type="button"
-                                  className={`model-picker-option model-picker-option-row ${isActive ? "model-picker-option-active" : ""}${m.authConfigured ? "" : " model-picker-option-dimmed"}`}
+                                  className={`model-picker-option model-picker-option-row composer-picker-option ${isActive ? "model-picker-option-active" : ""}${m.authConfigured ? "" : " model-picker-option-dimmed"}`}
                                   title={m.authConfigured ? undefined : "该 Provider 未配置 API Key"}
                                   onClick={() => {
                                     if (activeAgent) {
@@ -4559,7 +4583,7 @@ export function AppShell() {
                       <button
                         ref={permissionTriggerRef}
                         type="button"
-                        className={`input-toolbar-control input-pill model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
+                        className={`input-toolbar-control input-pill composer-picker-trigger model-picker-trigger ${permissionPickerOpen ? "model-picker-trigger-open" : ""}`}
                         onClick={() => setPermissionPickerOpen((open) => !open)}
                         title={activeAgent ? "工具权限模式" : "设置新会话的工具权限模式"}
                         aria-haspopup="listbox"
@@ -4580,13 +4604,13 @@ export function AppShell() {
                       {permissionPickerPresence.rendered && (
                         <div
                           ref={permissionPickerRef}
-                          className={`model-picker-popover model-picker-popover-sm${permissionPickerPresence.visible ? " composer-menu-visible" : ""}${permissionPickerOpen ? "" : " composer-menu-closing"}`}
+                          className={`model-picker-popover model-picker-popover-sm composer-picker-popover nova-surface-elevated${permissionPickerPresence.visible ? " composer-menu-visible" : ""}${permissionPickerOpen ? "" : " composer-menu-closing"}`}
                           role="listbox"
                           onKeyDown={handleComposerMenuKeyDown}
                           inert={!permissionPickerOpen}
                           aria-hidden={!permissionPickerOpen}
                         >
-                          <div className="model-picker-provider">
+                          <div className="model-picker-provider composer-picker-heading">
                             {activeAgent ? "工具权限模式" : "新会话权限模式"}
                           </div>
                           {TOOL_PERMISSION_MODES.map((mode) => {
@@ -4595,7 +4619,7 @@ export function AppShell() {
                               <button
                                 key={mode.value}
                                 type="button"
-                                className={`model-picker-option model-picker-option-stack ${isActive ? "model-picker-option-active" : ""}`}
+                                className={`model-picker-option model-picker-option-stack composer-picker-option ${isActive ? "model-picker-option-active" : ""}`}
                                 onClick={() => {
                                   if (activeAgent) {
                                     void setToolPermissionMode(activeAgent.id, mode.value);
@@ -4619,7 +4643,7 @@ export function AppShell() {
                       <button
                         ref={projectTriggerRef}
                         type="button"
-                        className={`input-toolbar-control input-pill project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
+                        className={`input-toolbar-control input-pill composer-picker-trigger project-picker-trigger ${projectPickerOpen ? "project-picker-trigger-open" : ""}`}
                         onClick={() => setProjectPickerOpen((open) => !open)}
                         title="切换项目"
                         aria-haspopup="listbox"
@@ -4634,12 +4658,12 @@ export function AppShell() {
                       {projectPickerPresence.rendered && (
                         <div
                           ref={projectPickerRef}
-                          className={`project-picker-popover nova-surface-elevated${projectPickerPresence.visible ? " composer-menu-visible" : ""}${projectPickerOpen ? "" : " composer-menu-closing"}`}
+                          className={`project-picker-popover composer-picker-popover nova-surface-elevated${projectPickerPresence.visible ? " composer-menu-visible" : ""}${projectPickerOpen ? "" : " composer-menu-closing"}`}
                           onKeyDown={handleComposerMenuKeyDown}
                           inert={!projectPickerOpen}
                           aria-hidden={!projectPickerOpen}
                         >
-                          <div className="project-picker-title">
+                          <div className="project-picker-title composer-picker-heading">
                             选择项目
                           </div>
                           <div className="project-picker-list">
@@ -4656,7 +4680,7 @@ export function AppShell() {
                                     projectTriggerRef.current?.focus();
                                   }}
                                   title={cwd}
-                                  className={`project-picker-option ${selected ? "project-picker-option-selected" : ""}`}
+                                  className={`project-picker-option composer-picker-option ${selected ? "project-picker-option-selected" : ""}`}
                                 >
                                   <FolderOpen size={12} style={{ flexShrink: 0 }} />
                                   <span className="project-picker-option-name">
@@ -4681,7 +4705,7 @@ export function AppShell() {
                               }
                               projectTriggerRef.current?.focus();
                             }}
-                            className="project-picker-option project-picker-option-create"
+                            className="project-picker-option project-picker-option-create composer-picker-option"
                           >
                             <Plus size={12} style={{ flexShrink: 0 }} />
                             <span>创建新项目</span>
@@ -4708,9 +4732,9 @@ export function AppShell() {
                         aria-label="发送消息"
                       >
                         {isSending ? (
-                          <LoaderCircle size={18} className="tool-spin" />
+                          <LoaderCircle size={16} className="tool-spin" />
                         ) : (
-                          <ArrowUp size={19} strokeWidth={2.4} />
+                          <ArrowUp size={17} strokeWidth={2.4} />
                         )}
                       </button>
                     )}

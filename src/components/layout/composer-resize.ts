@@ -1,10 +1,15 @@
-export const COMPOSER_MAX_TEXTAREA_HEIGHT = 148;
+export const COMPOSER_MAX_VISIBLE_LINES = 3;
 
 export function resizeComposerTextarea(textarea: HTMLTextAreaElement, measure: HTMLElement): void {
+  const style = getComputedStyle(textarea);
+  const lineHeight = parseFloat(style.lineHeight);
+  const verticalPadding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  const minHeight = Math.ceil(lineHeight + verticalPadding);
+  const maxHeight = Math.ceil(lineHeight * COMPOSER_MAX_VISIBLE_LINES + verticalPadding);
   const contentHeight = measure.scrollHeight;
-  textarea.style.height = `${Math.min(Math.max(contentHeight, 78), COMPOSER_MAX_TEXTAREA_HEIGHT)}px`;
-  textarea.style.overflowY = contentHeight > COMPOSER_MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
-  if (contentHeight > COMPOSER_MAX_TEXTAREA_HEIGHT && textarea.selectionStart === textarea.value.length) {
+  textarea.style.height = `${Math.min(Math.max(contentHeight, minHeight), maxHeight)}px`;
+  textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+  if (contentHeight > maxHeight && textarea.selectionStart === textarea.value.length) {
     textarea.scrollTop = textarea.scrollHeight;
   }
 }
