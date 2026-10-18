@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Ban,
   CheckCircle2,
   CalendarClock,
   CalendarDays,
@@ -245,6 +246,7 @@ const TODO_STATUS_LABELS: Record<string, string> = {
   pending: "待处理",
   in_progress: "进行中",
   completed: "已完成",
+  abandoned: "已放弃",
 };
 
 function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) {
@@ -314,7 +316,7 @@ function TodoToolDetail({ args, result }: { args?: unknown; result?: unknown }) 
             const dueAt = objectString(todo, "dueAt", "due_at").slice(0, 10);
             const projectPath = objectString(todo, "projectPath", "project_path");
             const project = projectPath ? projectPath.split(/[\\/]/).filter(Boolean).pop() : "";
-            const StatusIcon = status === "completed" ? CheckCircle2 : status === "in_progress" ? Clock3 : Circle;
+            const StatusIcon = status === "completed" ? CheckCircle2 : status === "abandoned" ? Ban : status === "in_progress" ? Clock3 : Circle;
             return (
               <div
                 className={`todo-tool-item todo-tool-item-${status}`}

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   AlertTriangle,
+  Ban,
   CalendarDays,
   Check,
   ChevronDown,
@@ -14,6 +15,7 @@ import type { TodoItem, CreateTodoInput } from "../../lib/tauri-bridge";
 import {
   deadlineDeltaDays,
   deadlineTone,
+  isClosedTodo,
   sortTopicsByUrgency,
   layoutTopic,
   STATE_LABEL,
@@ -21,12 +23,12 @@ import {
   topicOf,
 } from "./task-graph";
 
-export function TodoDeadline({ dueAt, completed = false, list = false }: { dueAt?: string; completed?: boolean; list?: boolean }) {
+export function TodoDeadline({ dueAt, closed = false, list = false }: { dueAt?: string; closed?: boolean; list?: boolean }) {
   if (!dueAt) return null;
   const date = dueAt.slice(0, 10);
-  const tone = deadlineTone(dueAt, completed);
+  const tone = deadlineTone(dueAt, closed);
   const overdue = tone === "overdue";
-  const lateDays = overdue ? deadlineDeltaDays(dueAt, completed) : null;
+  const lateDays = overdue ? deadlineDeltaDays(dueAt, closed) : null;
   return (
     <span
       className={`task-deadline task-deadline-${tone}${list ? " task-deadline-list" : ""}`}
@@ -52,7 +54,7 @@ export function TodoDeadline({ dueAt, completed = false, list = false }: { dueAt
 }
 
 export function TaskStatusIcon({ state }: { state: ReturnType<typeof taskState> }) {
-  const Icon = state === "completed" ? Check : state === "in_progress" ? CircleDot : Circle;
+  const Icon = state === "completed" ? Check : state === "abandoned" ? Ban : state === "in_progress" ? CircleDot : Circle;
   return <Icon size={18} aria-hidden="true" />;
 }
 
@@ -141,12 +143,13 @@ function TopicTree({
 }) {
   const graph = useMemo(() => layoutTopic(items), [items]);
   const completed = items.filter((todo) => todo.status === "completed").length;
+  const abandoned = items.filter((todo) => todo.status === "abandoned").length;
   const now = new Date();
   const overdueCount = items.filter((todo) =>
-    deadlineTone(todo.dueAt, todo.status === "completed", now) === "overdue",
+    deadlineTone(todo.dueAt, isClosedTodo(todo), now) === "overdue",
   ).length;
   const warningCount = items.filter((todo) =>
-    deadlineTone(todo.dueAt, todo.status === "completed", now) === "warning",
+    deadlineTone(todo.dueAt, isClosedTodo(todo), now) === "warning",
   ).length;
   return (
     <section
@@ -180,7 +183,7 @@ function TopicTree({
             )}
           </h2>
           <span>
-            {completed} / {items.length} 已完成
+            {completed} / {items.length - abandoned} 已完成{abandoned > 0 ? ` · ${abandoned} 已放弃` : ""}
           </span>
         </div>
         <button aria-label={`${collapsed ? "展开" : "折叠"}${label}`} aria-expanded={!collapsed} onClick={onCollapse}>
@@ -188,14 +191,14 @@ function TopicTree({
         </button>
       </header>
       <div className="task-topic-progress">
-        <i style={{ width: `${(completed / items.length) * 100}%` }} />
+        <i style={{ width: `${items.length === abandoned ? 0 : (completed / (items.length - abandoned)) * 100}%` }} />
       </div>
       {!collapsed && (
         <>
           <div className="task-graph" style={{ width: graph.width, height: graph.height }}>
             {graph.nodes.map(({ todo, x, y, height }) => {
               const state = taskState(todo);
-              const overdue = deadlineTone(todo.dueAt, todo.status === "completed", now) === "overdue";
+              const overdue = deadlineTone(todo.dueAt, isClosedTodo(todo), now) === "overdue";
               return (
                 <article
                   className={`task-node task-node-${state}${overdue ? " task-node-overdue" : ""}`}
@@ -207,7 +210,7 @@ function TopicTree({
                     <button
                       className={`task-status task-status-${state}`}
                       disabled={busy}
-                      aria-label={`${todo.status === "completed" ? "重新打开" : "完成"}：${todo.title}`}
+                      aria-label={`${isClosedTodo(todo) ? "重新打开" : "完成"}：${todo.title}`}
                       onClick={() => onToggle(todo)}
                     >
                       <TaskStatusIcon state={state} />
@@ -239,13 +242,13 @@ function TopicTree({
                               {latest.content.slice(0, 18)}
                             </span>
                           )}
-                          {todo.dueAt && <TodoDeadline dueAt={todo.dueAt} completed={todo.status === "completed"} />}
+                          {todo.dueAt && <TodoDeadline dueAt={todo.dueAt} closed={isClosedTodo(todo)} />}
                         </>
                       );
                     })()}
                   </div>
                   <footer>
-                    <button disabled={busy} onClick={() => onCreate({ topic: label, tags: todo.tags })}>
+                    <button disabled={busy} onClick={() => onCreate({ topic: label })}>
                       <Plus size={12} />
                       添加任务
                     </button>
@@ -257,7 +260,7 @@ function TopicTree({
           <button
             className="task-add"
             disabled={busy}
-            onClick={() => onCreate({ topic: label, tags: label === "未分类" ? [] : [label] })}
+            onClick={() => onCreate({ topic: label })}
           >
             <Plus size={15} />
             添加任务

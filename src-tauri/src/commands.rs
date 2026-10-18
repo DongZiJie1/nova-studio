@@ -337,7 +337,7 @@ fn normalize_todo_tags(tags: Vec<String>) -> Result<Vec<String>, String> {
 }
 
 fn validate_todo_status(value: &str) -> Result<(), String> {
-    if matches!(value, "pending" | "in_progress" | "completed") {
+    if matches!(value, "pending" | "in_progress" | "completed" | "abandoned") {
         Ok(())
     } else {
         Err(format!("Invalid todo status: {value}"))
@@ -1627,6 +1627,7 @@ mod todo_tests {
     #[test]
     fn rejects_invalid_todo_values() {
         assert!(normalize_todo_title("   ").is_err());
+        assert!(validate_todo_status("abandoned").is_ok());
         assert!(validate_todo_status("cancelled").is_err());
         assert!(validate_todo_priority("urgent").is_err());
         assert!(validate_todo_due_at(Some("tomorrow".to_string())).is_err());
@@ -1755,6 +1756,10 @@ mod todo_tests {
         assert_eq!(todo.history[1].from, None);
         assert_eq!(todo.history[2].kind, "status_changed");
         assert_eq!(todo.completed_at.as_deref(), Some("2026-09-30T00:00:02Z"));
+        change_todo_status(todo, "abandoned", "2026-09-30T00:00:04Z").unwrap();
+        assert_eq!(todo.status, "abandoned");
+        assert!(todo.completed_at.is_none());
+        assert_eq!(todo.history.last().unwrap().to.as_deref(), Some("abandoned"));
         assert!(item.get("dueAt").is_some());
         assert!(item.get("completedAt").is_some());
     }

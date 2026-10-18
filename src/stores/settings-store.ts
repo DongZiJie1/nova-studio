@@ -12,6 +12,8 @@ interface SettingsState {
   defaultToolPermissionMode: ToolPermissionMode;
   /** Run new agents in their own git worktree. Off unless the user turns it on. */
   worktreeEnabled: boolean;
+  userAvatar: string | null;
+  novaAvatar: string | null;
 
   setApiKey: (key: string) => void;
   setDefaultModel: (model: string) => void;
@@ -20,6 +22,8 @@ interface SettingsState {
   setThinkingLevel: (level: string) => void;
   setDefaultToolPermissionMode: (mode: ToolPermissionMode) => void;
   setWorktreeEnabled: (enabled: boolean) => void;
+  setUserAvatar: (avatar: string | null) => void;
+  setNovaAvatar: (avatar: string | null) => void;
   resetSettings: () => void;
 }
 
@@ -31,6 +35,8 @@ const defaults = {
   thinkingLevel: "high",
   defaultToolPermissionMode: "allow" as ToolPermissionMode,
   worktreeEnabled: false,
+  userAvatar: null,
+  novaAvatar: null,
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -45,6 +51,8 @@ export const useSettingsStore = create<SettingsState>()(
       setThinkingLevel: (level) => set({ thinkingLevel: level }),
       setDefaultToolPermissionMode: (mode) => set({ defaultToolPermissionMode: mode }),
       setWorktreeEnabled: (enabled) => set({ worktreeEnabled: enabled }),
+      setUserAvatar: (avatar) => set({ userAvatar: avatar }),
+      setNovaAvatar: (avatar) => set({ novaAvatar: avatar }),
       resetSettings: () => set(defaults),
     }),
     { name: "nova-settings" },

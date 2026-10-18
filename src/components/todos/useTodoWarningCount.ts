@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listTodos } from "../../lib/tauri-bridge";
 import { useTodoStore } from "../../stores/todo-store";
-import { deadlineTone } from "./task-graph";
+import { deadlineTone, isClosedTodo } from "./task-graph";
 
 /** Keep the navigation count available even when the todo page is closed. */
 export function useTodoWarningCount() {
@@ -17,7 +17,7 @@ export function useTodoWarningCount() {
         if (cancelled || current !== generation) return;
         const now = new Date();
         setCount(state.items.filter((todo) => {
-          const tone = deadlineTone(todo.dueAt, todo.status === "completed", now);
+          const tone = deadlineTone(todo.dueAt, isClosedTodo(todo), now);
           return tone === "overdue" || tone === "warning";
         }).length);
       } catch {
