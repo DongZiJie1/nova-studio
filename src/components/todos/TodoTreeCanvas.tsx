@@ -248,7 +248,7 @@ function TopicTree({
                     })()}
                   </div>
                   <footer>
-                    <button disabled={busy} onClick={() => onCreate({ topic: label, tags: todo.tags })}>
+                    <button disabled={busy} onClick={() => onCreate({ topic: label })}>
                       <Plus size={12} />
                       添加任务
                     </button>
@@ -260,7 +260,7 @@ function TopicTree({
           <button
             className="task-add"
             disabled={busy}
-            onClick={() => onCreate({ topic: label, tags: label === "未分类" ? [] : [label] })}
+            onClick={() => onCreate({ topic: label })}
           >
             <Plus size={15} />
             添加任务
