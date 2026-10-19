@@ -191,25 +191,29 @@ export function FactMemoryPanel() {
 
   if (loading) {
     return (
-      <div className="personalization-loading">
-        <LoaderCircle size={16} /> 正在读取事实…
-      </div>
+      <section className="settings-card memory-surface">
+        <div className="personalization-loading">
+          <LoaderCircle size={16} /> 正在读取事实…
+        </div>
+      </section>
     );
   }
 
   if (error) {
     return (
-      <div className="fact-memory-error" role="alert">
-        <p className="personalization-error">读取事实失败：{error}</p>
-        <button type="button" className="fact-memory-retry" onClick={() => void refresh()}>
-          重试
-        </button>
-      </div>
+      <section className="settings-card memory-surface">
+        <div className="fact-memory-error" role="alert">
+          <p className="personalization-error">读取事实失败：{error}</p>
+          <button type="button" className="fact-memory-retry" onClick={() => void refresh()}>
+            重试
+          </button>
+        </div>
+      </section>
     );
   }
 
   return (
-    <>
+    <section className="settings-card memory-surface">
       <div className="fact-memory-stats">
         <span>
           活跃 <strong>{stats?.active ?? 0}</strong>
@@ -289,6 +293,6 @@ export function FactMemoryPanel() {
           ))}
         </section>
       )}
-    </>
+    </section>
   );
 }

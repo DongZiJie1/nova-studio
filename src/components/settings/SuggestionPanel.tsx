@@ -71,7 +71,7 @@ export function SuggestionPanel() {
   );
 
   return (
-    <>
+    <section className="settings-card memory-surface">
       {notice && (
         <p className="suggestion-notice" role="status">
           {notice}
@@ -130,6 +130,6 @@ export function SuggestionPanel() {
           </article>
         ))
       )}
-    </>
+    </section>
   );
 }
