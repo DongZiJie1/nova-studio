@@ -62,7 +62,7 @@ const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 function isAgentTrajectoryTool(name: string): boolean {
   return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
 }
-import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
+import { ChatMessage, type TurnFileChange } from "../chat/ChatMessage";
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
@@ -74,7 +74,7 @@ import { TodoPage } from "../todos/TodoPage";
 import { SchedulePage } from "../schedules/SchedulePage";
 import { useScheduleStore } from "../../stores/schedule-store";
 import { StreamingText } from "../chat/StreamingText";
-import { ThinkingCard } from "../chat/ThinkingCard";
+import { AnalysisGroup } from "../chat/AnalysisGroup.tsx";
 import { Markdown } from "../chat/Markdown";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
@@ -462,6 +462,9 @@ type TrajectoryDetailView = "execution" | "json";
 
 interface ChatHistoryProps {
   messages: AgentState["messages"];
+  liveTools: AgentState["activeToolCalls"];
+  liveThinking: string;
+  analyzing: boolean;
   agentSenderLabels: Record<string, string>;
   avatarId: AgentState["avatarId"];
   actionableAssistantMessageIds: Set<string>;
@@ -475,6 +478,9 @@ interface ChatHistoryProps {
 
 const ChatHistory = memo(function ChatHistory({
   messages,
+  liveTools,
+  liveThinking,
+  analyzing,
   agentSenderLabels,
   avatarId,
   actionableAssistantMessageIds,
@@ -485,7 +491,25 @@ const ChatHistory = memo(function ChatHistory({
   onRevertFileChange,
   onReviewFileChange,
 }: ChatHistoryProps) {
-  return messages.map((message) => (
+  const groups: Array<{ id: string; activities: AgentState["messages"]; message?: AgentState["messages"][number] }> = [];
+  let pending: AgentState["messages"] = [];
+  let analysisId = "initial-analysis";
+  for (const message of messages) {
+    if (message.role === "thinking" || message.role === "tool") {
+      pending.push(message);
+    } else {
+      if (pending.length) {
+        groups.push({ id: analysisId, activities: pending });
+        pending = [];
+      }
+      groups.push({ id: message.id, activities: [], message });
+      analysisId = `${message.id}-analysis`;
+    }
+  }
+  if (pending.length || liveTools.size || liveThinking || analyzing) {
+    groups.push({ id: analysisId, activities: pending });
+  }
+  return groups.map(({ id, activities, message }, index) => message ? (
     <div
       key={message.id}
       id={message.role === "user" ? `conversation-turn-${message.id}` : undefined}
@@ -504,6 +528,14 @@ const ChatHistory = memo(function ChatHistory({
         fileChanges={turnFileChangesByAssistantId.get(message.id)}
       />
     </div>
+  ) : (
+    <AnalysisGroup
+      key={id}
+      activities={activities}
+      tools={index === groups.length - 1 ? Array.from(liveTools.values()) : []}
+      thinking={index === groups.length - 1 ? liveThinking : ""}
+      running={index === groups.length - 1 && analyzing}
+    />
   ));
 });
 
@@ -1926,6 +1958,7 @@ export function AppShell() {
   const availableModels = useAgentStore((s) => s.availableModels);
   const refreshAgentTasks = useAgentStore((s) => s.refreshAgentTasks);
 
+  const userAvatar = useSettingsStore((s) => s.userAvatar);
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
@@ -3469,7 +3502,7 @@ export function AppShell() {
                 aria-label="展开侧边栏"
                 data-tooltip="展开侧边栏"
               >
-                <span className="sidebar-collapsed-wordmark" aria-hidden="true">N</span>
+                {userAvatar ? <img src={userAvatar} alt="用户头像" /> : <span className="sidebar-collapsed-wordmark" aria-hidden="true">N</span>}
                 <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
               </button>
               {settingsOpen ? (
@@ -4155,7 +4188,11 @@ export function AppShell() {
                 )}
                 {activeAgent && (
                   <ChatHistory
+                    key={activeAgent.id}
                     messages={chatMessages}
+                    liveTools={activeAgent.activeToolCalls}
+                    liveThinking={activeAgent.streamingThinking}
+                    analyzing={activeAgent.status === "streaming" && !streamingText}
                     agentSenderLabels={agentSenderLabels}
                     avatarId={activeAgent.avatarId}
                     actionableAssistantMessageIds={actionableAssistantMessageIds}
@@ -4166,19 +4203,6 @@ export function AppShell() {
                     onRevertFileChange={handleRevertFileChange}
                     onReviewFileChange={handleReviewFileChange}
                   />
-                )}
-
-                {/* Active tool calls */}
-                {activeAgent && activeAgent.activeToolCalls.size > 0 && (
-                  <div className="msg-row msg-row-tool">
-                    <ToolCallList tools={Array.from(activeAgent.activeToolCalls.values())} />
-                  </div>
-                )}
-
-                {activeAgent?.streamingThinking && (
-                  <div className="msg-row msg-row-special">
-                    <ThinkingCard content={activeAgent.streamingThinking} streaming />
-                  </div>
                 )}
 
                 {/* Streaming text */}

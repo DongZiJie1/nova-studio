@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, LoaderCircle, Pin, PinOff, Search } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Archive, Filter, LoaderCircle, Pin, PinOff, Search } from "lucide-react";
 import {
   getFactMemory,
   updateFactMemory,
@@ -36,6 +36,9 @@ const ARCHIVE_REASON_LABELS: Record<string, string> = {
 /** Nova injects at most 12 active facts, each truncated to 160 characters. */
 const MAX_INJECTED_FACTS = 12;
 const MAX_INJECTED_CHARS = 160;
+/** `<user_facts>` wrapper plus its three header lines, measured on nova's block. */
+const INJECTION_BLOCK_OVERHEAD = 60;
+const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 
 /** Archived and superseded facts are no longer retrieved or injected. */
 function isActiveFact(fact: FactMemoryFact): boolean {
@@ -67,17 +70,54 @@ function factMatches(fact: FactMemoryFact, needle: string): boolean {
   return haystack.includes(needle);
 }
 
-/** Rough, deliberately cheap: the real pick depends on the retrieval query.
- * Mixed Chinese/English text averages about two characters per token. */
-function estimateInjectionTokens(facts: FactMemoryFact[]): number {
-  const chars = facts
-    .filter(isActiveFact)
-    .slice(0, MAX_INJECTED_FACTS)
-    .reduce(
-      (total, fact) => total + Math.min(Array.from(fact.text).length, MAX_INJECTED_CHARS),
-      0,
-    );
-  return Math.ceil(chars / 2);
+/** The toolbar filter keeps one dimension: `all`, `scope:<applicability>` or `kind:<kind>`. */
+function matchesFilter(fact: FactMemoryFact, filter: string): boolean {
+  if (filter === "all") return true;
+  const [dimension, value] = filter.split(":");
+  if (dimension === "kind") return fact.kind === value;
+  if (dimension === "scope") return fact.applicability === value;
+  return true;
+}
+
+/** Mirrors nova's `estimateMemoryTokens`: CJK characters are one token, others four per token. */
+function countTokens(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const char of text) {
+    if (CJK_CHAR.test(char)) cjk += 1;
+    else other += 1;
+  }
+  return cjk + Math.ceil(other / 4);
+}
+
+/** Mirrors nova's `truncateFactText` so the estimate measures what is injected. */
+function truncateText(text: string, maxChars: number): string {
+  const chars = Array.from(text);
+  if (chars.length <= maxChars) return text;
+  if (maxChars === 1) return "…";
+  return `${chars.slice(0, maxChars - 1).join("").trimEnd()}…`;
+}
+
+/** Mirrors nova's `renderFactLine`: the id, date, scope, kind and importance are injected too. */
+function renderFactLine(fact: FactMemoryFact, text: string): string {
+  const project = (fact.projects ?? [])[0];
+  let scope: string = fact.applicability;
+  if (fact.applicability === "transferable" && fact.originProject) {
+    scope = `transferable(from ${basename(fact.originProject.path)})`;
+  } else if (fact.applicability === "project" && project !== undefined) {
+    scope = `project:${project}`;
+  }
+  return `- [${fact.id}] ${fact.createdAt.slice(0, 10)} · ${scope} · ${fact.kind} · imp ${fact.importance} · ${text}`;
+}
+
+/** Best-effort: the real pick is score-based, so mirror the cap with pinned facts first, then the newest. */
+function estimateInjection(facts: FactMemoryFact[]): { count: number; tokens: number } {
+  const selected = facts.filter(isActiveFact).slice(0, MAX_INJECTED_FACTS);
+  const tokens = selected.reduce(
+    (total, fact) => total + countTokens(renderFactLine(fact, truncateText(fact.text, MAX_INJECTED_CHARS))),
+    INJECTION_BLOCK_OVERHEAD,
+  );
+  return { count: selected.length, tokens };
 }
 
 interface FactCardProps {
@@ -87,6 +127,11 @@ interface FactCardProps {
 }
 
 function FactCard({ fact, busy, onAction }: FactCardProps) {
+  const tooltipId = useId();
+  const pinHint = fact.pinned
+    ? "取消置顶：恢复按相关性等规则选择这条记忆。"
+    : "置顶：优先选入对话上下文，仍受适用范围和容量限制。";
+  const archiveHint = "归档：保留记录，但不再注入对话。可在「已归档」中查看。";
   const archived = !isActiveFact(fact);
   const projectPaths =
     fact.applicability === "project" ? fact.projects ?? [] : fact.originProject ? [fact.originProject.path] : [];
@@ -117,24 +162,30 @@ function FactCard({ fact, busy, onAction }: FactCardProps) {
       </div>
       {!archived && (
         <div className="fact-memory-actions">
+          <span className="fact-memory-action">
           <button
             type="button"
-            title={fact.pinned ? "取消置顶" : "置顶"}
+            aria-describedby={`${tooltipId}-pin`}
             aria-label={fact.pinned ? `取消置顶：${fact.text}` : `置顶：${fact.text}`}
             disabled={busy}
             onClick={() => onAction(fact, fact.pinned ? "unpin" : "pin")}
           >
             {fact.pinned ? <PinOff size={14} /> : <Pin size={14} />}
           </button>
+          <span id={`${tooltipId}-pin`} role="tooltip" className="fact-memory-action-tooltip">{pinHint}</span>
+          </span>
+          <span className="fact-memory-action">
           <button
             type="button"
-            title="归档"
+            aria-describedby={`${tooltipId}-archive`}
             aria-label={`归档：${fact.text}`}
             disabled={busy}
             onClick={() => onAction(fact, "archive")}
           >
             {busy ? <LoaderCircle size={14} /> : <Archive size={14} />}
           </button>
+          <span id={`${tooltipId}-archive`} role="tooltip" className="fact-memory-action-tooltip">{archiveHint}</span>
+          </span>
         </div>
       )}
     </article>
@@ -148,6 +199,7 @@ export function FactMemoryPanel() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -183,10 +235,36 @@ export function FactMemoryPanel() {
   );
 
   const needle = query.trim().toLowerCase();
-  const filtered = useMemo(() => (data?.facts ?? []).filter((fact) => factMatches(fact, needle)), [data, needle]);
+  const filtered = useMemo(
+    () => (data?.facts ?? []).filter((fact) => factMatches(fact, needle) && matchesFilter(fact, filter)),
+    [data, needle, filter],
+  );
   const activeFacts = useMemo(() => filtered.filter(isActiveFact), [filtered]);
   const archivedFacts = useMemo(() => filtered.filter((fact) => !isActiveFact(fact)), [filtered]);
-  const estimatedTokens = useMemo(() => estimateInjectionTokens(data?.facts ?? []), [data]);
+  const filterCounts = useMemo(() => {
+    const scope: Record<string, number> = {};
+    const kind: Record<string, number> = {};
+    for (const fact of data?.facts ?? []) {
+      if (!isActiveFact(fact)) continue;
+      scope[fact.applicability] = (scope[fact.applicability] ?? 0) + 1;
+      kind[fact.kind] = (kind[fact.kind] ?? 0) + 1;
+    }
+    return { scope, kind };
+  }, [data]);
+  const visibleGroups = useMemo(() => {
+    if (filter.startsWith("kind:")) {
+      if (activeFacts.length === 0) return [];
+      const kind = filter.slice("kind:".length) as FactMemoryFact["kind"];
+      return [{ id: kind, label: KIND_LABELS[kind] ?? kind, hint: "事实类型", facts: activeFacts }];
+    }
+    return GROUPS.map((group) => ({
+      id: group.id,
+      label: group.label,
+      hint: group.hint,
+      facts: activeFacts.filter((fact) => fact.applicability === group.id),
+    })).filter((group) => group.facts.length > 0);
+  }, [activeFacts, filter]);
+  const injection = useMemo(() => estimateInjection(data?.facts ?? []), [data]);
   const stats = data?.stats;
 
   if (loading) {
@@ -221,8 +299,8 @@ export function FactMemoryPanel() {
         <span>
           归档 <strong>{stats?.archived ?? 0}</strong>
         </span>
-        <span>
-          预计注入约 <strong>{estimatedTokens}</strong> tokens
+        <span title="按置顶与最近的 12 条估算，实际按会话相关性选择">
+          预计注入 <strong>{injection.count}</strong> 条 · 约 <strong>{injection.tokens}</strong> tokens
         </span>
       </div>
       {stats && !stats.factsEnabled && (
@@ -239,6 +317,26 @@ export function FactMemoryPanel() {
             placeholder="搜索事实内容、标签或项目"
             aria-label="搜索事实"
           />
+        </label>
+        <label className="fact-memory-filter">
+          <Filter size={14} aria-hidden="true" />
+          <select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="筛选记忆类型">
+            <option value="all">全部记忆</option>
+            <optgroup label="适用范围">
+              {GROUPS.map((group) => (
+                <option key={group.id} value={`scope:${group.id}`}>
+                  {group.label}（{filterCounts.scope[group.id] ?? 0}）
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="事实类型">
+              {(Object.keys(KIND_LABELS) as Array<FactMemoryFact["kind"]>).map((kind) => (
+                <option key={kind} value={`kind:${kind}`}>
+                  {KIND_LABELS[kind]}（{filterCounts.kind[kind] ?? 0}）
+                </option>
+              ))}
+            </optgroup>
+          </select>
         </label>
         <button
           type="button"
@@ -257,30 +355,26 @@ export function FactMemoryPanel() {
       )}
       {activeFacts.length === 0 ? (
         <p className="personalization-empty">
-          {needle
-            ? "没有匹配的事实。"
+          {needle || filter !== "all"
+            ? "没有符合筛选的事实。"
             : (stats?.archived ?? 0) > 0
               ? "没有活跃事实。已归档的记录可通过上方「已归档」查看。"
               : "还没有事实。Nova 会在会话过程中抽取值得长期保留的信息。"}
         </p>
       ) : (
-        GROUPS.map((group) => {
-          const groupFacts = activeFacts.filter((fact) => fact.applicability === group.id);
-          if (groupFacts.length === 0) return null;
-          return (
-            <section className="fact-memory-group" key={group.id}>
-              <div className="fact-memory-group-header">
-                <h2>{group.label}</h2>
-                <span>
-                  {group.hint} · {groupFacts.length} 条
-                </span>
-              </div>
-              {groupFacts.map((fact) => (
-                <FactCard key={fact.id} fact={fact} busy={busyId === fact.id} onAction={(target, action) => void runAction(target, action)} />
-              ))}
-            </section>
-          );
-        })
+        visibleGroups.map((group) => (
+          <section className="fact-memory-group" key={group.id}>
+            <div className="fact-memory-group-header">
+              <h2>{group.label}</h2>
+              <span>
+                {group.hint} · {group.facts.length} 条
+              </span>
+            </div>
+            {group.facts.map((fact) => (
+              <FactCard key={fact.id} fact={fact} busy={busyId === fact.id} onAction={(target, action) => void runAction(target, action)} />
+            ))}
+          </section>
+        ))
       )}
       {showArchived && archivedFacts.length > 0 && (
         <section className="fact-memory-group">
