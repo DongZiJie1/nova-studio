@@ -1555,6 +1555,14 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Close the shared RPC input and wait for every session's graceful shutdown.
+    pub async fn shutdown(&self) -> Result<(), String> {
+        if let Some(host) = self.host.lock().await.take() {
+            host.stop().await?;
+        }
+        Ok(())
+    }
+
     /// List all agents
     pub async fn list(&self) -> Vec<AgentInfo> {
         let records = self.records.read().await;

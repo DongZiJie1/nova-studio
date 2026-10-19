@@ -245,8 +245,18 @@ pub fn run() {
             scheduled_tasks::record_scheduled_run_result,
             scheduler::run_scheduled_task_now,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let manager = app.state::<AgentManagerState>().0.clone();
+                tauri::async_runtime::block_on(async move {
+                    if let Err(error) = manager.shutdown().await {
+                        log::error!("Failed to shut down Nova host: {error}");
+                    }
+                });
+            }
+        });
 }
 
 /// Resolve the path to the nova CLI entry point

@@ -897,6 +897,16 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               cacheWrite: Number(tokens.cacheWrite ?? 0),
               total: Number(tokens.total ?? 0),
               cost: Number(d.cost ?? 0),
+              statistics: typeof d.startedAt === "string" ? {
+                sessionId: String(d.sessionId ?? ""),
+                startedAt: d.startedAt,
+                endedAt: typeof d.endedAt === "string" ? d.endedAt : undefined,
+                durationMs: Number(d.durationMs ?? 0),
+                turns: Number(d.turns ?? 0),
+                lastActivityAt: String(d.lastActivityAt ?? d.startedAt),
+                toolCallDistribution: (d.toolCallDistribution ?? {}) as Record<string, number>,
+                memoryWrites: Number(d.memoryWrites ?? 0),
+              } : undefined,
             }
           : null;
       set((s) => ({

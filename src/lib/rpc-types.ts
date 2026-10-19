@@ -243,6 +243,19 @@ export interface SessionUsage {
   cacheWrite: number;
   total: number;
   cost: number;
+  /** Local session metadata; retained for future UI and memory decisions. */
+  statistics?: SessionStatistics;
+}
+
+export interface SessionStatistics {
+  sessionId: string;
+  startedAt: string;
+  endedAt?: string;
+  durationMs: number;
+  turns: number;
+  lastActivityAt: string;
+  toolCallDistribution: Record<string, number>;
+  memoryWrites: number;
 }
 
 export interface ExecutionTraceUsage {

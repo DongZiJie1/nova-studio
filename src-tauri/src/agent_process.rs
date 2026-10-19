@@ -462,18 +462,38 @@ impl AgentProcess {
     pub async fn stop(&self) -> Result<(), String> {
         log::info!("[process:{}] stopping", self.id);
         if let Some(host) = &self.host {
+            let request_id = format!("stop-{}", uuid::Uuid::new_v4());
+            let mut events = self.subscribe();
             host.send_host_command(serde_json::json!({
                 "type": "agent_stop",
                 "agentId": self.id,
+                "id": request_id,
             }))?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                loop {
+                    let event = events.recv().await.map_err(|error| error.to_string())?;
+                    if event.get("type").and_then(serde_json::Value::as_str) == Some("response")
+                        && event.get("id").and_then(serde_json::Value::as_str) == Some(&request_id)
+                    {
+                        return if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+                            Ok(())
+                        } else {
+                            Err(format!("Agent stop failed: {event}"))
+                        };
+                    }
+                }
+            }).await.map_err(|_| "Timed out waiting for agent shutdown".to_string())??;
             host.unregister_agent(&self.id).await;
         } else if let Some(child) = &self.child {
-            child
-                .lock()
-                .await
-                .kill()
-                .await
-                .map_err(|e| format!("Failed to kill agent process: {}", e))?;
+            self._stdin_task.abort();
+            let mut child = child.lock().await;
+            match tokio::time::timeout(std::time::Duration::from_secs(15), child.wait()).await {
+                Ok(result) => { result.map_err(|error| error.to_string())?; }
+                Err(_) => {
+                    log::warn!("[process:{}] graceful shutdown timed out; terminating", self.id);
+                    child.kill().await.map_err(|error| error.to_string())?;
+                }
+            }
         }
         *self.status.lock().await = AgentStatus::Stopped;
         Ok(())

@@ -17,6 +17,31 @@ pub struct NovaHostProcess {
     _stdin_task: tokio::task::JoinHandle<()>,
 }
 
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn stop_waits_for_eof_cleanup_before_returning() {
+        let root = std::env::temp_dir().join(format!("nova-host-shutdown-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("host.sh");
+        std::fs::write(&script, "#!/bin/sh\nwhile IFS= read -r line; do :; done\nprintf closed > shutdown.marker\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let host = NovaHostProcess::spawn(
+            script.to_string_lossy().into_owned(),
+            root.to_string_lossy().into_owned(),
+            String::new(),
+            String::new(),
+        ).await.unwrap();
+        host.stop().await.unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("shutdown.marker")).unwrap(), "closed");
+        assert!(!host.is_alive().await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 impl NovaHostProcess {
     pub async fn spawn(
         cli_path: String,
@@ -137,11 +162,15 @@ impl NovaHostProcess {
     }
 
     pub async fn stop(&self) -> Result<(), String> {
-        self.child
-            .lock()
-            .await
-            .kill()
-            .await
-            .map_err(|error| format!("Failed to stop Nova host: {error}"))
+        // EOF enters Nova's graceful RPC shutdown, including session-end hooks.
+        self._stdin_task.abort();
+        let mut child = self.child.lock().await;
+        match tokio::time::timeout(std::time::Duration::from_secs(15), child.wait()).await {
+            Ok(result) => result.map(|_| ()).map_err(|error| error.to_string()),
+            Err(_) => {
+                log::warn!("[host] graceful shutdown timed out; terminating process");
+                child.kill().await.map_err(|error| format!("Failed to stop Nova host: {error}"))
+            }
+        }
     }
 }

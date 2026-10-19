@@ -32,7 +32,7 @@ while IFS= read -r line; do
       ;;
     *'"type":"agent_stop"'*|*'"type":"agent_cancel"'*|*'"type":"agent_force_stop"'*|*'"type":"agent_retry"'*)
       command=$(printf '%s' "$line" | sed -n 's/.*"type":"\([a-z_]*\)".*/\1/p')
-      printf '{"type":"response","command":"%s","success":true,"agentId":"%s"}\n' "$command" "$agent_id"
+      printf '{"type":"response","id":"%s","command":"%s","success":true,"agentId":"%s"}\n' "$request_id" "$command" "$agent_id"
       ;;
     *'"type":"steer"'*)
       printf '{"type":"response","command":"steer","success":true,"agentId":"%s"}\n' "$agent_id"
