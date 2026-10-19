@@ -471,15 +471,23 @@ impl AgentProcess {
             }))?;
             tokio::time::timeout(std::time::Duration::from_secs(15), async {
                 loop {
-                    let event = events.recv().await.map_err(|error| error.to_string())?;
-                    if event.get("type").and_then(serde_json::Value::as_str) == Some("response")
-                        && event.get("id").and_then(serde_json::Value::as_str) == Some(&request_id)
-                    {
-                        return if event.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
-                            Ok(())
-                        } else {
-                            Err(format!("Agent stop failed: {event}"))
-                        };
+                    match events.recv().await {
+                        Ok(event) => {
+                            if event.get("type").and_then(serde_json::Value::as_str) == Some("response")
+                                && event.get("id").and_then(serde_json::Value::as_str) == Some(&request_id)
+                            {
+                                return if event.get("success").and_then(serde_json::Value::as_bool)
+                                    == Some(true)
+                                {
+                                    Ok(())
+                                } else {
+                                    Err(format!("Agent stop failed: {event}"))
+                                };
+                            }
+                        }
+                        // A burst of events can drop older ones; the stop response may still arrive.
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(error) => return Err(error.to_string()),
                     }
                 }
             }).await.map_err(|_| "Timed out waiting for agent shutdown".to_string())??;
