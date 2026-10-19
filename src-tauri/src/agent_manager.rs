@@ -287,6 +287,35 @@ impl AgentManager {
             .map_err(|error| format!("Nova returned invalid session catalog: {error}"))
     }
 
+    /// Run `nova memory <args>` against the agent directory Studio reads.
+    ///
+    /// Every fact/suggestion mutation goes through this method so the desktop
+    /// app never reimplements nova's fact store (locking, atomic rename,
+    /// archive semantics). The CLI reports domain errors such as an unknown id
+    /// as `Error: ...` on stdout while still exiting 0, so both streams and the
+    /// exit status are inspected.
+    pub async fn run_memory_cli(&self, args: &[String]) -> Result<String, String> {
+        let is_js_file = self.cli_path.ends_with(".js");
+        let mut command = if is_js_file {
+            let mut command = tokio::process::Command::new("node");
+            command.arg(&self.cli_path);
+            command
+        } else {
+            tokio::process::Command::new(&self.cli_path)
+        };
+        command.arg("memory").args(args);
+        // Pin the CLI to the same directory the read commands parse, otherwise a
+        // custom NOVA_CODING_AGENT_DIR in the parent process could diverge.
+        if let Ok(agent_dir) = crate::commands::nova_agent_dir() {
+            command.env("NOVA_CODING_AGENT_DIR", agent_dir);
+        }
+        let output = command
+            .output()
+            .await
+            .map_err(|error| format!("Failed to run nova memory: {error}"))?;
+        interpret_memory_cli_output(output.status.success(), &output.stdout, &output.stderr)
+    }
+
     /// Merge Nova's current session catalog into the in-memory Studio view.
     ///
     /// Nova is the source of truth and may create sessions outside this Studio
@@ -1780,6 +1809,40 @@ fn fallback_session_name(first_message: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Interpret one `nova memory` subprocess result.
+///
+/// The memory command prints domain failures (`Error: Fact not found: ...`) on
+/// stdout and still exits 0, so a bare status check would report success.
+fn interpret_memory_cli_output(
+    success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<String, String> {
+    let out = String::from_utf8_lossy(stdout).trim().to_string();
+    let err = String::from_utf8_lossy(stderr).trim().to_string();
+    if !success {
+        return Err(if err.is_empty() {
+            format!("nova memory failed: {out}")
+        } else {
+            format!("nova memory failed: {err}")
+        });
+    }
+    if out.starts_with("Error:") {
+        return Err(out);
+    }
+    // A stale CLI that does not know `memory` falls through to its normal
+    // startup and can exit 0 with diagnostics on stderr only. The real memory
+    // command always prints a confirmation line, so empty stdout is a failure.
+    if out.is_empty() {
+        return Err(if err.is_empty() {
+            "nova memory returned no output".to_string()
+        } else {
+            format!("nova memory failed: {err}")
+        });
+    }
+    Ok(out)
+}
+
 /// Extract assistant text from a `message_end` message payload.
 /// `content` may be a plain string or an array of content parts.
 fn extract_text_from_message(msg: &serde_json::Value) -> String {
@@ -1833,6 +1896,30 @@ mod tests {
 
         let empty = serde_json::json!({"role": "assistant"});
         assert_eq!(extract_text_from_message(&empty), "");
+    }
+
+    /// `nova memory` exits 0 even for an unknown id, so stdout must be checked.
+    #[test]
+    fn memory_cli_output_reports_domain_errors() {
+        assert_eq!(
+            interpret_memory_cli_output(true, b"Pinned fact_0192f0c4\n", b"").unwrap(),
+            "Pinned fact_0192f0c4"
+        );
+        let missing =
+            interpret_memory_cli_output(true, b"Error: Fact not found: fact_unknown\n", b"")
+                .expect_err("unknown fact ids must surface as errors");
+        assert!(missing.contains("Fact not found: fact_unknown"));
+
+        let crashed = interpret_memory_cli_output(false, b"", b"Nova is not built\n")
+            .expect_err("a non-zero exit must surface stderr");
+        assert!(crashed.contains("Nova is not built"));
+
+        // Older nova builds exit 0 without printing a confirmation line.
+        let stale =
+            interpret_memory_cli_output(true, b"", b"No API key found for the selected model.\n")
+                .expect_err("empty stdout must not look like success");
+        assert!(stale.contains("No API key"));
+        assert!(interpret_memory_cli_output(true, b"   ", b"").is_err());
     }
 
     #[test]

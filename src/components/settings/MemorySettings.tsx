@@ -2,10 +2,28 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { createPortal } from "react-dom";
 import { LoaderCircle, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { deleteUserMemory, getUserMemory, saveUserMemory, setUserMemoryEnabled, type UserMemorySection, type UserMemoryState } from "../../lib/tauri-bridge";
+import { FactMemoryPanel } from "./FactMemoryPanel";
+import { SuggestionPanel } from "./SuggestionPanel";
 
 const EMPTY: UserMemoryState = { version: 3, enabled: true, sections: [] };
 
-export function MemorySettings() {
+type MemoryTab = "profile" | "facts" | "suggestions";
+
+const TABS: { id: MemoryTab; label: string }[] = [
+  { id: "profile", label: "画像" },
+  { id: "facts", label: "事实" },
+  { id: "suggestions", label: "建议" },
+];
+
+const TAB_DESCRIPTIONS: Record<MemoryTab, string> = {
+  profile: "用户档案是 Nova 每次新会话开始前读取的长期记忆。",
+  facts: "从会话中抽取的事实：按适用性分组，可置顶或归档，写入统一走 nova memory。",
+  suggestions: "会话结束时评审产出的画像晋升建议，接受后才会写入用户档案。",
+};
+
+/** 画像 tab — the pre-v2.1 memory editor, unchanged apart from the page header
+ * moving up into the tab container. */
+function ProfileMemoryPanel() {
   const [state, setState] = useState(EMPTY);
   const [editing, setEditing] = useState<UserMemorySection | "new" | null>(null);
   const [title, setTitle] = useState("");
@@ -29,7 +47,7 @@ export function MemorySettings() {
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!title.trim() || !content.trim()) return; setSaving(true); try { setState(await saveUserMemory({ sectionId: editing === "new" ? undefined : editing?.id, title, content })); cancel(); setError(null); } catch (reason) { setError(String(reason)); } finally { setSaving(false); } };
 
   return <>
-    <header className="settings-page-header"><h1>记忆</h1><p>{lastUpdated ? `更新于 ${new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastUpdated))}` : "初始为空 · 标题和内容均可自定义"}</p></header>
+    <p className="memory-profile-meta">{lastUpdated ? `更新于 ${new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastUpdated))}` : "初始为空 · 标题和内容均可自定义"}</p>
     <div className="settings-card personalization-status-card"><div className="settings-card-copy"><h2>使用记忆</h2><p>{state.enabled ? "Nova 会在每次新会话开始前读取这份用户档案。" : "记忆已停用，不会读取或更新用户档案。"}</p></div><button type="button" className={`personalization-toggle ${state.enabled ? "personalization-toggle-on" : ""}`} disabled={loading || saving} onClick={() => void setUserMemoryEnabled(!state.enabled).then(setState).catch((reason) => setError(String(reason)))}><span />{state.enabled ? "已开启" : "已停用"}</button></div>
     <section className="settings-card personalization-list-card memory-summary-card">
       <div className="personalization-list-header"><div className="settings-card-copy"><h2>用户档案</h2><p>Section 会根据你的身份和偏好自然生长，不使用固定分类。</p></div><button type="button" className="personalization-save" disabled={!state.enabled} onClick={() => beginEdit("new")}><Plus size={15} />新建 Section</button></div>
@@ -37,5 +55,28 @@ export function MemorySettings() {
     </section>
     {editing && createPortal(<div className="personalization-modal-backdrop" onMouseDown={() => { if (!saving) cancel(); }}><form className="personalization-form personalization-modal" role="dialog" aria-modal="true" aria-labelledby="personalization-modal-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => void submit(event)}><div className="personalization-modal-header"><span className="personalization-modal-icon"><Sparkles size={17} /></span><div><h2 id="personalization-modal-title">{editing === "new" ? "添加一条记忆" : "编辑记忆"}</h2><p>Nova 会在之后的对话中记住这些信息</p></div><button type="button" className="personalization-modal-close" disabled={saving} onClick={cancel} aria-label="关闭"><X size={16} /></button></div><div className="personalization-modal-fields"><label><span>标题</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：我的工作偏好" maxLength={80} autoFocus /></label><label><span>内容 <small>{content.length}/4000</small></span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="写下希望 Nova 长期记住的信息…" rows={5} maxLength={4000} /></label></div>{error && <p className="personalization-error">{error}</p>}<div className="personalization-modal-actions"><button type="button" className="personalization-cancel" disabled={saving} onClick={cancel}>取消</button><button className="personalization-save" type="submit" disabled={saving || !title.trim() || !content.trim()}>{saving ? <LoaderCircle size={15} /> : <Plus size={15} />}{editing === "new" ? "添加记忆" : "保存更改"}</button></div></form></div>, document.body)}
     {!editing && error && <p className="personalization-error">{error}</p>}
+  </>;
+}
+
+export function MemorySettings() {
+  const [tab, setTab] = useState<MemoryTab>("profile");
+
+  return <>
+    <header className="settings-page-header"><h1>记忆</h1><p>{TAB_DESCRIPTIONS[tab]}</p></header>
+    <div className="memory-tabs" role="tablist" aria-label="记忆分类">
+      {TABS.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          role="tab"
+          aria-selected={tab === item.id}
+          className={`memory-tab ${tab === item.id ? "memory-tab-active" : ""}`}
+          onClick={() => setTab(item.id)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+    {tab === "profile" ? <ProfileMemoryPanel /> : tab === "facts" ? <FactMemoryPanel /> : <SuggestionPanel />}
   </>;
 }

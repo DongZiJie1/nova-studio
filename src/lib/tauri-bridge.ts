@@ -335,6 +335,103 @@ export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemory
   return invoke<UserMemoryState>("set_user_memory_enabled", { enabled });
 }
 
+// ─── Fact memory (v2.1) ───
+
+export type FactApplicability = "universal" | "transferable" | "project";
+export type FactKind = "decision" | "preference" | "constraint" | "project" | "commitment" | "event";
+export type FactArchiveReason = "expired" | "stale" | "superseded" | "manual" | "promoted" | "capped";
+export type MemoryFactAction = "pin" | "unpin" | "archive" | "delete";
+export type MemorySuggestionResolution = "accept" | "reject";
+
+/** One fact as written by nova's `core/memory/fact-store.ts`. The nullable
+ * optional fields mirror `serde_json::Value` output; unknown fields are
+ * preserved but not typed here. */
+export interface FactMemoryFact {
+  id: string;
+  text: string;
+  kind: FactKind;
+  applicability: FactApplicability;
+  /** Set when `applicability === "project"`. */
+  projects?: string[];
+  /** Source project of a transferable fact. */
+  originProject?: { key: string; path: string };
+  topics?: string[];
+  importance: number;
+  confidence?: number;
+  createdAt: string;
+  updatedAt?: string;
+  lastRetrievedAt?: string;
+  retrievalCount?: number;
+  pinned?: boolean;
+  archivedAt?: string;
+  archiveReason?: FactArchiveReason;
+  validUntil?: string;
+  supersededBy?: string;
+  promotionSuggestedAt?: string;
+  reviewState?: string;
+  source?: {
+    sessionFile?: string;
+    sessionId?: string;
+    entryIds?: string[];
+    extractedAt?: string;
+    model?: string;
+  };
+}
+
+export interface FactMemoryStats {
+  active: number;
+  archived: number;
+  /** Pending profile promotion suggestions, shown on the 建议 tab. */
+  pendingSuggestions: number;
+  /** `memory.enabled` / `memory.facts.enabled` from the agent settings. */
+  factsEnabled: boolean;
+}
+
+export interface FactMemoryState {
+  facts: FactMemoryFact[];
+  stats: FactMemoryStats;
+}
+
+export type SuggestionAction = "create" | "append" | "update";
+export type SuggestionStatus = "pending" | "accepted" | "rejected";
+
+/** One pending profile promotion suggestion from `suggestions.json`. */
+export interface MemorySuggestion {
+  id: string;
+  factIds: string[];
+  action: SuggestionAction;
+  targetSectionId?: string;
+  title: string;
+  proposedContent: string;
+  previousContent?: string;
+  reason?: string;
+  createdAt: string;
+  status: SuggestionStatus;
+}
+
+/** Facts plus stats. Missing stores read as empty; Rust never creates them. */
+export async function getFactMemory(): Promise<FactMemoryState> {
+  return invoke<FactMemoryState>("get_fact_memory");
+}
+
+/** Pending promotion suggestions only, newest first. */
+export async function getMemorySuggestions(): Promise<MemorySuggestion[]> {
+  return invoke<MemorySuggestion[]>("get_memory_suggestions");
+}
+
+/** Pin/unpin/archive/delete a fact. Mutations run through `nova memory`. */
+export async function updateFactMemory(input: { id: string; action: MemoryFactAction }): Promise<void> {
+  return invoke("update_fact_memory", { input });
+}
+
+/** Accept (promote into the profile) or reject a suggestion via `nova memory`. */
+export async function resolveMemorySuggestion(input: {
+  id: string;
+  action: MemorySuggestionResolution;
+}): Promise<void> {
+  return invoke("resolve_memory_suggestion", { input });
+}
+
 export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned";
 export type TodoPriority = "low" | "medium" | "high";
 
