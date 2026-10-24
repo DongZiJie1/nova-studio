@@ -340,7 +340,7 @@ export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemory
 export type FactApplicability = "universal" | "transferable" | "project";
 export type FactKind = "decision" | "preference" | "constraint" | "project" | "commitment" | "event";
 export type FactArchiveReason = "expired" | "stale" | "superseded" | "manual" | "promoted" | "capped";
-export type MemoryFactAction = "pin" | "unpin" | "archive" | "delete";
+export type MemoryFactAction = "pin" | "unpin" | "archive" | "delete" | "edit";
 export type MemorySuggestionResolution = "accept" | "reject";
 
 /** One fact as written by nova's `core/memory/fact-store.ts`. The nullable
@@ -392,6 +392,16 @@ export interface FactMemoryState {
   stats: FactMemoryStats;
 }
 
+/** Fields `nova memory edit` may change. Omitted fields keep their current
+ * value; `topics: []` clears the label list. */
+export interface FactMemoryPatch {
+  text?: string;
+  kind?: FactKind;
+  importance?: number;
+  applicability?: FactApplicability;
+  topics?: string[];
+}
+
 export type SuggestionAction = "create" | "append" | "update";
 export type SuggestionStatus = "pending" | "accepted" | "rejected";
 
@@ -419,8 +429,13 @@ export async function getMemorySuggestions(): Promise<MemorySuggestion[]> {
   return invoke<MemorySuggestion[]>("get_memory_suggestions");
 }
 
-/** Pin/unpin/archive/delete a fact. Mutations run through `nova memory`. */
-export async function updateFactMemory(input: { id: string; action: MemoryFactAction }): Promise<void> {
+/** Pin/unpin/archive/delete/edit a fact. Mutations run through `nova memory`.
+ * `patch` is required for the `edit` action and rejected by Rust otherwise. */
+export async function updateFactMemory(input: {
+  id: string;
+  action: MemoryFactAction;
+  patch?: FactMemoryPatch;
+}): Promise<void> {
   return invoke("update_fact_memory", { input });
 }
 

@@ -3370,6 +3370,19 @@ export function AppShell() {
     setConversationView("chat");
   }, [setActiveAgent]);
 
+  /**
+   * 从折叠态侧边栏点「设置」时，左侧会停留在图标模式（sidebar-collapsed-nav），
+   * 设置分类（外观/模型/记忆/个性化/活跃度）不展开，用户还得再点一次「展开侧边栏」
+   * 才看得到带文字的分类。所以进入设置页统一展开侧边栏；设置页内的「收起侧边栏」
+   * 按钮仍直接调 setSidebarCollapsed(true)，这里不会再把用户手动收起的结果顶回去。
+   */
+  const openSettings = useCallback(() => {
+    setTodosOpen(false);
+    setSchedulesOpen(false);
+    setSettingsOpen(true);
+    setSidebarCollapsed(false);
+  }, []);
+
   const handleEditAgent = useCallback((agent: AgentState) => {
     setEditingAgent({
       id: agent.id,
@@ -3529,7 +3542,7 @@ export function AppShell() {
                   <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" aria-current={schedulesOpen ? "page" : undefined} data-tooltip="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" data-tooltip="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-github" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" data-tooltip="Nova Agent GitHub"><GithubMark size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }} aria-label="设置" data-tooltip="设置"><Settings size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={openSettings} aria-label="设置" data-tooltip="设置"><Settings size={19} /></button>
                 </>
               )}
           </nav>
@@ -3763,7 +3776,7 @@ export function AppShell() {
                 <button
                   type="button"
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
-                  onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }}
+                  onClick={openSettings}
                 >
                   <Settings size={15} />
                   <span>设置</span>

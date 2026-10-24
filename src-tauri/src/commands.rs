@@ -779,11 +779,23 @@ pub struct FactMemoryState {
     stats: FactMemoryStats,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactMemoryPatch {
+    text: Option<String>,
+    kind: Option<String>,
+    importance: Option<i64>,
+    applicability: Option<String>,
+    topics: Option<Vec<String>>,
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateFactMemoryInput {
     id: String,
     action: String,
+    /// Required for `edit`; ignored by pin/unpin/archive/delete.
+    patch: Option<FactMemoryPatch>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -952,8 +964,136 @@ fn memory_fact_cli_action(action: &str) -> Result<&'static str, String> {
         "unpin" => Ok("unpin"),
         "archive" => Ok("archive"),
         "delete" => Ok("delete"),
+        "edit" => Ok("edit"),
         other => Err(format!("Unsupported fact action: {other}")),
     }
+}
+
+/// Same limits as nova's `fact-schema.ts`: a single sentence of at most 200
+/// characters and up to three concept labels.
+const MAX_FACT_TEXT_CHARS: usize = 200;
+const MAX_FACT_TOPICS: usize = 3;
+const FACT_KINDS: [&str; 6] = [
+    "decision",
+    "preference",
+    "constraint",
+    "project",
+    "commitment",
+    "event",
+];
+const FACT_APPLICABILITIES: [&str; 3] = ["universal", "transferable", "project"];
+
+/// A value that starts with `-` would be read as a flag by nova's argument
+/// parser, so such values never reach the CLI.
+fn reject_option_like(value: &str, field: &str) -> Result<(), String> {
+    if value.starts_with('-') {
+        return Err(format!("{field} cannot start with '-'"));
+    }
+    Ok(())
+}
+
+/// Build `nova memory edit <id> [--text ...] [--kind ...] ...` from a patch.
+///
+/// Pure so the argument layout is unit-tested without spawning the CLI. Values
+/// are validated here as a first line of defence: nova validates again and its
+/// `Error: ...` line is what the UI shows.
+fn build_fact_edit_args(id: &str, patch: &FactMemoryPatch) -> Result<Vec<String>, String> {
+    let mut args = vec!["edit".to_string(), id.to_string()];
+    let mut touched = false;
+
+    if let Some(text) = patch.text.as_deref() {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("Fact text cannot be empty".to_string());
+        }
+        if text.chars().count() > MAX_FACT_TEXT_CHARS {
+            return Err(format!(
+                "Fact text must be at most {MAX_FACT_TEXT_CHARS} characters"
+            ));
+        }
+        reject_option_like(text, "Fact text")?;
+        args.push("--text".to_string());
+        args.push(text.to_string());
+        touched = true;
+    }
+
+    if let Some(kind) = patch.kind.as_deref() {
+        let kind = kind.trim();
+        if !FACT_KINDS.contains(&kind) {
+            return Err(format!("Unsupported fact kind: {kind}"));
+        }
+        args.push("--kind".to_string());
+        args.push(kind.to_string());
+        touched = true;
+    }
+
+    if let Some(importance) = patch.importance {
+        if !(1..=5).contains(&importance) {
+            return Err(format!("Importance must be between 1 and 5: {importance}"));
+        }
+        args.push("--importance".to_string());
+        args.push(importance.to_string());
+        touched = true;
+    }
+
+    if let Some(applicability) = patch.applicability.as_deref() {
+        let applicability = applicability.trim();
+        if !FACT_APPLICABILITIES.contains(&applicability) {
+            return Err(format!("Unsupported applicability: {applicability}"));
+        }
+        args.push("--applicability".to_string());
+        args.push(applicability.to_string());
+        touched = true;
+    }
+
+    if let Some(topics) = patch.topics.as_deref() {
+        if topics.len() > MAX_FACT_TOPICS {
+            return Err(format!("At most {MAX_FACT_TOPICS} topics are allowed"));
+        }
+        let mut cleaned: Vec<String> = Vec::new();
+        for topic in topics {
+            let topic = topic.trim();
+            if topic.is_empty() {
+                continue;
+            }
+            if topic.contains(',') {
+                return Err("A topic cannot contain a comma".to_string());
+            }
+            reject_option_like(topic, "A topic")?;
+            if !cleaned.iter().any(|kept| kept == topic) {
+                cleaned.push(topic.to_string());
+            }
+        }
+        // An empty list clears the labels, so `--topics ""` is intentional.
+        args.push("--topics".to_string());
+        args.push(cleaned.join(","));
+        touched = true;
+    }
+
+    if !touched {
+        return Err(
+            "No fields to update: provide at least one of text, kind, importance, applicability or topics"
+                .to_string(),
+        );
+    }
+    Ok(args)
+}
+
+/// Full `nova memory` argument vector for one fact mutation.
+fn fact_memory_cli_args(
+    action: &str,
+    id: &str,
+    patch: Option<&FactMemoryPatch>,
+) -> Result<Vec<String>, String> {
+    let action = memory_fact_cli_action(action)?;
+    // Ids arrive from the frontend and become subprocess arguments, so validate
+    // before they can be paired with a patch.
+    let id = validate_memory_id(id, "fact_")?;
+    if action != "edit" {
+        return Ok(vec![action.to_string(), id]);
+    }
+    let patch = patch.ok_or_else(|| "Edit action requires a patch".to_string())?;
+    build_fact_edit_args(&id, patch)
 }
 
 /// `resolve_memory_suggestion` action → `promote` (accept) or `reject`.
@@ -1005,9 +1145,8 @@ pub async fn update_fact_memory(
     state: State<'_, AgentManagerState>,
     input: UpdateFactMemoryInput,
 ) -> Result<(), String> {
-    let action = memory_fact_cli_action(&input.action)?;
-    let id = validate_memory_id(&input.id, "fact_")?;
-    state.0.run_memory_cli(&[action.to_string(), id]).await?;
+    let args = fact_memory_cli_args(&input.action, &input.id, input.patch.as_ref())?;
+    state.0.run_memory_cli(&args).await?;
     Ok(())
 }
 
@@ -2326,6 +2465,206 @@ mod memory_tests {
         assert!(validate_memory_id("sug_0192f0c4", "fact_").is_err());
         assert!(validate_memory_id("", "fact_").is_err());
         assert!(validate_memory_id("sug_0192f0c4", "sug_").is_ok());
+    }
+
+    /// Every patch field becomes its own flag, in the order nova documents:
+    /// `nova memory edit <id> [--text] [--kind] [--importance] [...]`.
+    #[test]
+    fn builds_edit_args_for_every_patch_field() {
+        let patch = FactMemoryPatch {
+            text: Some("  依赖统一用 npm workspaces  ".to_string()),
+            kind: Some("decision".to_string()),
+            importance: Some(4),
+            applicability: Some("project".to_string()),
+            topics: Some(vec!["依赖".to_string(), " monorepo ".to_string()]),
+        };
+
+        let args = build_fact_edit_args("fact_0192f0c4", &patch).unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "edit",
+                "fact_0192f0c4",
+                "--text",
+                "依赖统一用 npm workspaces",
+                "--kind",
+                "decision",
+                "--importance",
+                "4",
+                "--applicability",
+                "project",
+                "--topics",
+                "依赖,monorepo",
+            ]
+        );
+    }
+
+    /// Only changed fields travel to the CLI; an empty list clears the topics.
+    #[test]
+    fn builds_edit_args_for_a_partial_patch() {
+        let patch = FactMemoryPatch {
+            text: None,
+            kind: None,
+            importance: None,
+            applicability: None,
+            topics: Some(Vec::new()),
+        };
+
+        assert_eq!(
+            build_fact_edit_args("fact_0192f0c4", &patch).unwrap(),
+            vec!["edit", "fact_0192f0c4", "--topics", ""]
+        );
+        // Blank / duplicate entries are dropped so the CSV stays canonical.
+        let topics = FactMemoryPatch {
+            topics: Some(vec!["a".to_string(), " ".to_string(), "a".to_string()]),
+            ..patch
+        };
+        assert_eq!(
+            build_fact_edit_args("fact_0192f0c4", &topics).unwrap(),
+            vec!["edit", "fact_0192f0c4", "--topics", "a"]
+        );
+    }
+
+    #[test]
+    fn edit_requires_a_patch_and_at_least_one_field() {
+        let error = fact_memory_cli_args("edit", "fact_0192f0c4", None).unwrap_err();
+        assert!(error.contains("requires a patch"));
+
+        let empty = FactMemoryPatch {
+            text: None,
+            kind: None,
+            importance: None,
+            applicability: None,
+            topics: None,
+        };
+        let error = fact_memory_cli_args("edit", "fact_0192f0c4", Some(&empty)).unwrap_err();
+        assert!(error.contains("No fields to update"));
+
+        // pin/archive still build the two-argument form and ignore a patch.
+        assert_eq!(
+            fact_memory_cli_args("archive", "fact_0192f0c4", None).unwrap(),
+            vec!["archive", "fact_0192f0c4"]
+        );
+        assert_eq!(
+            fact_memory_cli_args(" pin ", "fact_0192f0c4", Some(&empty)).unwrap(),
+            vec!["pin", "fact_0192f0c4"]
+        );
+        // Ids are validated even when a patch is present.
+        assert!(fact_memory_cli_args("edit", "--all", Some(&empty)).is_err());
+    }
+
+    #[test]
+    fn edit_patch_values_are_validated_before_reaching_the_cli() {
+        let base = FactMemoryPatch {
+            text: None,
+            kind: None,
+            importance: None,
+            applicability: None,
+            topics: None,
+        };
+        let long = "字".repeat(MAX_FACT_TEXT_CHARS + 1);
+        let cases = [
+            FactMemoryPatch {
+                text: Some("   ".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                text: Some("--json".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                text: Some(long),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                kind: Some("gossip".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                importance: Some(0),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                importance: Some(6),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                applicability: Some("global".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                topics: Some(vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string(),
+                ]),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                topics: Some(vec!["a,b".to_string()]),
+                ..base.clone()
+            },
+        ];
+        for patch in cases {
+            assert!(
+                build_fact_edit_args("fact_0192f0c4", &patch).is_err(),
+                "expected a validation error for {patch:?}"
+            );
+        }
+
+        // Exactly 200 characters is still accepted.
+        let patch = FactMemoryPatch {
+            text: Some("字".repeat(MAX_FACT_TEXT_CHARS)),
+            ..base
+        };
+        assert!(build_fact_edit_args("fact_0192f0c4", &patch).is_ok());
+    }
+
+    /// The payload `updateFactMemory` sends from tauri-bridge.ts must deserialize
+    /// as-is, including a legacy pin call without a patch.
+    #[test]
+    fn update_fact_memory_input_accepts_the_frontend_payload() {
+        let edit: UpdateFactMemoryInput = serde_json::from_value(serde_json::json!({
+            "id": "fact_0192f0c4",
+            "action": "edit",
+            "patch": {
+                "text": "依赖统一用 npm workspaces",
+                "kind": "decision",
+                "importance": 4,
+                "applicability": "project",
+                "topics": ["依赖", "构建"]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            fact_memory_cli_args(&edit.action, &edit.id, edit.patch.as_ref()).unwrap(),
+            vec![
+                "edit",
+                "fact_0192f0c4",
+                "--text",
+                "依赖统一用 npm workspaces",
+                "--kind",
+                "decision",
+                "--importance",
+                "4",
+                "--applicability",
+                "project",
+                "--topics",
+                "依赖,构建",
+            ]
+        );
+
+        let pin: UpdateFactMemoryInput = serde_json::from_value(serde_json::json!({
+            "id": "fact_0192f0c4",
+            "action": "pin"
+        }))
+        .unwrap();
+        assert_eq!(
+            fact_memory_cli_args(&pin.action, &pin.id, pin.patch.as_ref()).unwrap(),
+            vec!["pin", "fact_0192f0c4"]
+        );
     }
 
     /// End-to-end read path over a preseeded agent directory: the same layout

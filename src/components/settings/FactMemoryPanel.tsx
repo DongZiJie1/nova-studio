@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Archive, Filter, LoaderCircle, Pin, PinOff, Search } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
+import { Archive, Filter, LoaderCircle, Pencil, Pin, PinOff, Search, X } from "lucide-react";
 import {
   getFactMemory,
   updateFactMemory,
   type FactApplicability,
   type FactMemoryFact,
+  type FactMemoryPatch,
   type FactMemoryState,
   type MemoryFactAction,
 } from "../../lib/tauri-bridge";
@@ -38,6 +40,9 @@ const MAX_INJECTED_FACTS = 12;
 const MAX_INJECTED_CHARS = 160;
 /** `<user_facts>` wrapper plus its three header lines, measured on nova's block. */
 const INJECTION_BLOCK_OVERHEAD = 60;
+/** Same limits as nova's `fact-schema.ts`; `nova memory edit` validates again. */
+const MAX_FACT_TEXT_CHARS = 200;
+const MAX_FACT_TOPICS = 3;
 const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 
 /** Archived and superseded facts are no longer retrieved or injected. */
@@ -120,14 +125,241 @@ function estimateInjection(facts: FactMemoryFact[]): { count: number; tokens: nu
   return { count: selected.length, tokens };
 }
 
+/** Split the comma-separated topics input, dropping blanks and duplicates. */
+function parseTopics(value: string): string[] {
+  const seen = new Set<string>();
+  const topics: string[] = [];
+  for (const part of value.split(",")) {
+    const topic = part.trim();
+    if (!topic || seen.has(topic)) continue;
+    seen.add(topic);
+    topics.push(topic);
+  }
+  return topics;
+}
+
+function sameTopics(left: string[] | undefined, right: string[]): boolean {
+  const current = left ?? [];
+  return current.length === right.length && current.every((topic, index) => topic === right[index]);
+}
+
+/** Facts store importance as 1–5; older or hand-edited records may not, so clamp before showing them in a select. */
+function normalizeImportance(value: number): number {
+  if (!Number.isFinite(value)) return 3;
+  return Math.min(5, Math.max(1, Math.round(value)));
+}
+
+interface FactEditForm {
+  text: string;
+  kind: FactMemoryFact["kind"];
+  importance: number;
+  applicability: FactApplicability;
+  topics: string[];
+}
+
+/** Send only what changed so nova keeps untouched fields (and never re-applies a clamped value). */
+function buildFactPatch(fact: FactMemoryFact, form: FactEditForm): FactMemoryPatch | null {
+  const patch: FactMemoryPatch = {};
+  const text = form.text.trim();
+  if (text !== fact.text) patch.text = text;
+  if (form.kind !== fact.kind) patch.kind = form.kind;
+  if (form.importance !== fact.importance) patch.importance = form.importance;
+  if (form.applicability !== fact.applicability) patch.applicability = form.applicability;
+  if (!sameTopics(fact.topics, form.topics)) patch.topics = form.topics;
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+interface FactEditDialogProps {
+  fact: FactMemoryFact;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+/** Edit one fact through `nova memory edit`; the CLI's `Error: ...` text is shown verbatim. */
+function FactEditDialog({ fact, onClose, onSaved }: FactEditDialogProps) {
+  const titleId = useId();
+  const [text, setText] = useState(fact.text);
+  const [kind, setKind] = useState<FactMemoryFact["kind"]>(fact.kind);
+  const [importance, setImportance] = useState(normalizeImportance(fact.importance));
+  const [applicability, setApplicability] = useState<FactApplicability>(fact.applicability);
+  const [topicsInput, setTopicsInput] = useState((fact.topics ?? []).join(", "));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [saving, onClose]);
+
+  const topics = parseTopics(topicsInput);
+  const projectPaths = fact.projects ?? [];
+  const canUseProject = projectPaths.length > 0;
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      setError("正文不能为空。");
+      return;
+    }
+    if (topics.length > MAX_FACT_TOPICS) {
+      setError(`主题最多 ${MAX_FACT_TOPICS} 个。`);
+      return;
+    }
+    const patch = buildFactPatch(fact, { text, kind, importance, applicability, topics });
+    if (!patch) {
+      setError("没有需要保存的更改。");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await updateFactMemory({ id: fact.id, action: "edit", patch });
+    } catch (reason) {
+      setError(String(reason));
+      setSaving(false);
+      return;
+    }
+    onClose();
+    onSaved();
+  };
+
+  return createPortal(
+    <div
+      className="personalization-modal-backdrop"
+      onMouseDown={() => {
+        if (!saving) onClose();
+      }}
+    >
+      <form
+        className="personalization-form personalization-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => void submit(event)}
+      >
+        <div className="personalization-modal-header">
+          <span className="personalization-modal-icon">
+            <Pencil size={17} />
+          </span>
+          <div>
+            <h2 id={titleId}>编辑事实</h2>
+            <p>保存后通过 nova memory edit 写回，下次会话生效</p>
+          </div>
+          <button
+            type="button"
+            className="personalization-modal-close"
+            disabled={saving}
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="personalization-modal-fields">
+          <label>
+            <span>
+              正文 <small>{text.length}/{MAX_FACT_TEXT_CHARS}</small>
+            </span>
+            <textarea
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder="用一句话写清这条事实…"
+              rows={4}
+              maxLength={MAX_FACT_TEXT_CHARS}
+              autoFocus
+            />
+          </label>
+          <div className="fact-memory-edit-row">
+            <label>
+              <span>类型</span>
+              <select
+                value={kind}
+                onChange={(event) => setKind(event.target.value as FactMemoryFact["kind"])}
+              >
+                {(Object.keys(KIND_LABELS) as Array<FactMemoryFact["kind"]>).map((value) => (
+                  <option key={value} value={value}>
+                    {KIND_LABELS[value] ?? value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>重要度</span>
+              <select value={importance} onChange={(event) => setImportance(Number(event.target.value))}>
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <option key={value} value={value}>
+                    {value} / 5
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>适用范围</span>
+            <select
+              value={applicability}
+              onChange={(event) => setApplicability(event.target.value as FactApplicability)}
+            >
+              {GROUPS.map((group) => (
+                <option key={group.id} value={group.id} disabled={group.id === "project" && !canUseProject}>
+                  {group.label}
+                </option>
+              ))}
+            </select>
+            <small className="fact-memory-edit-hint">
+              {canUseProject
+                ? `「项目环境」只对 ${projectPaths.map(basename).join("、")} 生效。`
+                : "这条事实没有关联项目，无法设为「项目环境」。"}
+            </small>
+          </label>
+          <label>
+            <span>
+              主题 <small>{topics.length}/{MAX_FACT_TOPICS}</small>
+            </span>
+            <input
+              value={topicsInput}
+              onChange={(event) => setTopicsInput(event.target.value)}
+              placeholder="用逗号分隔，例如：依赖, 构建"
+            />
+            <small className="fact-memory-edit-hint">最多 {MAX_FACT_TOPICS} 个，留空表示没有主题。</small>
+          </label>
+        </div>
+        {error && (
+          <p className="personalization-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="personalization-modal-actions">
+          <button type="button" className="personalization-cancel" disabled={saving} onClick={onClose}>
+            取消
+          </button>
+          <button className="personalization-save" type="submit" disabled={saving}>
+            {saving ? <LoaderCircle size={15} /> : <Pencil size={15} />}
+            保存
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 interface FactCardProps {
   fact: FactMemoryFact;
   busy: boolean;
   onAction: (fact: FactMemoryFact, action: MemoryFactAction) => void;
+  onEdit: (fact: FactMemoryFact) => void;
 }
 
-function FactCard({ fact, busy, onAction }: FactCardProps) {
+function FactCard({ fact, busy, onAction, onEdit }: FactCardProps) {
   const tooltipId = useId();
+  const editHint = "编辑：修改正文、类型、重要度、适用范围和主题。";
   const pinHint = fact.pinned
     ? "取消置顶：恢复按相关性等规则选择这条记忆。"
     : "置顶：优先选入对话上下文，仍受适用范围和容量限制。";
@@ -163,28 +395,46 @@ function FactCard({ fact, busy, onAction }: FactCardProps) {
       {!archived && (
         <div className="fact-memory-actions">
           <span className="fact-memory-action">
-          <button
-            type="button"
-            aria-describedby={`${tooltipId}-pin`}
-            aria-label={fact.pinned ? `取消置顶：${fact.text}` : `置顶：${fact.text}`}
-            disabled={busy}
-            onClick={() => onAction(fact, fact.pinned ? "unpin" : "pin")}
-          >
-            {fact.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-          </button>
-          <span id={`${tooltipId}-pin`} role="tooltip" className="fact-memory-action-tooltip">{pinHint}</span>
+            <button
+              type="button"
+              aria-describedby={`${tooltipId}-edit`}
+              aria-label={`编辑：${fact.text}`}
+              disabled={busy}
+              onClick={() => onEdit(fact)}
+            >
+              <Pencil size={14} />
+            </button>
+            <span id={`${tooltipId}-edit`} role="tooltip" className="fact-memory-action-tooltip">
+              {editHint}
+            </span>
           </span>
           <span className="fact-memory-action">
-          <button
-            type="button"
-            aria-describedby={`${tooltipId}-archive`}
-            aria-label={`归档：${fact.text}`}
-            disabled={busy}
-            onClick={() => onAction(fact, "archive")}
-          >
-            {busy ? <LoaderCircle size={14} /> : <Archive size={14} />}
-          </button>
-          <span id={`${tooltipId}-archive`} role="tooltip" className="fact-memory-action-tooltip">{archiveHint}</span>
+            <button
+              type="button"
+              aria-describedby={`${tooltipId}-pin`}
+              aria-label={fact.pinned ? `取消置顶：${fact.text}` : `置顶：${fact.text}`}
+              disabled={busy}
+              onClick={() => onAction(fact, fact.pinned ? "unpin" : "pin")}
+            >
+              {fact.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+            </button>
+            <span id={`${tooltipId}-pin`} role="tooltip" className="fact-memory-action-tooltip">
+              {pinHint}
+            </span>
+          </span>
+          <span className="fact-memory-action">
+            <button
+              type="button"
+              aria-describedby={`${tooltipId}-archive`}
+              aria-label={`归档：${fact.text}`}
+              disabled={busy}
+              onClick={() => onAction(fact, "archive")}
+            >
+              {busy ? <LoaderCircle size={14} /> : <Archive size={14} />}
+            </button>
+            <span id={`${tooltipId}-archive`} role="tooltip" className="fact-memory-action-tooltip">
+              {archiveHint}
+            </span>
           </span>
         </div>
       )}
@@ -198,6 +448,7 @@ export function FactMemoryPanel() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingFact, setEditingFact] = useState<FactMemoryFact | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
@@ -371,7 +622,13 @@ export function FactMemoryPanel() {
               </span>
             </div>
             {group.facts.map((fact) => (
-              <FactCard key={fact.id} fact={fact} busy={busyId === fact.id} onAction={(target, action) => void runAction(target, action)} />
+              <FactCard
+                key={fact.id}
+                fact={fact}
+                busy={busyId === fact.id}
+                onAction={(target, action) => void runAction(target, action)}
+                onEdit={setEditingFact}
+              />
             ))}
           </section>
         ))
@@ -383,9 +640,22 @@ export function FactMemoryPanel() {
             <span>不再注入 · {archivedFacts.length} 条</span>
           </div>
           {archivedFacts.map((fact) => (
-            <FactCard key={fact.id} fact={fact} busy={false} onAction={(target, action) => void runAction(target, action)} />
+            <FactCard
+              key={fact.id}
+              fact={fact}
+              busy={false}
+              onAction={(target, action) => void runAction(target, action)}
+              onEdit={setEditingFact}
+            />
           ))}
         </section>
+      )}
+      {editingFact && (
+        <FactEditDialog
+          fact={editingFact}
+          onClose={() => setEditingFact(null)}
+          onSaved={() => void refresh()}
+        />
       )}
     </section>
   );
