@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import type { ChatMessage, ToolCall } from "../../stores/agent-store";
+import { MemoryRetrievalCard } from "./MemoryRetrievalCard.tsx";
 import { ThinkingCard } from "./ThinkingCard.tsx";
 import { ToolCallCard } from "./ToolCallCard.tsx";
 
@@ -27,9 +28,15 @@ export function AnalysisGroup({ activities, tools, thinking, running }: {
       </button>
       {open && (
         <div id={panelId} className="analysis-group-panel">
-          {activities.map(activity => activity.role === "thinking"
-            ? <ThinkingCard key={activity.id} content={activity.content} />
-            : <div key={activity.id}>{activity.toolCalls?.map(renderTool)}</div>)}
+          {activities.map((activity) => {
+            if (activity.role === "thinking") {
+              return <ThinkingCard key={activity.id} content={activity.content} />;
+            }
+            if (activity.role === "memory") {
+              return <MemoryRetrievalCard key={activity.id} content={activity.content} />;
+            }
+            return <div key={activity.id}>{activity.toolCalls?.map(renderTool)}</div>;
+          })}
           {tools.map(renderTool)}
           {thinking && <ThinkingCard content={thinking} streaming />}
         </div>

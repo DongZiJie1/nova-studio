@@ -496,7 +496,9 @@ const ChatHistory = memo(function ChatHistory({
   let pending: AgentState["messages"] = [];
   let analysisId = "initial-analysis";
   for (const message of messages) {
-    if (message.role === "thinking" || message.role === "tool") {
+    // Retrieved memories are context produced before the reply, so they belong in
+    // the same collapsible analysis block as thinking and tool activity.
+    if (message.role === "thinking" || message.role === "tool" || message.role === "memory") {
       pending.push(message);
     } else {
       if (pending.length) {
