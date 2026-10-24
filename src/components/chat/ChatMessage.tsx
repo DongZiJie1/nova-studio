@@ -7,6 +7,7 @@ import { useSettingsStore } from "../../stores/settings-store";
 import { Markdown } from "./Markdown";
 import { ThinkingCard } from "./ThinkingCard";
 import { ToolCallCard } from "./ToolCallCard";
+import { MemoryRetrievalCard } from "./MemoryRetrievalCard";
 
 export interface TurnFileChange {
   path: string;
@@ -201,6 +202,13 @@ export const ChatMessage = memo(function ChatMessage({
   }
   if (message.role === "thinking") {
     return <div className="msg-row msg-row-special"><ThinkingCard content={message.content} /></div>;
+  }
+  if (message.role === "memory") {
+    return (
+      <div className="msg-row msg-row-special">
+        <MemoryRetrievalCard content={message.content} />
+      </div>
+    );
   }
   if (message.role === "tool") {
     return (

@@ -604,6 +604,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
               ? "子任务批次完成指令"
               : role === "notice"
                 ? "系统提示"
+                : role === "memory"
+                  ? "记忆检索"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
@@ -3982,7 +3984,9 @@ export function AppShell() {
                                   ? "ASSISTANT"
                                   : message.role === "thinking"
                                     ? "THINK"
-                                    : "TOOL";
+                                    : message.role === "memory"
+                                      ? "MEMORY"
+                                      : "TOOL";
                             return (
                             <div
                               key={message.id}
