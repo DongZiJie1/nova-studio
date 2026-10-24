@@ -1,20 +1,6 @@
 import { useMemo, useState } from "react";
 import { Brain, ChevronRight } from "lucide-react";
-
-interface RetrievedFact {
-  id: string;
-  text: string;
-}
-
-/** The injected block is `- [fact_...] text` lines inside `<retrieved_user_memory>`. */
-function parseFacts(content: string): RetrievedFact[] {
-  const facts: RetrievedFact[] = [];
-  for (const line of content.split("\n")) {
-    const match = /^- \[(fact_[^\]]+)\]\s*(.*)$/.exec(line.trim());
-    if (match) facts.push({ id: match[1], text: match[2] });
-  }
-  return facts;
-}
+import { parseRetrievedFacts } from "../../lib/memory-retrieval";
 
 /**
  * Shows the facts retrieved for this request. Collapsed by default: the block is
@@ -22,7 +8,7 @@ function parseFacts(content: string): RetrievedFact[] {
  */
 export function MemoryRetrievalCard({ content }: { content: string }) {
   const [open, setOpen] = useState(false);
-  const facts = useMemo(() => parseFacts(content), [content]);
+  const facts = useMemo(() => parseRetrievedFacts(content), [content]);
 
   return (
     <div className={`memory-retrieval-card${open ? " is-open" : ""}`}>

@@ -86,6 +86,7 @@ import {
   type SlashCommand,
 } from "../../lib/slash-commands";
 import { findFileMention, insertFileMention } from "../../lib/file-mentions";
+import { parseRetrievedFacts } from "../../lib/memory-retrieval";
 import { providerLogo } from "../../lib/provider-logos";
 import {
   Paperclip,
@@ -682,6 +683,41 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
       {!isContextEntry && matchingTraces.length === 0 && !thinkingTrace && (
         <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
       )}
+    </div>
+  );
+}
+
+function TrajectoryMemoryRetrievalDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
+  const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
+  const content = typeof data.content === "string" ? data.content : "";
+  const facts = parseRetrievedFacts(content);
+  const timestamp = data.timestamp;
+
+  return (
+    <div className="trajectory-memory-details trajectory-memory-retrieval">
+      <div className="trajectory-memory-summary">
+        <span>{facts.length}</span>
+        <div>
+          <strong>条相关记忆</strong>
+          <p>按这条用户消息从长期记忆库选出，作为本轮上下文</p>
+        </div>
+      </div>
+      <dl className="trajectory-execution-summary">
+        <div><dt>事件类型</dt><dd>记忆检索</dd></div>
+        <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
+      </dl>
+      <div className="trajectory-memory-list">
+        {facts.map((fact, index) => (
+          <section className="trajectory-memory-section" key={fact.id}>
+            <header>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{fact.id}</strong>
+            </header>
+            <p>{fact.text}</p>
+          </section>
+        ))}
+        {facts.length === 0 && <p className="trajectory-detail-empty">没有可展示的记忆条目</p>}
+      </div>
     </div>
   );
 }
@@ -4111,7 +4147,11 @@ export function AppShell() {
                     </div>
                     <div className="trajectory-detail-body">
                       {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
-                        <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                        (selectedTrajectoryEntry.data as { role?: string } | undefined)?.role === "memory" ? (
+                          <TrajectoryMemoryRetrievalDetails entry={selectedTrajectoryEntry} />
+                        ) : (
+                          <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                        )
                       ) : (
                         selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
                       )}
