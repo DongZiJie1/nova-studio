@@ -2105,6 +2105,230 @@ pub async fn respond_tool_permission(
         .await
 }
 
+/// Providers supported by nova's built-in `web_search` tool
+/// (`packages/nova/src/core/search/config.ts`).
+const SEARCH_PROVIDERS: [&str; 7] = [
+    "so",
+    "duckduckgo",
+    "bing",
+    "brave",
+    "tavily",
+    "deepseek",
+    "searxng",
+];
+/// Nova's defaults when the `search` section is absent or invalid.
+const DEFAULT_SEARCH_PROVIDER: &str = "so";
+const DEFAULT_SEARCH_MAX_RESULTS: u32 = 5;
+const DEFAULT_SEARCH_TIMEOUT_MS: u32 = 20_000;
+/// Bounds nova clamps `search.maxResults` / `search.timeoutMs` to.
+const MAX_SEARCH_RESULTS: u32 = 10;
+const MIN_SEARCH_TIMEOUT_MS: u32 = 1_000;
+const MAX_SEARCH_TIMEOUT_MS: u32 = 60_000;
+
+/// The `search` section of the agent-level settings.json, resolved the same way
+/// nova's `resolveWebSearchConfig` does. `deepseekAuthKeyAvailable` lets the
+/// settings page show that the DeepSeek login already provides a search key.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSettingsState {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub max_results: u32,
+    pub timeout_ms: u32,
+    /// True when auth.json holds a DeepSeek api_key credential.
+    pub deepseek_auth_key_available: bool,
+}
+
+/// Payload of `saveSearchSettings` from the settings page.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSearchSettingsInput {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub max_results: u32,
+    pub timeout_ms: u32,
+}
+
+/// Trim + lowercase a provider id and resolve it to the canonical spelling.
+/// Unknown ids are rejected so a typo cannot silently switch the provider.
+fn normalize_search_provider(value: &str) -> Option<&'static str> {
+    let provider = value.trim().to_ascii_lowercase();
+    SEARCH_PROVIDERS
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == provider.as_str())
+}
+
+fn clamp_search_max_results(value: u32) -> u32 {
+    value.clamp(1, MAX_SEARCH_RESULTS)
+}
+
+fn clamp_search_timeout_ms(value: u32) -> u32 {
+    value.clamp(MIN_SEARCH_TIMEOUT_MS, MAX_SEARCH_TIMEOUT_MS)
+}
+
+/// Trimmed non-empty string from a settings entry; whitespace-only means unset.
+fn trimmed_search_string(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+/// One numeric entry of the `search` section: JSON numbers and numeric strings
+/// (nova's resolver parses `"7"` too, so the page shows what nova would use),
+/// floored and clamped by `clamp`; anything else keeps the default.
+fn read_search_number(
+    value: Option<&serde_json::Value>,
+    default: u32,
+    clamp: fn(u32) -> u32,
+) -> u32 {
+    let parsed = value.and_then(|value| match value {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(text) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    });
+    parsed
+        .filter(|number| number.is_finite())
+        // `as u32` saturates, so huge or negative numbers clamp safely.
+        .map(|number| clamp(number.floor() as u32))
+        .unwrap_or(default)
+}
+
+/// `search` from the agent-level settings.json. A missing or malformed file
+/// means defaults, like nova's own fallback.
+fn read_search_settings(agent_dir: &Path) -> SearchSettingsState {
+    let settings_path = agent_dir.join("settings.json");
+    let settings = std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    SearchSettingsState {
+        provider: settings
+            .pointer("/search/provider")
+            .and_then(serde_json::Value::as_str)
+            .and_then(normalize_search_provider)
+            .unwrap_or(DEFAULT_SEARCH_PROVIDER)
+            .to_string(),
+        api_key: trimmed_search_string(settings.pointer("/search/apiKey")),
+        base_url: trimmed_search_string(settings.pointer("/search/baseUrl")),
+        max_results: read_search_number(
+            settings.pointer("/search/maxResults"),
+            DEFAULT_SEARCH_MAX_RESULTS,
+            clamp_search_max_results,
+        ),
+        timeout_ms: read_search_number(
+            settings.pointer("/search/timeoutMs"),
+            DEFAULT_SEARCH_TIMEOUT_MS,
+            clamp_search_timeout_ms,
+        ),
+        deepseek_auth_key_available: has_deepseek_auth_key(agent_dir),
+    }
+}
+
+/// `deepseek` search reuses the API key `/login` stored in auth.json, so the
+/// settings page needs to know whether that credential is already available.
+fn has_deepseek_auth_key(agent_dir: &Path) -> bool {
+    read_auth_object(agent_dir)
+        .get("deepseek")
+        .filter(|credential| {
+            credential.get("type").and_then(serde_json::Value::as_str) == Some("api_key")
+        })
+        .and_then(|credential| credential.get("key"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
+}
+
+/// Merge the settings page payload into an existing settings object, creating
+/// the `search` object on the way and refusing to overwrite a non-object value.
+/// Kept pure so the merge rules are testable without touching disk; every
+/// unrelated key (top level and inside `search`) is preserved.
+fn apply_search_settings(
+    settings: &mut serde_json::Value,
+    input: &SaveSearchSettingsInput,
+) -> Result<(), String> {
+    let provider = normalize_search_provider(&input.provider)
+        .ok_or_else(|| format!("Unsupported search provider: {}", input.provider.trim()))?;
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings.json must contain a JSON object")?;
+    let search = root
+        .entry("search")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("settings.json search must be an object")?;
+
+    search.insert(
+        "provider".to_string(),
+        serde_json::Value::String(provider.to_string()),
+    );
+    for (key, value) in [
+        ("apiKey", input.api_key.as_deref()),
+        ("baseUrl", input.base_url.as_deref()),
+    ] {
+        match value.map(str::trim).filter(|text| !text.is_empty()) {
+            Some(text) => {
+                search.insert(key.to_string(), serde_json::Value::String(text.to_string()));
+            }
+            None => {
+                // Blank means "unset", so nova falls back to its env vars and
+                // defaults instead of sending an empty credential.
+                search.remove(key);
+            }
+        }
+    }
+    search.insert(
+        "maxResults".to_string(),
+        serde_json::json!(clamp_search_max_results(input.max_results)),
+    );
+    search.insert(
+        "timeoutMs".to_string(),
+        serde_json::json!(clamp_search_timeout_ms(input.timeout_ms)),
+    );
+    Ok(())
+}
+
+/// Persist the search settings into the agent-level settings.json, preserving
+/// every other key, then re-read so the caller sees the effective values
+/// (normalized provider, clamped numbers).
+fn persist_search_settings(
+    agent_dir: &Path,
+    input: &SaveSearchSettingsInput,
+) -> Result<SearchSettingsState, String> {
+    let settings_path = agent_dir.join("settings.json");
+    let mut settings = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|error| format!("Unable to read {}: {error}", settings_path.display()))?;
+        serde_json::from_str::<serde_json::Value>(&content)
+            .map_err(|error| format!("Unable to parse {}: {error}", settings_path.display()))?
+    } else {
+        serde_json::json!({})
+    };
+    apply_search_settings(&mut settings, input)?;
+    std::fs::create_dir_all(agent_dir)
+        .map_err(|error| format!("Unable to create {}: {error}", agent_dir.display()))?;
+    write_private_json(&settings_path, &settings)?;
+    Ok(read_search_settings(agent_dir))
+}
+
+#[tauri::command]
+pub async fn get_search_settings() -> Result<SearchSettingsState, String> {
+    let agent_dir = nova_agent_dir()?;
+    Ok(read_search_settings(&agent_dir))
+}
+
+#[tauri::command]
+pub async fn save_search_settings(
+    input: SaveSearchSettingsInput,
+) -> Result<SearchSettingsState, String> {
+    let agent_dir = nova_agent_dir()?;
+    persist_search_settings(&agent_dir, &input)
+}
+
 #[cfg(test)]
 mod todo_tests {
     use super::*;
@@ -2972,6 +3196,299 @@ mod memory_tests {
         }
 
         assert!(persist_retrieval_interval(&base, 0).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The 网络搜索 page must render nova's defaults before anything is saved,
+    /// and degrade to them when settings.json is malformed.
+    #[test]
+    fn search_settings_default_to_nova_values_when_file_is_missing() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-defaults-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, DEFAULT_SEARCH_PROVIDER);
+        assert_eq!(state.api_key, None);
+        assert_eq!(state.base_url, None);
+        assert_eq!(state.max_results, DEFAULT_SEARCH_MAX_RESULTS);
+        assert_eq!(state.timeout_ms, DEFAULT_SEARCH_TIMEOUT_MS);
+        assert!(!state.deepseek_auth_key_available);
+
+        std::fs::write(base.join("settings.json"), "not json").unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, DEFAULT_SEARCH_PROVIDER);
+        assert_eq!(state.max_results, DEFAULT_SEARCH_MAX_RESULTS);
+        assert_eq!(state.timeout_ms, DEFAULT_SEARCH_TIMEOUT_MS);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Read path mirrors nova's resolver: trimmed/lowercased providers, unknown
+    /// providers fall back to `so`, numbers are floored and clamped, strings are
+    /// ignored, and blank credentials read as unset.
+    #[test]
+    fn reads_search_settings_from_agent_settings() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-read-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("settings.json");
+
+        std::fs::write(
+            &path,
+            r#"{"defaultModel":"provider/model","search":{"provider":"  Brave ","apiKey":"  sk-brave  ","baseUrl":" https://api.example.com ","maxResults":42,"timeoutMs":999,"customFlag":true}}"#,
+        )
+        .unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, "brave");
+        assert_eq!(state.api_key.as_deref(), Some("sk-brave"));
+        assert_eq!(state.base_url.as_deref(), Some("https://api.example.com"));
+        assert_eq!(state.max_results, MAX_SEARCH_RESULTS);
+        assert_eq!(state.timeout_ms, MIN_SEARCH_TIMEOUT_MS);
+
+        // Unknown providers fall back to the default; fractions are floored.
+        std::fs::write(
+            &path,
+            r#"{"search":{"provider":"google","maxResults":3.9,"timeoutMs":2500.8}}"#,
+        )
+        .unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, DEFAULT_SEARCH_PROVIDER);
+        assert_eq!(state.max_results, 3);
+        assert_eq!(state.timeout_ms, 2_500);
+
+        // Numeric strings are accepted (nova parses them too); booleans and
+        // other types fall back to the defaults.
+        std::fs::write(&path, r#"{"search":{"maxResults":"7","timeoutMs":true}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, 7);
+        assert_eq!(state.timeout_ms, DEFAULT_SEARCH_TIMEOUT_MS);
+
+        std::fs::write(
+            &path,
+            r#"{"search":{"maxResults":" 3 ","timeoutMs":"2500"}}"#,
+        )
+        .unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, 3);
+        assert_eq!(state.timeout_ms, 2_500);
+
+        // Zero / negative values clamp up, huge values clamp down.
+        std::fs::write(&path, r#"{"search":{"maxResults":0,"timeoutMs":-500}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, 1);
+        assert_eq!(state.timeout_ms, MIN_SEARCH_TIMEOUT_MS);
+
+        std::fs::write(&path, r#"{"search":{"maxResults":1e9,"timeoutMs":1e9}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, MAX_SEARCH_RESULTS);
+        assert_eq!(state.timeout_ms, MAX_SEARCH_TIMEOUT_MS);
+
+        // Whitespace-only credentials read as unset.
+        std::fs::write(&path, r#"{"search":{"apiKey":"   ","baseUrl":""}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.api_key, None);
+        assert_eq!(state.base_url, None);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// `deepseek` search reuses the `/login` credential, so the page needs to
+    /// know whether auth.json already holds an `api_key` (oauth does not count).
+    #[test]
+    fn search_settings_detect_deepseek_api_key_credential() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-auth-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let auth_path = base.join("auth.json");
+
+        assert!(
+            !read_search_settings(&base).deepseek_auth_key_available,
+            "missing auth.json"
+        );
+
+        std::fs::write(
+            &auth_path,
+            r#"{"deepseek":{"type":"api_key","key":"sk-deepseek"}}"#,
+        )
+        .unwrap();
+        assert!(read_search_settings(&base).deepseek_auth_key_available);
+
+        // OAuth tokens are not an API key.
+        std::fs::write(&auth_path, r#"{"deepseek":{"type":"oauth","key":"token"}}"#).unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        // Empty / whitespace keys are not usable.
+        std::fs::write(&auth_path, r#"{"deepseek":{"type":"api_key","key":"  "}}"#).unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        // Other providers do not leak into the DeepSeek check.
+        std::fs::write(
+            &auth_path,
+            r#"{"brave":{"type":"api_key","key":"sk-brave"}}"#,
+        )
+        .unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        // Malformed auth.json reads as absent.
+        std::fs::write(&auth_path, "not json").unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Saving merges into the page's own section: unrelated settings and unknown
+    /// keys inside `search` survive, blank credentials are removed, numbers are
+    /// clamped, and a broken `search` section is an error rather than data loss.
+    #[test]
+    fn applies_search_settings_to_settings_object() {
+        let mut settings = serde_json::json!({
+            "defaultModel": "provider/model",
+            "search": { "provider": "bing", "apiKey": "old-key", "customFlag": true },
+            "memory": { "enabled": true }
+        });
+        let input = SaveSearchSettingsInput {
+            provider: "  DEEPSEEK ".to_string(),
+            api_key: Some("  sk-deepseek  ".to_string()),
+            base_url: Some("   ".to_string()),
+            max_results: 25,
+            timeout_ms: 10,
+        };
+        apply_search_settings(&mut settings, &input).unwrap();
+        assert_eq!(settings.pointer("/search/provider").unwrap(), "deepseek");
+        assert_eq!(settings.pointer("/search/apiKey").unwrap(), "sk-deepseek");
+        assert!(
+            settings.pointer("/search/baseUrl").is_none(),
+            "blank baseUrl must be removed"
+        );
+        assert_eq!(settings.pointer("/search/maxResults").unwrap(), 10);
+        assert_eq!(settings.pointer("/search/timeoutMs").unwrap(), 1_000);
+        assert_eq!(settings.pointer("/search/customFlag").unwrap(), true);
+        assert_eq!(settings.pointer("/defaultModel").unwrap(), "provider/model");
+        assert_eq!(settings.pointer("/memory/enabled").unwrap(), true);
+
+        // Omitting the credentials removes them from the section.
+        let cleared = SaveSearchSettingsInput {
+            provider: "so".to_string(),
+            api_key: None,
+            base_url: None,
+            max_results: 0,
+            timeout_ms: 120_000,
+        };
+        apply_search_settings(&mut settings, &cleared).unwrap();
+        assert_eq!(settings.pointer("/search/provider").unwrap(), "so");
+        assert!(settings.pointer("/search/apiKey").is_none());
+        assert!(settings.pointer("/search/baseUrl").is_none());
+        assert_eq!(settings.pointer("/search/maxResults").unwrap(), 1);
+        assert_eq!(settings.pointer("/search/timeoutMs").unwrap(), 60_000);
+
+        // A settings.json without a `search` section gets one created.
+        let mut bare = serde_json::json!({ "theme": "dark" });
+        apply_search_settings(&mut bare, &cleared).unwrap();
+        assert_eq!(bare.pointer("/search/provider").unwrap(), "so");
+        assert_eq!(bare.pointer("/theme").unwrap(), "dark");
+
+        // A non-object `search` section is refused instead of overwritten.
+        let mut broken = serde_json::json!({ "search": "oops" });
+        let error = apply_search_settings(&mut broken, &cleared).unwrap_err();
+        assert!(error.contains("search"));
+
+        // Unknown providers are rejected and leave the object untouched.
+        let mut untouched = serde_json::json!({ "search": { "provider": "so" } });
+        let unknown = SaveSearchSettingsInput {
+            provider: "google".to_string(),
+            ..cleared
+        };
+        let error = apply_search_settings(&mut untouched, &unknown).unwrap_err();
+        assert!(error.contains("Unsupported search provider"));
+        assert_eq!(untouched.pointer("/search/provider").unwrap(), "so");
+    }
+
+    /// Persist round-trips through the reader while preserving unrelated keys,
+    /// removes cleared credentials, leaves no `.tmp` behind and keeps 0600.
+    #[test]
+    fn persists_search_settings_and_round_trips_through_the_reader() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-write-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("settings.json"),
+            r#"{"defaultModel":"provider/model","search":{"keep":1},"memory":{"enabled":true}}"#,
+        )
+        .unwrap();
+
+        let input = SaveSearchSettingsInput {
+            provider: "  Tavily ".to_string(),
+            api_key: Some("  tvly-1  ".to_string()),
+            base_url: Some("  https://searx.example  ".to_string()),
+            max_results: 7,
+            timeout_ms: 12_000,
+        };
+        let state = persist_search_settings(&base, &input).unwrap();
+        assert_eq!(state.provider, "tavily");
+        assert_eq!(state.api_key.as_deref(), Some("tvly-1"));
+        assert_eq!(state.base_url.as_deref(), Some("https://searx.example"));
+        assert_eq!(state.max_results, 7);
+        assert_eq!(state.timeout_ms, 12_000);
+
+        let content = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(value.pointer("/defaultModel").unwrap(), "provider/model");
+        assert_eq!(value.pointer("/memory/enabled").unwrap(), true);
+        assert_eq!(value.pointer("/search/keep").unwrap(), 1);
+        assert_eq!(value.pointer("/search/apiKey").unwrap(), "tvly-1");
+        assert!(!base.join("settings.json.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(base.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // Clearing a credential removes the key from disk.
+        let cleared = SaveSearchSettingsInput {
+            provider: "so".to_string(),
+            api_key: None,
+            base_url: None,
+            max_results: 5,
+            timeout_ms: 20_000,
+        };
+        let state = persist_search_settings(&base, &cleared).unwrap();
+        assert_eq!(state.api_key, None);
+        assert_eq!(state.base_url, None);
+        let content = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(value.pointer("/search/apiKey").is_none());
+        assert!(value.pointer("/search/baseUrl").is_none());
+        assert_eq!(value.pointer("/search/keep").unwrap(), 1);
+
+        // Rejecting an unknown provider leaves the file byte-for-byte intact.
+        let before = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let unknown = SaveSearchSettingsInput {
+            provider: "google".to_string(),
+            ..cleared
+        };
+        assert!(persist_search_settings(&base, &unknown).is_err());
+        assert_eq!(
+            std::fs::read_to_string(base.join("settings.json")).unwrap(),
+            before
+        );
+
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

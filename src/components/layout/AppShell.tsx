@@ -68,6 +68,7 @@ import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
 import { MemorySettings } from "../settings/MemorySettings";
 import { ProfileSettings } from "../settings/ProfileSettings";
+import { SearchSettings } from "../settings/SearchSettings";
 import { useTodoWarningCount } from "../todos/useTodoWarningCount";
 import { useScheduleCount } from "../schedules/useScheduleCount";
 import { TodoPage } from "../todos/TodoPage";
@@ -123,6 +124,7 @@ import {
   RotateCcw,
   Bot,
   UserRound,
+  Globe,
   Brain,
   GitBranch,
   GitMerge,
@@ -2088,7 +2090,7 @@ export function AppShell() {
       {scheduleCount > 99 ? "99+" : scheduleCount}
     </span>
   ) : null;
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "memory" | "personalization" | "activity">("appearance");
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "search" | "memory" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -3563,6 +3565,7 @@ export function AppShell() {
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" data-tooltip="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" data-tooltip="外观设置"><Palette size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" data-tooltip="模型设置"><Bot size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "search" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("search")} aria-label="网络搜索" data-tooltip="网络搜索"><Globe size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "memory" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("memory")} aria-label="记忆设置" data-tooltip="记忆设置"><Brain size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" data-tooltip="个性化设置"><UserRound size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" data-tooltip="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
@@ -3617,6 +3620,10 @@ export function AppShell() {
                   <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
                     <Bot size={16} />
                     <span>模型</span>
+                  </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "search" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("search")}>
+                    <Globe size={16} />
+                    <span>网络搜索</span>
                   </button>
                   <button type="button" className={`settings-category-button ${settingsSection === "memory" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("memory")}>
                     <Brain size={16} />
@@ -3929,6 +3936,8 @@ export function AppShell() {
                     models={availableModels}
                     onSaved={refreshModelCatalog}
                   />
+                ) : settingsSection === "search" ? (
+                  <SearchSettings />
                 ) : settingsSection === "memory" ? (
                   <MemorySettings />
                 ) : settingsSection === "personalization" ? (

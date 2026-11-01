@@ -226,6 +226,8 @@ pub fn run() {
             commands::get_model_configurations,
             commands::delete_model_configuration,
             commands::delete_provider_configuration,
+            commands::get_search_settings,
+            commands::save_search_settings,
             commands::get_user_memory,
             commands::save_user_memory,
             commands::delete_user_memory,

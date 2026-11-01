@@ -306,6 +306,35 @@ export async function deleteProviderConfiguration(providerId: string): Promise<v
   return invoke("delete_provider_configuration", { providerId });
 }
 
+/** `search` section of the agent settings.json, resolved with nova's defaults. */
+export interface SearchSettingsState {
+  provider: string;
+  /** Stored `search.apiKey` only — the deepseek fallback lives in auth.json. */
+  apiKey?: string;
+  baseUrl?: string;
+  maxResults: number;
+  timeoutMs: number;
+  /** True when auth.json holds a DeepSeek api_key credential (the /login key). */
+  deepseekAuthKeyAvailable: boolean;
+}
+
+export interface SaveSearchSettingsInput {
+  provider: string;
+  /** Empty or omitted removes the stored key, falling back to auth.json/env. */
+  apiKey?: string;
+  baseUrl?: string;
+  maxResults: number;
+  timeoutMs: number;
+}
+
+export async function getSearchSettings(): Promise<SearchSettingsState> {
+  return invoke<SearchSettingsState>("get_search_settings");
+}
+
+export async function saveSearchSettings(input: SaveSearchSettingsInput): Promise<SearchSettingsState> {
+  return invoke<SearchSettingsState>("save_search_settings", { input });
+}
+
 export interface UserMemorySection {
   id: string;
   title: string;
