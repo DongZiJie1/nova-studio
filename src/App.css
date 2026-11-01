@@ -5530,12 +5530,10 @@ body {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px 18px;
+  gap: 12px 24px;
   margin: 0 0 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--input-border);
-  border-radius: 12px;
-  background: var(--surface-control);
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--input-border);
 }
 
 .fact-memory-retrieval-copy {
@@ -5543,7 +5541,7 @@ body {
   flex: 1;
   flex-direction: column;
   gap: 4px;
-  min-width: 220px;
+  min-width: min(240px, 100%);
 }
 
 .fact-memory-retrieval-title {
@@ -5552,7 +5550,11 @@ body {
   gap: 6px;
   color: var(--text-heading);
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
+}
+
+.fact-memory-retrieval-title svg {
+  color: var(--color-text-muted);
 }
 
 .fact-memory-retrieval-copy small {
@@ -5565,13 +5567,20 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: var(--color-text-secondary);
   font-size: 12px;
 }
 
+.fact-memory-retrieval-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
 .fact-memory-retrieval-controls input {
-  width: 62px;
+  width: 54px;
   height: 32px;
   padding: 0 8px;
   border: 1px solid var(--input-border);
@@ -5582,17 +5591,24 @@ body {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: center;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .fact-memory-retrieval-controls input:focus {
   border-color: color-mix(in srgb, var(--color-accent-start) 55%, var(--input-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-start) 12%, transparent);
   outline: none;
 }
 
 .fact-memory-retrieval-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 56px;
   height: 32px;
-  padding: 0 14px;
-  border: 0;
+  padding: 0 12px;
+  border: 1px solid transparent;
   border-radius: 8px;
   color: white;
   background: var(--color-accent-start);
@@ -5600,10 +5616,26 @@ body {
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.fact-memory-retrieval-save:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-start) 88%, var(--text-heading));
+}
+
+.fact-memory-retrieval-save:focus-visible {
+  outline: 2px solid var(--color-accent-start);
+  outline-offset: 3px;
+}
+
+.fact-memory-retrieval-save svg {
+  animation: spin 0.9s linear infinite;
 }
 
 .fact-memory-retrieval-save:disabled {
-  opacity: 0.5;
+  color: var(--color-text-muted);
+  background: var(--surface-control);
+  border-color: var(--input-border);
   cursor: default;
 }
 

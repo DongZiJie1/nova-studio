@@ -446,6 +446,7 @@ function FactCard({ fact, busy, onAction, onEdit }: FactCardProps) {
 }
 
 export function FactMemoryPanel() {
+  const intervalHintId = useId();
   const [data, setData] = useState<FactMemoryState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -593,36 +594,41 @@ export function FactMemoryPanel() {
           <span className="fact-memory-retrieval-title">
             <Timer size={14} aria-hidden="true" /> 检索频率
           </span>
-          <small>
-            每 N 条用户消息调用一次模型检索记忆，1 表示每条消息都检索，最多 {MAX_RETRIEVAL_INTERVAL}。保存在 settings.json 的
-            memory.facts.retrievalInterval，从下一个会话开始生效。
+          <small id={intervalHintId}>
+            间隔越小，检索越频繁 · 下次会话生效
           </small>
         </div>
         <div className="fact-memory-retrieval-controls">
-          <input
-            type="number"
-            min={1}
-            max={MAX_RETRIEVAL_INTERVAL}
-            step={1}
-            value={intervalDraft}
-            disabled={intervalBusy}
-            aria-label="记忆检索频率（每条用户消息之间隔几条）"
-            onChange={(event) => {
-              setIntervalDraft(Number(event.target.value));
-              setIntervalNotice(null);
-            }}
-          />
-          <span>条消息检索一次</span>
+          <label className="fact-memory-retrieval-field">
+            <span>每</span>
+            <input
+              type="number"
+              min={1}
+              max={MAX_RETRIEVAL_INTERVAL}
+              step={1}
+              value={intervalDraft}
+              disabled={intervalBusy}
+              aria-label={`记忆检索间隔（1 至 ${MAX_RETRIEVAL_INTERVAL} 条用户消息）`}
+              aria-describedby={intervalHintId}
+              aria-invalid={intervalInvalid}
+              onChange={(event) => {
+                setIntervalDraft(Number(event.target.value));
+                setIntervalNotice(null);
+              }}
+            />
+            <span>条消息检索一次</span>
+          </label>
           <button
             type="button"
             className="fact-memory-retrieval-save"
             disabled={intervalBusy || intervalInvalid || intervalDraft === stats?.retrievalInterval}
             onClick={() => void saveInterval()}
           >
-            {intervalBusy ? <LoaderCircle size={14} /> : "应用"}
+            {intervalBusy && <LoaderCircle size={13} aria-hidden="true" />}
+            {intervalBusy ? "保存中" : "应用"}
           </button>
         </div>
-        {intervalNotice && <p className="fact-memory-retrieval-notice">{intervalNotice}</p>}
+        {intervalNotice && <p className="fact-memory-retrieval-notice" role="status">{intervalNotice}</p>}
       </div>
       <div className="fact-memory-toolbar">
         <label className="fact-memory-search">
