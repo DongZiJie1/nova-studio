@@ -380,7 +380,7 @@ function FactCard({ fact, busy, onAction, onEdit }: FactCardProps) {
           <span>{formatDate(fact.createdAt)}</span>
           <span className="fact-memory-chip">{KIND_LABELS[fact.kind] ?? fact.kind}</span>
           <span>重要度 {fact.importance}/5</span>
-          <span>命中 {fact.retrievalCount ?? 0} 次</span>
+          <span>使用 {fact.retrievalCount ?? 0} 次</span>
           {projectPaths.length > 0 && <span className="fact-memory-projects">{projectPaths.map(basename).join(" · ")}</span>}
           {fact.pinned && !archived && <span className="fact-memory-pinned">已置顶</span>}
           {archived && (
