@@ -233,6 +233,7 @@ pub fn run() {
             commands::get_fact_memory,
             commands::get_memory_suggestions,
             commands::update_fact_memory,
+            commands::set_memory_retrieval_interval,
             commands::resolve_memory_suggestion,
             commands::list_todos,
             commands::create_todo,

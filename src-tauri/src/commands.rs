@@ -768,6 +768,8 @@ pub struct FactMemoryStats {
     pending_suggestions: usize,
     /// `memory.enabled` and `memory.facts.enabled` from the agent settings.
     facts_enabled: bool,
+    /// `memory.facts.retrievalInterval`: user messages between retrieval calls.
+    retrieval_interval: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -905,6 +907,7 @@ fn build_fact_memory_state(
     facts: Vec<serde_json::Value>,
     pending_suggestions: usize,
     facts_enabled: bool,
+    retrieval_interval: u32,
 ) -> FactMemoryState {
     let mut facts = drop_unidentified(facts);
     let archived = facts.iter().filter(|fact| !fact_is_active(fact)).count();
@@ -913,10 +916,16 @@ fn build_fact_memory_state(
         archived,
         pending_suggestions,
         facts_enabled,
+        retrieval_interval,
     };
     facts.sort_by(compare_facts);
     FactMemoryState { facts, stats }
 }
+
+/// Nova's default when `memory.facts.retrievalInterval` is absent or invalid.
+const DEFAULT_RETRIEVAL_INTERVAL: u32 = 1;
+/// Upper bound nova clamps `memory.facts.retrievalInterval` to.
+const MAX_RETRIEVAL_INTERVAL: u32 = 50;
 
 /// Facts are off when either `memory.enabled` or `memory.facts.enabled` is
 /// false. Only the agent-level settings.json is read (no project overrides);
@@ -936,6 +945,75 @@ fn read_facts_enabled(agent_dir: &Path) -> bool {
             .unwrap_or(true)
     };
     flag("/memory/enabled") && flag("/memory/facts/enabled")
+}
+
+/// `memory.facts.retrievalInterval` from the agent settings.json, mirroring
+/// nova's resolver: positive numbers are floored and clamped to 1..=50, and a
+/// missing, malformed or non-positive value falls back to the default of 1.
+fn read_retrieval_interval(agent_dir: &Path) -> u32 {
+    let settings_path = agent_dir.join("settings.json");
+    let Ok(content) = std::fs::read_to_string(&settings_path) else {
+        return DEFAULT_RETRIEVAL_INTERVAL;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return DEFAULT_RETRIEVAL_INTERVAL;
+    };
+    let Some(raw) = value
+        .pointer("/memory/facts/retrievalInterval")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && *number > 0.0)
+    else {
+        return DEFAULT_RETRIEVAL_INTERVAL;
+    };
+    (raw.floor() as i64).clamp(1, MAX_RETRIEVAL_INTERVAL as i64) as u32
+}
+
+/// Merge the interval into an existing settings object, creating the
+/// `memory.facts` objects on the way and refusing to overwrite a non-object
+/// value. Kept pure so the merge rules are testable without touching disk.
+fn apply_retrieval_interval(settings: &mut serde_json::Value, interval: u32) -> Result<(), String> {
+    if !(1..=MAX_RETRIEVAL_INTERVAL).contains(&interval) {
+        return Err(format!(
+            "retrievalInterval must be between 1 and {MAX_RETRIEVAL_INTERVAL}"
+        ));
+    }
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings.json must contain a JSON object")?;
+    let memory = root
+        .entry("memory")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("settings.json memory must be an object")?;
+    let facts = memory
+        .entry("facts")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("settings.json memory.facts must be an object")?;
+    facts.insert("retrievalInterval".into(), serde_json::json!(interval));
+    Ok(())
+}
+
+/// Persist the interval into the agent-level settings.json, preserving every
+/// other key. Written through `write_private_json` so the file keeps mode 0600
+/// and is replaced atomically, like nova's own settings writes.
+fn persist_retrieval_interval(agent_dir: &Path, interval: u32) -> Result<(), String> {
+    if !(1..=MAX_RETRIEVAL_INTERVAL).contains(&interval) {
+        return Err(format!(
+            "retrievalInterval must be between 1 and {MAX_RETRIEVAL_INTERVAL}"
+        ));
+    }
+    let settings_path = agent_dir.join("settings.json");
+    let mut settings = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|error| format!("Unable to read {}: {error}", settings_path.display()))?;
+        serde_json::from_str::<serde_json::Value>(&content)
+            .map_err(|error| format!("Unable to parse {}: {error}", settings_path.display()))?
+    } else {
+        serde_json::json!({})
+    };
+    apply_retrieval_interval(&mut settings, interval)?;
+    write_private_json(&settings_path, &settings)
 }
 
 /// Ids arrive from the frontend and become subprocess arguments, so accept only
@@ -1125,12 +1203,22 @@ fn load_fact_memory(agent_dir: &Path) -> Result<FactMemoryState, String> {
         facts,
         pending,
         read_facts_enabled(agent_dir),
+        read_retrieval_interval(agent_dir),
     ))
 }
 
 #[tauri::command]
 pub async fn get_fact_memory() -> Result<FactMemoryState, String> {
     load_fact_memory(&nova_agent_dir()?)
+}
+
+/// Set `memory.facts.retrievalInterval` for every new session. The agent reads
+/// settings.json when it starts a session, so a running conversation keeps the
+/// interval it started with.
+#[tauri::command]
+pub async fn set_memory_retrieval_interval(interval: u32) -> Result<(), String> {
+    let agent_dir = nova_agent_dir()?;
+    persist_retrieval_interval(&agent_dir, interval)
 }
 
 #[tauri::command]
@@ -2322,7 +2410,7 @@ mod memory_tests {
                 .cloned()
                 .unwrap();
 
-        let state = build_fact_memory_state(facts, 2, true);
+        let state = build_fact_memory_state(facts, 2, true, 1);
 
         assert_eq!(state.stats.active, 2);
         assert_eq!(state.stats.archived, 2);
@@ -2379,7 +2467,7 @@ mod memory_tests {
             { "text": "no id at all" }
         ]);
         let facts = records.as_array().cloned().unwrap();
-        let state = build_fact_memory_state(facts, 0, true);
+        let state = build_fact_memory_state(facts, 0, true, 1);
         assert_eq!(state.facts.len(), 1);
         assert_eq!(json_string_field(&state.facts[0], "id"), Some("fact_ok"));
         assert_eq!(state.stats.active, 1);
@@ -2724,6 +2812,7 @@ mod memory_tests {
                 archived: 0,
                 pending_suggestions: 0,
                 facts_enabled: true,
+                retrieval_interval: 1,
             }
         );
         assert!(!agent_dir.join("memory").exists());
@@ -2781,6 +2870,108 @@ mod memory_tests {
         std::fs::write(&path, "not json").unwrap();
         assert!(read_facts_enabled(&base));
 
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The interval mirrors nova's resolver: missing or malformed means 1,
+    /// fractional values are floored, and everything is clamped to 1..=50.
+    #[test]
+    fn reads_retrieval_interval_from_agent_settings() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-memory-interval-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("settings.json");
+
+        assert_eq!(read_retrieval_interval(&base), 1, "missing settings");
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":3}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 3);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":2.7}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 2);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":0}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":-4}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":500}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 50);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":"3"}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1, "strings are ignored");
+
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Writing preserves unrelated keys, creates missing objects, and rejects
+    /// a non-object `memory` section instead of dropping the user's settings.
+    #[test]
+    fn applies_retrieval_interval_to_settings_object() {
+        let mut settings = serde_json::json!({
+            "defaultModel": "provider/model",
+            "memory": { "enabled": true, "facts": { "enabled": true, "maxPromptFacts": 9 } }
+        });
+        apply_retrieval_interval(&mut settings, 4).unwrap();
+        assert_eq!(
+            settings.pointer("/memory/facts/retrievalInterval").unwrap(),
+            4
+        );
+        assert_eq!(settings.pointer("/memory/facts/maxPromptFacts").unwrap(), 9);
+        assert_eq!(settings.pointer("/memory/enabled").unwrap(), true);
+        assert_eq!(settings.pointer("/defaultModel").unwrap(), "provider/model");
+
+        let mut empty = serde_json::json!({});
+        apply_retrieval_interval(&mut empty, 1).unwrap();
+        assert_eq!(empty.pointer("/memory/facts/retrievalInterval").unwrap(), 1);
+
+        let mut broken = serde_json::json!({ "memory": "oops" });
+        assert!(apply_retrieval_interval(&mut broken, 2).is_err());
+
+        let mut out_of_range = serde_json::json!({});
+        assert!(apply_retrieval_interval(&mut out_of_range, 0).is_err());
+        assert!(apply_retrieval_interval(&mut out_of_range, 51).is_err());
+    }
+
+    #[test]
+    fn persists_retrieval_interval_and_round_trips_through_the_reader() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-memory-interval-write-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("settings.json"),
+            r#"{"memory":{"facts":{"enabled":true}}}"#,
+        )
+        .unwrap();
+
+        persist_retrieval_interval(&base, 5).unwrap();
+
+        assert_eq!(read_retrieval_interval(&base), 5);
+        let content = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(value.pointer("/memory/facts/enabled").unwrap(), true);
+        assert!(!base.join("settings.json.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(base.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        assert!(persist_retrieval_interval(&base, 0).is_err());
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

@@ -385,6 +385,8 @@ export interface FactMemoryStats {
   pendingSuggestions: number;
   /** `memory.enabled` / `memory.facts.enabled` from the agent settings. */
   factsEnabled: boolean;
+  /** `memory.facts.retrievalInterval`: user messages between retrieval calls. */
+  retrievalInterval: number;
 }
 
 export interface FactMemoryState {
@@ -437,6 +439,12 @@ export async function updateFactMemory(input: {
   patch?: FactMemoryPatch;
 }): Promise<void> {
   return invoke("update_fact_memory", { input });
+}
+
+/** Write `memory.facts.retrievalInterval` (1-50) into the agent settings.json.
+ * Takes effect for sessions started afterwards; the current one keeps its value. */
+export async function setMemoryRetrievalInterval(interval: number): Promise<void> {
+  return invoke("set_memory_retrieval_interval", { interval });
 }
 
 /** Accept (promote into the profile) or reject a suggestion via `nova memory`. */

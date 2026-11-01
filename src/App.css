@@ -5525,6 +5525,95 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.fact-memory-retrieval {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  background: var(--surface-control);
+}
+
+.fact-memory-retrieval-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.fact-memory-retrieval-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-heading);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.fact-memory-retrieval-copy small {
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.fact-memory-retrieval-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.fact-memory-retrieval-controls input {
+  width: 62px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  color: var(--text-heading);
+  background: var(--surface-control);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.fact-memory-retrieval-controls input:focus {
+  border-color: color-mix(in srgb, var(--color-accent-start) 55%, var(--input-border));
+  outline: none;
+}
+
+.fact-memory-retrieval-save {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: var(--color-accent-start);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.fact-memory-retrieval-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fact-memory-retrieval-notice {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-success);
+  font-size: 11.5px;
+}
+
 .fact-memory-disabled {
   margin: 0 0 16px;
   padding: 10px 14px;

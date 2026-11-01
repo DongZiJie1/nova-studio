@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { Archive, Filter, LoaderCircle, Pencil, Pin, PinOff, Search, X } from "lucide-react";
+import { Archive, Filter, LoaderCircle, Pencil, Pin, PinOff, Search, Timer, X } from "lucide-react";
 import {
   getFactMemory,
+  setMemoryRetrievalInterval,
   updateFactMemory,
   type FactApplicability,
   type FactMemoryFact,
@@ -43,6 +44,8 @@ const INJECTION_BLOCK_OVERHEAD = 60;
 /** Same limits as nova's `fact-schema.ts`; `nova memory edit` validates again. */
 const MAX_FACT_TEXT_CHARS = 200;
 const MAX_FACT_TOPICS = 3;
+/** Mirrors the 1-50 clamp nova applies to `memory.facts.retrievalInterval`. */
+const MAX_RETRIEVAL_INTERVAL = 50;
 const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 
 /** Archived and superseded facts are no longer retrieved or injected. */
@@ -452,6 +455,9 @@ export function FactMemoryPanel() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [intervalDraft, setIntervalDraft] = useState(1);
+  const [intervalBusy, setIntervalBusy] = useState(false);
+  const [intervalNotice, setIntervalNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -467,6 +473,29 @@ export function FactMemoryPanel() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (data) setIntervalDraft(data.stats.retrievalInterval);
+  }, [data]);
+
+  const intervalInvalid =
+    !Number.isInteger(intervalDraft) || intervalDraft < 1 || intervalDraft > MAX_RETRIEVAL_INTERVAL;
+
+  const saveInterval = useCallback(async () => {
+    if (intervalInvalid) return;
+    setIntervalBusy(true);
+    setActionError(null);
+    setIntervalNotice(null);
+    try {
+      await setMemoryRetrievalInterval(intervalDraft);
+      await refresh();
+      setIntervalNotice("已保存，从下一个会话开始生效");
+    } catch (reason) {
+      setActionError(String(reason));
+    } finally {
+      setIntervalBusy(false);
+    }
+  }, [intervalDraft, intervalInvalid, refresh]);
 
   const runAction = useCallback(
     async (fact: FactMemoryFact, action: MemoryFactAction) => {
@@ -559,6 +588,42 @@ export function FactMemoryPanel() {
           事实记忆已停用（settings.json 中 memory.facts.enabled 为 false）：Nova 不会抽取或注入事实，这里只展示已有数据。
         </p>
       )}
+      <div className="fact-memory-retrieval">
+        <div className="fact-memory-retrieval-copy">
+          <span className="fact-memory-retrieval-title">
+            <Timer size={14} aria-hidden="true" /> 检索频率
+          </span>
+          <small>
+            每 N 条用户消息调用一次模型检索记忆，1 表示每条消息都检索，最多 {MAX_RETRIEVAL_INTERVAL}。保存在 settings.json 的
+            memory.facts.retrievalInterval，从下一个会话开始生效。
+          </small>
+        </div>
+        <div className="fact-memory-retrieval-controls">
+          <input
+            type="number"
+            min={1}
+            max={MAX_RETRIEVAL_INTERVAL}
+            step={1}
+            value={intervalDraft}
+            disabled={intervalBusy}
+            aria-label="记忆检索频率（每条用户消息之间隔几条）"
+            onChange={(event) => {
+              setIntervalDraft(Number(event.target.value));
+              setIntervalNotice(null);
+            }}
+          />
+          <span>条消息检索一次</span>
+          <button
+            type="button"
+            className="fact-memory-retrieval-save"
+            disabled={intervalBusy || intervalInvalid || intervalDraft === stats?.retrievalInterval}
+            onClick={() => void saveInterval()}
+          >
+            {intervalBusy ? <LoaderCircle size={14} /> : "应用"}
+          </button>
+        </div>
+        {intervalNotice && <p className="fact-memory-retrieval-notice">{intervalNotice}</p>}
+      </div>
       <div className="fact-memory-toolbar">
         <label className="fact-memory-search">
           <Search size={14} aria-hidden="true" />
