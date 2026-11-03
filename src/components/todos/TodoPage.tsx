@@ -10,6 +10,8 @@ import {
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import {
+  ExternalLink,
+  MoreHorizontal,
   Minus,
   Ban,
   Network,
@@ -716,6 +718,48 @@ function TaskMultiFilter({
   );
 }
 
+function TaskRowActions({ todo, busy, onOpen, onEdit, onToggle, onAbandon }: {
+  todo: TodoItem;
+  busy: boolean;
+  onOpen: () => void;
+  onEdit: () => void;
+  onToggle: () => void;
+  onAbandon: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const popoverId = useId();
+  useEffect(() => {
+    if (!expanded) return;
+    const close = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setExpanded(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [expanded]);
+  return (
+    <div className="task-row-actions" ref={ref}
+      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setExpanded(false); }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && expanded) {
+          event.stopPropagation();
+          setExpanded(false);
+          trigger.current?.focus();
+        }
+      }}>
+      <button type="button" aria-label={`打开：${todo.title}`} title="打开" onClick={onOpen}><ExternalLink size={14} /></button>
+      <button type="button" aria-label={`编辑：${todo.title}`} title="编辑" disabled={busy} onClick={onEdit}><PenLine size={14} /></button>
+      <button ref={trigger} type="button" aria-label={`更多：${todo.title}`} title="更多" aria-expanded={expanded} aria-controls={popoverId}
+        onClick={() => setExpanded(!expanded)}><MoreHorizontal size={16} /></button>
+      {expanded && <div id={popoverId} className="task-row-action-menu" role="group" aria-label="任务操作">
+        <button type="button" disabled={busy} onClick={() => { setExpanded(false); onToggle(); }}>{isClosedTodo(todo) ? "重新打开任务" : "标记为已完成"}</button>
+        {todo.status !== "abandoned" && <button type="button" disabled={busy} onClick={() => { setExpanded(false); onAbandon(); }}>放弃任务</button>}
+      </div>}
+    </div>
+  );
+}
+
 export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) {
   const [state, setState] = useState<TodoState>({ version: 1, items: [] });
   const [query, setQuery] = useState("");
@@ -726,6 +770,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   const [openMultiFilter, setOpenMultiFilter] = useState<"topic" | "tag" | null>(null);
   const [zoom, setZoom] = useState(1);
   const [collapsed, setCollapsed] = useState(new Set<string>());
+  const [editFromRow, setEditFromRow] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<Partial<CreateTodoInput> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -964,7 +1009,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
               return next;
             })
           }
-          onOpen={setSelectedId}
+          onOpen={(id) => { setEditFromRow(false); setSelectedId(id); }}
           onCreate={setCreating}
           onToggle={toggleTodo}
           busy={busy}
@@ -981,7 +1026,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                         type="button"
                         className="task-list-row-open"
                         aria-label={`查看${todo.title}详情`}
-                        onClick={() => setSelectedId(todo.id)}
+                        onClick={() => { setEditFromRow(false); setSelectedId(todo.id); }}
                       />
                       <button
                         className={`task-status task-status-${taskState(todo)}`}
@@ -1006,6 +1051,11 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                       </div>
                       {progressPercent(todo) !== undefined && <div className="task-list-progress"><span>{progressPercent(todo)}%</span><i><b style={{ width: `${progressPercent(todo)}%` }} /></i></div>}
                       <div className="task-list-deadline"><TodoDeadline dueAt={todo.dueAt} closed={isClosedTodo(todo)} list /></div>
+                      <TaskRowActions todo={todo} busy={busy}
+                        onOpen={() => { setEditFromRow(false); setSelectedId(todo.id); }}
+                        onEdit={() => { setEditFromRow(true); setSelectedId(todo.id); }}
+                        onToggle={() => toggleTodo(todo)}
+                        onAbandon={() => { void mutate(() => updateTodo({ id: todo.id, status: "abandoned" })); }} />
                     </article>
                 ))}
               </div>
@@ -1073,6 +1123,8 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           }}
         >
           <TodoDetail
+            key={selected.id}
+            initiallyEditing={editFromRow}
             panelRef={detailRef}
             todo={selected}
             items={state.items}
@@ -1438,6 +1490,7 @@ interface TodoDraft {
 }
 
 function TodoDetail({
+  initiallyEditing = false,
   panelRef,
   todo,
   items,
@@ -1455,6 +1508,7 @@ function TodoDetail({
   onEditProgress,
   onDeleteProgress,
 }: {
+  initiallyEditing?: boolean;
   panelRef: RefObject<HTMLElement | null>;
   todo: TodoItem;
   items: TodoItem[];
@@ -1481,7 +1535,7 @@ function TodoDetail({
   const [tags, setTags] = useState<string[]>(todo.tags ?? []);
   const [projectPath, setProjectPath] = useState(todo.projectPath ?? "");
   const [dueAt, setDueAt] = useState(todo.dueAt?.slice(0, 10) ?? "");
-  const [editingDescription, setEditingDescription] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(initiallyEditing);
 
   // Only re-seed the draft when the panel switches to another task. Depending on the
   // whole object also re-ran this on every background refresh (window focus, agent
