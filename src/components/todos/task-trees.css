@@ -2537,31 +2537,15 @@
   isolation: isolate;
   transition: background-color 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out, transform 200ms ease-out;
 }
-.todo-task-page .task-flat-list .task-list-row::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: -1px;
-  padding: 1px;
-  border-radius: inherit;
-  background: linear-gradient(125deg, var(--task-row-glint), var(--task-row-edge-hover) 48%, var(--task-row-glint));
-  mask: linear-gradient(#fff 0 0) content-box exclude, linear-gradient(#fff 0 0);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 200ms ease-out;
-}
 .todo-task-page .task-flat-list .task-list-row:is(:hover, :focus-within) {
   z-index: 3;
   transform: translateY(-1px);
-  background: var(--task-row-glass);
-  border-color: var(--task-row-edge-hover);
-  box-shadow: 0 7px 20px -6px var(--task-row-shadow), inset 0 1px 0 var(--task-row-glint);
-  backdrop-filter: blur(10px) saturate(115%);
-  -webkit-backdrop-filter: blur(10px) saturate(115%);
+  border-color: var(--task-glass-selected-edge);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent), var(--task-glass-selected-bg);
+  box-shadow: var(--task-glass-shadow), inset 0 0 14px rgba(255, 255, 255, 0.14);
+  backdrop-filter: var(--nova-filter-control);
+  -webkit-backdrop-filter: var(--nova-filter-control);
 }
-.todo-task-page .task-list-row:is(:hover, :focus-within)::before { opacity: 1; }
 .todo-task-page .task-list-row .task-flat-title strong { transition: color 200ms ease-out; }
 .todo-task-page .task-list-row:is(:hover, :focus-within) .task-flat-title strong { color: var(--task-row-title); }
 .todo-task-page .task-row-actions {
@@ -2618,7 +2602,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .todo-task-page .task-flat-list .task-list-row,
-  .todo-task-page .task-flat-list .task-list-row::before,
   .todo-task-page .task-row-actions,
   .todo-task-page .task-row-actions button,
   .todo-task-page .task-list-row .task-flat-title strong { transition: none; }
