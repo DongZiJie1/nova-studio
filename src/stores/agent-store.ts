@@ -55,7 +55,7 @@ export interface ChatMessage {
   id: string;
   entryId?: string;
   feedback?: "up" | "down";
-  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch" | "notice";
+  role: "user" | "assistant" | "thinking" | "tool" | "agent_result" | "agent_batch" | "notice" | "memory";
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
@@ -383,6 +383,22 @@ function hydrateMessages(messages: PersistedRpcMessage[], feedback: Record<strin
         content: messageText(message),
         timestamp,
       });
+      continue;
+    }
+
+    // Facts retrieved for this request are part of the transcript: the memory card
+    // explains which stored memories shaped the reply.
+    if (message.role === "custom" && message.customType === "nova.memory_retrieval") {
+      const content = messageText(message);
+      if (content) {
+        hydrated.push({
+          id: stableId(message.entryId, timestamp),
+          entryId: message.entryId,
+          role: "memory",
+          content,
+          timestamp,
+        });
+      }
       continue;
     }
 
@@ -897,6 +913,16 @@ export const useAgentStore = create<AgentStoreState>()((set, get) => ({
               cacheWrite: Number(tokens.cacheWrite ?? 0),
               total: Number(tokens.total ?? 0),
               cost: Number(d.cost ?? 0),
+              statistics: typeof d.startedAt === "string" ? {
+                sessionId: String(d.sessionId ?? ""),
+                startedAt: d.startedAt,
+                endedAt: typeof d.endedAt === "string" ? d.endedAt : undefined,
+                durationMs: Number(d.durationMs ?? 0),
+                turns: Number(d.turns ?? 0),
+                lastActivityAt: String(d.lastActivityAt ?? d.startedAt),
+                toolCallDistribution: (d.toolCallDistribution ?? {}) as Record<string, number>,
+                memoryWrites: Number(d.memoryWrites ?? 0),
+              } : undefined,
             }
           : null;
       set((s) => ({
@@ -1075,6 +1101,23 @@ function applyEvent(agent: AgentState, event: ParsedEvent): AgentState {
             messages: [...agent.messages, {
               id: nextId(),
               role: "notice" as const,
+              content,
+              timestamp: Date.now(),
+            }],
+            messageCount: Math.max(agent.messageCount, agent.messages.length + 1),
+          };
+        }
+        if (lifecycleMessage?.role === "custom" && lifecycleMessage.customType === "nova.memory_retrieval") {
+          const content = messageText(lifecycleMessage as PersistedRpcMessage);
+          if (!content) return agent;
+          if (agent.messages.some((message) => message.role === "memory" && message.content === content)) {
+            return agent;
+          }
+          return {
+            ...agent,
+            messages: [...agent.messages, {
+              id: nextId(),
+              role: "memory" as const,
               content,
               timestamp: Date.now(),
             }],

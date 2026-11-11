@@ -9,6 +9,10 @@ export const Background = memo(function Background() {
   const isDawn = theme === "arctic-dawn";
   const dim = backgroundDim / 100;
 
+  if (theme === "glacier-glass") {
+    return <div className="app-background-layer fixed inset-0" style={{ background: "#F5F8FE" }} />;
+  }
+
   return (
     <div className="app-background-layer fixed inset-0 overflow-hidden">
       {/* Deep space base */}

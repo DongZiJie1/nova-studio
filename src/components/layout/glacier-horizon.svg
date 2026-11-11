@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="surface" x2="0" y2="1">
+      <stop stop-color="#fbfcff" stop-opacity=".82"/>
+      <stop offset=".21" stop-color="#d5e5fa" stop-opacity=".73"/>
+      <stop offset=".65" stop-color="#b4cbed" stop-opacity=".57"/>
+      <stop offset="1" stop-color="#e5eefc" stop-opacity=".26"/>
+    </linearGradient>
+    <linearGradient id="reflection" x2="0" y2="1">
+      <stop stop-color="#fbfcff" stop-opacity=".47"/>
+      <stop offset="1" stop-color="#d5e5fa" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rim" gradientUnits="userSpaceOnUse" x1="0" x2="1440">
+      <stop stop-color="#e5eeff" stop-opacity=".12"/>
+      <stop offset=".33" stop-color="#e8faff" stop-opacity=".88"/>
+      <stop offset=".55" stop-color="#fff"/>
+      <stop offset=".78" stop-color="#f6efff" stop-opacity=".68"/>
+      <stop offset="1" stop-color="#e5eeff" stop-opacity=".12"/>
+    </linearGradient>
+    <linearGradient id="edge" gradientUnits="userSpaceOnUse" x1="0" x2="385">
+      <stop stop-color="#eae5fa" stop-opacity="0"/>
+      <stop offset=".48" stop-color="#f9fcff" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#e5eefc" stop-opacity=".28"/>
+    </linearGradient>
+    <linearGradient id="right-edge" href="#edge" x1="1035" x2="1460"/>
+    <filter id="soft-reflection" x="-.1" y="-.3" width="1.2" height="1.6">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="halo" x="-.1" y="-.5" width="1.2" height="2">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <path id="horizon" d="M-30 706 Q700 315 1470 725"/>
+    <path id="upper" d="M-20 254 C160 204 278 106 385 -24"/>
+    <path id="right" d="M1035 468 C1240 428 1272 254 1460 176"/>
+  </defs>
+  <path fill="url(#surface)" d="M-30 706 Q700 315 1470 725 V930 H-30Z"/>
+  <path fill="url(#reflection)" filter="url(#soft-reflection)" d="M-35 829 C355 635 870 555 1480 847 V930 H-35Z"/>
+  <use href="#horizon" fill="none" stroke="url(#rim)" stroke-width="13" opacity=".73" filter="url(#halo)"/>
+  <use href="#horizon" fill="none" stroke="url(#rim)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+  <path fill="url(#reflection)" opacity=".6" d="M-20 254 C160 204 278 106 385 -24 H281 C186 102 75 184 -20 254Z"/>
+  <path fill="url(#reflection)" opacity=".48" d="M1035 468 C1240 428 1272 254 1460 176 V249 C1278 275 1232 432 1035 468Z"/>
+  <g fill="none" stroke="url(#edge)">
+    <use href="#upper" stroke-width="8" opacity=".68" filter="url(#halo)"/>
+    <use href="#right" stroke="url(#right-edge)" stroke-width="8" opacity=".68" filter="url(#halo)"/>
+    <use href="#upper" stroke-width="1"/>
+    <use href="#right" stroke="url(#right-edge)" stroke-width="1"/>
+  </g>
+</svg>

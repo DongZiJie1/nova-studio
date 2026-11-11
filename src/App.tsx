@@ -77,12 +77,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme === "arctic-dawn" ? "light" : "dark";
+    // Glacier Glass shares the existing light palette outside its welcome scene.
+    document.documentElement.dataset.theme = theme === "midnight" ? "midnight" : "arctic-dawn";
+    document.documentElement.style.colorScheme = theme !== "midnight" ? "light" : "dark";
     if (isTauri()) {
       const appWindow = getCurrentWindow();
-      void appWindow.setTheme(theme === "arctic-dawn" ? "light" : "dark");
-      void appWindow.setBackgroundColor(theme === "arctic-dawn" ? "#edf4fd" : "#05060e");
+      void appWindow.setTheme(theme !== "midnight" ? "light" : "dark");
+      void appWindow.setBackgroundColor(theme !== "midnight" ? "#edf4fd" : "#05060e");
     }
   }, [theme]);
 

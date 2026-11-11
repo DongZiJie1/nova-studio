@@ -306,6 +306,35 @@ export async function deleteProviderConfiguration(providerId: string): Promise<v
   return invoke("delete_provider_configuration", { providerId });
 }
 
+/** `search` section of the agent settings.json, resolved with nova's defaults. */
+export interface SearchSettingsState {
+  provider: string;
+  /** Stored `search.apiKey` only — the deepseek fallback lives in auth.json. */
+  apiKey?: string;
+  baseUrl?: string;
+  maxResults: number;
+  timeoutMs: number;
+  /** True when auth.json holds a DeepSeek api_key credential (the /login key). */
+  deepseekAuthKeyAvailable: boolean;
+}
+
+export interface SaveSearchSettingsInput {
+  provider: string;
+  /** Empty or omitted removes the stored key, falling back to auth.json/env. */
+  apiKey?: string;
+  baseUrl?: string;
+  maxResults: number;
+  timeoutMs: number;
+}
+
+export async function getSearchSettings(): Promise<SearchSettingsState> {
+  return invoke<SearchSettingsState>("get_search_settings");
+}
+
+export async function saveSearchSettings(input: SaveSearchSettingsInput): Promise<SearchSettingsState> {
+  return invoke<SearchSettingsState>("save_search_settings", { input });
+}
+
 export interface UserMemorySection {
   id: string;
   title: string;
@@ -333,6 +362,126 @@ export async function deleteUserMemory(id: string): Promise<UserMemoryState> {
 
 export async function setUserMemoryEnabled(enabled: boolean): Promise<UserMemoryState> {
   return invoke<UserMemoryState>("set_user_memory_enabled", { enabled });
+}
+
+// ─── Fact memory (v2.1) ───
+
+export type FactApplicability = "universal" | "transferable" | "project";
+export type FactKind = "decision" | "preference" | "constraint" | "project" | "commitment" | "event";
+export type FactArchiveReason = "expired" | "stale" | "superseded" | "manual" | "promoted" | "capped";
+export type MemoryFactAction = "pin" | "unpin" | "archive" | "delete" | "edit";
+export type MemorySuggestionResolution = "accept" | "reject";
+
+/** One fact as written by nova's `core/memory/fact-store.ts`. The nullable
+ * optional fields mirror `serde_json::Value` output; unknown fields are
+ * preserved but not typed here. */
+export interface FactMemoryFact {
+  id: string;
+  text: string;
+  kind: FactKind;
+  applicability: FactApplicability;
+  /** Set when `applicability === "project"`. */
+  projects?: string[];
+  /** Source project of a transferable fact. */
+  originProject?: { key: string; path: string };
+  topics?: string[];
+  importance: number;
+  confidence?: number;
+  createdAt: string;
+  updatedAt?: string;
+  lastRetrievedAt?: string;
+  retrievalCount?: number;
+  pinned?: boolean;
+  archivedAt?: string;
+  archiveReason?: FactArchiveReason;
+  validUntil?: string;
+  supersededBy?: string;
+  promotionSuggestedAt?: string;
+  reviewState?: string;
+  source?: {
+    sessionFile?: string;
+    sessionId?: string;
+    entryIds?: string[];
+    extractedAt?: string;
+    model?: string;
+  };
+}
+
+export interface FactMemoryStats {
+  active: number;
+  archived: number;
+  /** Pending profile promotion suggestions, shown on the 建议 tab. */
+  pendingSuggestions: number;
+  /** `memory.enabled` / `memory.facts.enabled` from the agent settings. */
+  factsEnabled: boolean;
+  /** `memory.facts.retrievalInterval`: user messages between retrieval calls. */
+  retrievalInterval: number;
+}
+
+export interface FactMemoryState {
+  facts: FactMemoryFact[];
+  stats: FactMemoryStats;
+}
+
+/** Fields `nova memory edit` may change. Omitted fields keep their current
+ * value; `topics: []` clears the label list. */
+export interface FactMemoryPatch {
+  text?: string;
+  kind?: FactKind;
+  importance?: number;
+  applicability?: FactApplicability;
+  topics?: string[];
+}
+
+export type SuggestionAction = "create" | "append" | "update";
+export type SuggestionStatus = "pending" | "accepted" | "rejected";
+
+/** One pending profile promotion suggestion from `suggestions.json`. */
+export interface MemorySuggestion {
+  id: string;
+  factIds: string[];
+  action: SuggestionAction;
+  targetSectionId?: string;
+  title: string;
+  proposedContent: string;
+  previousContent?: string;
+  reason?: string;
+  createdAt: string;
+  status: SuggestionStatus;
+}
+
+/** Facts plus stats. Missing stores read as empty; Rust never creates them. */
+export async function getFactMemory(): Promise<FactMemoryState> {
+  return invoke<FactMemoryState>("get_fact_memory");
+}
+
+/** Pending promotion suggestions only, newest first. */
+export async function getMemorySuggestions(): Promise<MemorySuggestion[]> {
+  return invoke<MemorySuggestion[]>("get_memory_suggestions");
+}
+
+/** Pin/unpin/archive/delete/edit a fact. Mutations run through `nova memory`.
+ * `patch` is required for the `edit` action and rejected by Rust otherwise. */
+export async function updateFactMemory(input: {
+  id: string;
+  action: MemoryFactAction;
+  patch?: FactMemoryPatch;
+}): Promise<void> {
+  return invoke("update_fact_memory", { input });
+}
+
+/** Write `memory.facts.retrievalInterval` (1-50) into the agent settings.json.
+ * Takes effect for sessions started afterwards; the current one keeps its value. */
+export async function setMemoryRetrievalInterval(interval: number): Promise<void> {
+  return invoke("set_memory_retrieval_interval", { interval });
+}
+
+/** Accept (promote into the profile) or reject a suggestion via `nova memory`. */
+export async function resolveMemorySuggestion(input: {
+  id: string;
+  action: MemorySuggestionResolution;
+}): Promise<void> {
+  return invoke("resolve_memory_suggestion", { input });
 }
 
 export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned";

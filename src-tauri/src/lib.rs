@@ -226,10 +226,17 @@ pub fn run() {
             commands::get_model_configurations,
             commands::delete_model_configuration,
             commands::delete_provider_configuration,
+            commands::get_search_settings,
+            commands::save_search_settings,
             commands::get_user_memory,
             commands::save_user_memory,
             commands::delete_user_memory,
             commands::set_user_memory_enabled,
+            commands::get_fact_memory,
+            commands::get_memory_suggestions,
+            commands::update_fact_memory,
+            commands::set_memory_retrieval_interval,
+            commands::resolve_memory_suggestion,
             commands::list_todos,
             commands::create_todo,
             commands::update_todo,
@@ -245,8 +252,18 @@ pub fn run() {
             scheduled_tasks::record_scheduled_run_result,
             scheduler::run_scheduled_task_now,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let manager = app.state::<AgentManagerState>().0.clone();
+                tauri::async_runtime::block_on(async move {
+                    if let Err(error) = manager.shutdown().await {
+                        log::error!("Failed to shut down Nova host: {error}");
+                    }
+                });
+            }
+        });
 }
 
 /// Resolve the path to the nova CLI entry point

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type AppTheme = "midnight" | "arctic-dawn";
+export type AppTheme = "midnight" | "arctic-dawn" | "glacier-glass";
 const DEFAULT_BACKGROUND_URL = "/images/arctic-dawn-journey.jpg";
 
 interface UiState {

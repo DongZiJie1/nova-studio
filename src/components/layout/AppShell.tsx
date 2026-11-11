@@ -1,5 +1,6 @@
 import { memo, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import "./glacier-glass.css";
 import { Background } from "./Background";
 import { resizeComposerTextarea } from "./composer-resize";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
@@ -62,19 +63,20 @@ const AGENT_TRAJECTORY_TOOL_NAMES = new Set(["hub_delegate_task"]);
 function isAgentTrajectoryTool(name: string): boolean {
   return AGENT_TRAJECTORY_TOOL_NAMES.has(name);
 }
-import { ChatMessage, ToolCallList, type TurnFileChange } from "../chat/ChatMessage";
+import { ChatMessage, type TurnFileChange } from "../chat/ChatMessage";
 import { NotificationToasts } from "./NotificationToasts";
 import { ActivityHeatmap } from "../settings/ActivityHeatmap";
 import { ModelSettings } from "../settings/ModelSettings";
 import { MemorySettings } from "../settings/MemorySettings";
 import { ProfileSettings } from "../settings/ProfileSettings";
+import { SearchSettings } from "../settings/SearchSettings";
 import { useTodoWarningCount } from "../todos/useTodoWarningCount";
 import { useScheduleCount } from "../schedules/useScheduleCount";
 import { TodoPage } from "../todos/TodoPage";
 import { SchedulePage } from "../schedules/SchedulePage";
 import { useScheduleStore } from "../../stores/schedule-store";
 import { StreamingText } from "../chat/StreamingText";
-import { ThinkingCard } from "../chat/ThinkingCard";
+import { AnalysisGroup } from "../chat/AnalysisGroup.tsx";
 import { Markdown } from "../chat/Markdown";
 import { SlashCommandMenu } from "../chat/SlashCommandMenu";
 import { FileMentionMenu } from "../chat/FileMentionMenu";
@@ -86,6 +88,7 @@ import {
   type SlashCommand,
 } from "../../lib/slash-commands";
 import { findFileMention, insertFileMention } from "../../lib/file-mentions";
+import { parseRetrievedFacts } from "../../lib/memory-retrieval";
 import { providerLogo } from "../../lib/provider-logos";
 import {
   Paperclip,
@@ -122,6 +125,7 @@ import {
   RotateCcw,
   Bot,
   UserRound,
+  Globe,
   Brain,
   GitBranch,
   GitMerge,
@@ -462,6 +466,9 @@ type TrajectoryDetailView = "execution" | "json";
 
 interface ChatHistoryProps {
   messages: AgentState["messages"];
+  liveTools: AgentState["activeToolCalls"];
+  liveThinking: string;
+  analyzing: boolean;
   agentSenderLabels: Record<string, string>;
   avatarId: AgentState["avatarId"];
   actionableAssistantMessageIds: Set<string>;
@@ -475,6 +482,9 @@ interface ChatHistoryProps {
 
 const ChatHistory = memo(function ChatHistory({
   messages,
+  liveTools,
+  liveThinking,
+  analyzing,
   agentSenderLabels,
   avatarId,
   actionableAssistantMessageIds,
@@ -485,7 +495,27 @@ const ChatHistory = memo(function ChatHistory({
   onRevertFileChange,
   onReviewFileChange,
 }: ChatHistoryProps) {
-  return messages.map((message) => (
+  const groups: Array<{ id: string; activities: AgentState["messages"]; message?: AgentState["messages"][number] }> = [];
+  let pending: AgentState["messages"] = [];
+  let analysisId = "initial-analysis";
+  for (const message of messages) {
+    // Retrieved memories are context produced before the reply, so they belong in
+    // the same collapsible analysis block as thinking and tool activity.
+    if (message.role === "thinking" || message.role === "tool" || message.role === "memory") {
+      pending.push(message);
+    } else {
+      if (pending.length) {
+        groups.push({ id: analysisId, activities: pending });
+        pending = [];
+      }
+      groups.push({ id: message.id, activities: [], message });
+      analysisId = `${message.id}-analysis`;
+    }
+  }
+  if (pending.length || liveTools.size || liveThinking || analyzing) {
+    groups.push({ id: analysisId, activities: pending });
+  }
+  return groups.map(({ id, activities, message }, index) => message ? (
     <div
       key={message.id}
       id={message.role === "user" ? `conversation-turn-${message.id}` : undefined}
@@ -504,6 +534,14 @@ const ChatHistory = memo(function ChatHistory({
         fileChanges={turnFileChangesByAssistantId.get(message.id)}
       />
     </div>
+  ) : (
+    <AnalysisGroup
+      key={id}
+      activities={activities}
+      tools={index === groups.length - 1 ? Array.from(liveTools.values()) : []}
+      thinking={index === groups.length - 1 ? liveThinking : ""}
+      running={index === groups.length - 1 && analyzing}
+    />
   ));
 });
 
@@ -572,6 +610,8 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
               ? "子任务批次完成指令"
               : role === "notice"
                 ? "系统提示"
+                : role === "memory"
+                  ? "记忆检索"
           : role === "context_system"
             ? "系统提示词"
             : role === "context_tools"
@@ -648,6 +688,41 @@ function TrajectoryExecutionDetails({ entry, modelName, traces }: { entry: Selec
       {!isContextEntry && matchingTraces.length === 0 && !thinkingTrace && (
         <p className="trajectory-execution-note">该记录来自旧会话，或当前调用尚未同步，因此暂无精确开始、结束和耗时数据。</p>
       )}
+    </div>
+  );
+}
+
+function TrajectoryMemoryRetrievalDetails({ entry }: { entry: SelectedTrajectoryEntry }) {
+  const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
+  const content = typeof data.content === "string" ? data.content : "";
+  const facts = parseRetrievedFacts(content);
+  const timestamp = data.timestamp;
+
+  return (
+    <div className="trajectory-memory-details trajectory-memory-retrieval">
+      <div className="trajectory-memory-summary">
+        <span>{facts.length}</span>
+        <div>
+          <strong>条相关记忆</strong>
+          <p>按这条用户消息从长期记忆库选出，作为本轮上下文</p>
+        </div>
+      </div>
+      <dl className="trajectory-execution-summary">
+        <div><dt>事件类型</dt><dd>记忆检索</dd></div>
+        <div><dt>记录时间</dt><dd>{formatTrajectoryTime(timestamp)}</dd></div>
+      </dl>
+      <div className="trajectory-memory-list">
+        {facts.map((fact, index) => (
+          <section className="trajectory-memory-section" key={fact.id}>
+            <header>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{fact.id}</strong>
+            </header>
+            <p>{fact.text}</p>
+          </section>
+        ))}
+        {facts.length === 0 && <p className="trajectory-detail-empty">没有可展示的记忆条目</p>}
+      </div>
     </div>
   );
 }
@@ -1926,6 +2001,7 @@ export function AppShell() {
   const availableModels = useAgentStore((s) => s.availableModels);
   const refreshAgentTasks = useAgentStore((s) => s.refreshAgentTasks);
 
+  const userAvatar = useSettingsStore((s) => s.userAvatar);
   const defaultCwd = useSettingsStore((s) => s.defaultCwd);
   const defaultModel = useSettingsStore((s) => s.defaultModel);
   const defaultProvider = useSettingsStore((s) => s.defaultProvider);
@@ -1935,6 +2011,7 @@ export function AppShell() {
   const setDefaultToolPermissionMode = useSettingsStore((s) => s.setDefaultToolPermissionMode);
   const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
   const theme = useUiStore((s) => s.theme);
+  const isGlacierGlass = theme === "glacier-glass";
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
   const setCustomBgUrl = useUiStore((s) => s.setCustomBgUrl);
@@ -2015,7 +2092,7 @@ export function AppShell() {
       {scheduleCount > 99 ? "99+" : scheduleCount}
     </span>
   ) : null;
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "memory" | "personalization" | "activity">("appearance");
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "models" | "search" | "memory" | "personalization" | "activity">("appearance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [conversationView, setConversationView] = useState<"chat" | "trajectory">("chat");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -3337,6 +3414,19 @@ export function AppShell() {
     setConversationView("chat");
   }, [setActiveAgent]);
 
+  /**
+   * 从折叠态侧边栏点「设置」时，左侧会停留在图标模式（sidebar-collapsed-nav），
+   * 设置分类（外观/模型/记忆/个性化/活跃度）不展开，用户还得再点一次「展开侧边栏」
+   * 才看得到带文字的分类。所以进入设置页统一展开侧边栏；设置页内的「收起侧边栏」
+   * 按钮仍直接调 setSidebarCollapsed(true)，这里不会再把用户手动收起的结果顶回去。
+   */
+  const openSettings = useCallback(() => {
+    setTodosOpen(false);
+    setSchedulesOpen(false);
+    setSettingsOpen(true);
+    setSidebarCollapsed(false);
+  }, []);
+
   const handleEditAgent = useCallback((agent: AgentState) => {
     setEditingAgent({
       id: agent.id,
@@ -3362,7 +3452,7 @@ export function AppShell() {
   return (
     <div
       className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}${!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen ? " studio-root-dock-open" : ""}`}
-      data-custom-background={customBgUrl ? "true" : "false"}
+      data-custom-background={!isGlacierGlass && customBgUrl ? "true" : "false"}
       style={{ "--conversation-sidebar-width": `${workbenchPanelWidth}px` } as CSSProperties}
     >
       <Background />
@@ -3469,7 +3559,7 @@ export function AppShell() {
                 aria-label="展开侧边栏"
                 data-tooltip="展开侧边栏"
               >
-                <span className="sidebar-collapsed-wordmark" aria-hidden="true">N</span>
+                {userAvatar ? <img src={userAvatar} alt="用户头像" /> : <span className="sidebar-collapsed-wordmark" aria-hidden="true">N</span>}
                 <PanelLeftOpen className="sidebar-collapsed-expand-icon" size={20} />
               </button>
               {settingsOpen ? (
@@ -3477,6 +3567,7 @@ export function AppShell() {
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSettingsOpen(false)} aria-label="返回主页" data-tooltip="返回主页"><ArrowLeft size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "appearance" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("appearance")} aria-label="外观设置" data-tooltip="外观设置"><Palette size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "models" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("models")} aria-label="模型设置" data-tooltip="模型设置"><Bot size={19} /></button>
+                  <button type="button" className={`sidebar-collapsed-action ${settingsSection === "search" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("search")} aria-label="网络搜索" data-tooltip="网络搜索"><Globe size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "memory" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("memory")} aria-label="记忆设置" data-tooltip="记忆设置"><Brain size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "personalization" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("personalization")} aria-label="个性化设置" data-tooltip="个性化设置"><UserRound size={19} /></button>
                   <button type="button" className={`sidebar-collapsed-action ${settingsSection === "activity" ? "sidebar-settings-button-active" : ""}`} onClick={() => setSettingsSection("activity")} aria-label="活跃度" data-tooltip="活跃度"><ChartNoAxesColumnIncreasing size={19} /></button>
@@ -3496,7 +3587,7 @@ export function AppShell() {
                   <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" aria-current={schedulesOpen ? "page" : undefined} data-tooltip="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" data-tooltip="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-github" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" data-tooltip="Nova Agent GitHub"><GithubMark size={19} /></button>
-                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }} aria-label="设置" data-tooltip="设置"><Settings size={19} /></button>
+                  <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={openSettings} aria-label="设置" data-tooltip="设置"><Settings size={19} /></button>
                 </>
               )}
           </nav>
@@ -3531,6 +3622,10 @@ export function AppShell() {
                   <button type="button" className={`settings-category-button ${settingsSection === "models" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("models")}>
                     <Bot size={16} />
                     <span>模型</span>
+                  </button>
+                  <button type="button" className={`settings-category-button ${settingsSection === "search" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("search")}>
+                    <Globe size={16} />
+                    <span>网络搜索</span>
                   </button>
                   <button type="button" className={`settings-category-button ${settingsSection === "memory" ? "settings-category-button-active" : ""}`} onClick={() => setSettingsSection("memory")}>
                     <Brain size={16} />
@@ -3730,7 +3825,7 @@ export function AppShell() {
                 <button
                   type="button"
                   className={`sidebar-settings-button ${settingsOpen ? "sidebar-settings-button-active" : ""}`}
-                  onClick={() => { setTodosOpen(false); setSchedulesOpen(false); setSettingsOpen(true); }}
+                  onClick={openSettings}
                 >
                   <Settings size={15} />
                   <span>设置</span>
@@ -3743,6 +3838,9 @@ export function AppShell() {
 
         {/* Main */}
         <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${todosOpen || schedulesOpen || settingsOpen ? "studio-main-glass-page" : ""} relative w-full flex flex-col overflow-hidden`}>
+          {isGlacierGlass && !hasMessages && !todosOpen && !schedulesOpen && !settingsOpen && (
+            <div className="glacier-glass-scene" aria-hidden="true" />
+          )}
           {todosOpen && <TodoPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onRunTodo={handleRunTodo} onOpenSession={(todo) => { if (todo.agentId) handleSelectAgent(todo.agentId); }} />}
           {schedulesOpen && (
             <SchedulePage
@@ -3763,7 +3861,7 @@ export function AppShell() {
                   <div className="settings-card">
                     <div className="settings-card-copy">
                       <h2>主题</h2>
-                      <p>选择界面的明暗风格。</p>
+                      <p>选择界面的主题风格。</p>
                     </div>
                     <div className="theme-switcher" data-active-theme={theme} role="group" aria-label="主题风格">
                       <button
@@ -3782,10 +3880,25 @@ export function AppShell() {
                       >
                         <Moon size={16} /><span>暗黑</span>
                       </button>
+                      <button
+                        type="button"
+                        className={`theme-switcher-option ${isGlacierGlass ? "theme-switcher-option-active" : ""}`}
+                        onClick={() => setTheme("glacier-glass")}
+                        aria-pressed={isGlacierGlass}
+                      >
+                        <span>冰川玻璃</span>
+                      </button>
                     </div>
                   </div>
 
-                  <div className="settings-card settings-background-card">
+                  {isGlacierGlass ? (
+                    <div className="settings-card">
+                      <div className="settings-card-copy">
+                        <h2>桌面背景</h2>
+                        <p>冰川玻璃使用内置背景。切回明亮或暗黑即可恢复已保存的壁纸。</p>
+                      </div>
+                    </div>
+                  ) : <div className="settings-card settings-background-card">
                     <div className="settings-background-main">
                       <div className="settings-card-copy">
                         <h2>桌面背景</h2>
@@ -3836,13 +3949,15 @@ export function AppShell() {
                       />
                       <span className="settings-blur-scale"><span>明亮</span><span>深色</span></span>
                     </label>
-                  </div>
+                  </div>}
                   </>
                 ) : settingsSection === "models" ? (
                   <ModelSettings
                     models={availableModels}
                     onSaved={refreshModelCatalog}
                   />
+                ) : settingsSection === "search" ? (
+                  <SearchSettings />
                 ) : settingsSection === "memory" ? (
                   <MemorySettings />
                 ) : settingsSection === "personalization" ? (
@@ -3936,7 +4051,9 @@ export function AppShell() {
                                   ? "ASSISTANT"
                                   : message.role === "thinking"
                                     ? "THINK"
-                                    : "TOOL";
+                                    : message.role === "memory"
+                                      ? "MEMORY"
+                                      : "TOOL";
                             return (
                             <div
                               key={message.id}
@@ -4061,7 +4178,11 @@ export function AppShell() {
                     </div>
                     <div className="trajectory-detail-body">
                       {selectedTrajectoryEntry && trajectoryDetailView === "execution" ? (
-                        <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                        (selectedTrajectoryEntry.data as { role?: string } | undefined)?.role === "memory" ? (
+                          <TrajectoryMemoryRetrievalDetails entry={selectedTrajectoryEntry} />
+                        ) : (
+                          <TrajectoryExecutionDetails entry={selectedTrajectoryEntry} modelName={activeModelName} traces={activeAgent.executionTraces} />
+                        )
                       ) : (
                         selectedTrajectoryEntry ? <TrajectoryFullDetails entry={selectedTrajectoryEntry} /> : null
                       )}
@@ -4155,7 +4276,11 @@ export function AppShell() {
                 )}
                 {activeAgent && (
                   <ChatHistory
+                    key={activeAgent.id}
                     messages={chatMessages}
+                    liveTools={activeAgent.activeToolCalls}
+                    liveThinking={activeAgent.streamingThinking}
+                    analyzing={activeAgent.status === "streaming" && !streamingText}
                     agentSenderLabels={agentSenderLabels}
                     avatarId={activeAgent.avatarId}
                     actionableAssistantMessageIds={actionableAssistantMessageIds}
@@ -4166,19 +4291,6 @@ export function AppShell() {
                     onRevertFileChange={handleRevertFileChange}
                     onReviewFileChange={handleReviewFileChange}
                   />
-                )}
-
-                {/* Active tool calls */}
-                {activeAgent && activeAgent.activeToolCalls.size > 0 && (
-                  <div className="msg-row msg-row-tool">
-                    <ToolCallList tools={Array.from(activeAgent.activeToolCalls.values())} />
-                  </div>
-                )}
-
-                {activeAgent?.streamingThinking && (
-                  <div className="msg-row msg-row-special">
-                    <ThinkingCard content={activeAgent.streamingThinking} streaming />
-                  </div>
                 )}
 
                 {/* Streaming text */}

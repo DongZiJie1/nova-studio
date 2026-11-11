@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, LoaderCircle, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { ProgressEntry, TodoItem } from "../../lib/tauri-bridge";
+import { Markdown } from "../chat/Markdown";
+import { ProgressMarkdownEditor } from "./ProgressMarkdownEditor.tsx";
 
 const TIME_FORMAT = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" });
 
@@ -171,22 +173,13 @@ function ProgressComposer({
         <span>追加，不覆盖历史</span>
       </div>
       <PercentField value={percent} min={previousPercent} onChange={setPercent} defaultStep={10} />
-      <textarea
-        rows={3}
-        maxLength={5000}
-        value={content}
-        autoFocus
-        onChange={(event) => {
-          contentRef.current = event.target.value;
-          setContent(event.target.value);
+      <ProgressMarkdownEditor
+        content={content}
+        onChange={(value) => {
+          contentRef.current = value;
+          setContent(value);
         }}
-        onCompositionStart={() => setComposingText(true)}
-        onCompositionEnd={(event) => {
-          contentRef.current = event.currentTarget.value;
-          setContent(event.currentTarget.value);
-          setComposingText(false);
-        }}
-        placeholder="这次完成了什么？支持 Markdown…"
+        onComposingChange={setComposingText}
       />
       <div className="todo-progress-composer-actions">
         <button type="button" disabled={submitting} onClick={onCancel}>
@@ -197,7 +190,7 @@ function ProgressComposer({
           className="todo-progress-composer-submit"
           disabled={busy || submitting || (!content.trim() && !composingText)}
           onMouseDown={(event) => {
-            // Keep the textarea focused so an active IME composition does not
+            // Keep the editor focused so an active IME composition does not
             // consume the first click while committing its text.
             event.preventDefault();
           }}
@@ -224,6 +217,52 @@ function ProgressComposer({
           追加记录
         </button>
       </div>
+    </div>
+  );
+}
+
+function ProgressContent({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const contentId = useId();
+
+  useEffect(() => {
+    setExpanded(false);
+    const body = bodyRef.current;
+    if (!body) return;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight);
+      setOverflowing(body.getBoundingClientRect().height > lineHeight * 10 + 1);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    measure();
+    return () => observer.disconnect();
+  }, [content]);
+
+  return (
+    <div className="todo-progress-note">
+      <div
+        id={contentId}
+        className={`todo-progress-entry-content${expanded ? "" : " is-collapsed"}`}
+      >
+        <div ref={bodyRef}>
+          <Markdown content={content} />
+        </div>
+      </div>
+      {overflowing && (
+        <button
+          type="button"
+          className="todo-progress-content-toggle"
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          {expanded ? "收起全文" : "展开全文"}
+        </button>
+      )}
     </div>
   );
 }
@@ -271,9 +310,7 @@ function ProgressEntryCard({
           <button
             type="button"
             disabled={busy || submitting}
-            onClick={() => {
-              if (window.confirm("删除这条进展记录？")) onDelete();
-            }}
+            onClick={onDelete}
             aria-label="删除进展"
           >
             <Trash2 size={12} />
@@ -282,21 +319,13 @@ function ProgressEntryCard({
       </header>
       {editing ? (
         <div className="todo-progress-entry-editor">
-          <textarea
-            rows={3}
-            maxLength={5000}
-            value={content}
-            onChange={(event) => {
-              contentRef.current = event.target.value;
-              setContent(event.target.value);
+          <ProgressMarkdownEditor
+            content={content}
+            onChange={(value) => {
+              contentRef.current = value;
+              setContent(value);
             }}
-            onCompositionStart={() => setComposingText(true)}
-            onCompositionEnd={(event) => {
-              contentRef.current = event.currentTarget.value;
-              setContent(event.currentTarget.value);
-              setComposingText(false);
-            }}
-            autoFocus
+            onComposingChange={setComposingText}
           />
           <PercentField value={percent} min={0} onChange={setPercent} defaultStep={5} />
           <div className="todo-progress-composer-actions">
@@ -309,7 +338,7 @@ function ProgressEntryCard({
               disabled={busy || submitting || (!content.trim() && !composingText)}
               onMouseDown={(event) => {
                 // Match the new-entry button: the first click must save even
-                // while the textarea is composing text.
+                // while the editor is composing text.
                 event.preventDefault();
               }}
               onClick={() => {
@@ -336,7 +365,7 @@ function ProgressEntryCard({
           </div>
         </div>
       ) : (
-        <div className="todo-progress-entry-content">{entry.content}</div>
+        <ProgressContent content={entry.content} />
       )}
     </article>
   );

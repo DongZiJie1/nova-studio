@@ -14,6 +14,18 @@
 - **运行结束即回收 Agent** — 不再把空闲 runtime 留到下一次触发；会话文件保留，随时可重新打开。
 - **持久化** — `~/.nova/agent/scheduled-tasks.json`，原子写入；应用关闭期间暂停触发，重启后按错过策略补跑或跳过。
 
+### 记忆
+
+- **事实记忆页** — 「记忆 → 事实」按适用范围分组，支持搜索、类型筛选、编辑、置顶、归档、查看来源会话；写入统一走 `nova memory`。
+- **检索频率可配置** — 事实页新增「检索频率」：每 N 条用户消息调用一次模型检索记忆（1-50，默认 1），写入 `~/.nova/agent/settings.json` 的 `memory.facts.retrievalInterval`，从下一个会话开始生效。
+- **检索卡片** — 每轮检索到的记忆作为折叠卡片收进「Nova 正在飞速分析」，轨迹中可查看完整内容。
+
+### 网络搜索
+
+- **设置页新增「网络搜索」页** — 选择 `web_search` 使用的服务（`so` / `bing` / `duckduckgo` / `brave` / `tavily` / `deepseek` / `searxng`），填写 API Key、Base URL、返回条数（1-10）与超时（1000-60000ms），写入 `~/.nova/agent/settings.json` 的 `search` 段，保存后下一次搜索即生效。
+- **DeepSeek 搜索免填密钥** — provider 选 `deepseek` 时可直接复用 `/login` 保存的 DeepSeek 密钥；API Key 留空保存会移除已存密钥，回落 auth.json 或 `DEEPSEEK_API_KEY`。
+- **配置概览** — 页面顶部显示当前生效的服务、密钥来源、条数与超时；保存后用 Rust 规范化（小写 provider、钳制条数/超时）后的值回填表单。
+
 ## v1.5.0 (2026-09-14)
 
 ### 安全交付与隔离

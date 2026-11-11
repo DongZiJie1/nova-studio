@@ -9,7 +9,10 @@ import {
   type RefObject,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { DeleteConfirmation } from "./DeleteConfirmation.tsx";
 import {
+  ExternalLink,
+  MoreHorizontal,
   Minus,
   Ban,
   Network,
@@ -266,13 +269,13 @@ function themedPortalRoot(): HTMLElement {
  * calendar, status/project menus). Portals into the themed app root so scene
  * tokens and [data-custom-background] styles apply.
  */
-function usePropertyPopover(
+function usePropertyPopover<T extends HTMLElement = HTMLButtonElement>(
   open: boolean,
   setOpen: (value: boolean) => void,
   deps: unknown[],
   preferredWidth = 288,
 ) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<T>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   /** Sticky side for the current open session — month paging must not re-flip. */
@@ -716,6 +719,48 @@ function TaskMultiFilter({
   );
 }
 
+function TaskRowActions({ todo, busy, onOpen, onEdit, onToggle, onAbandon }: {
+  todo: TodoItem;
+  busy: boolean;
+  onOpen: () => void;
+  onEdit: () => void;
+  onToggle: () => void;
+  onAbandon: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const popoverId = useId();
+  useEffect(() => {
+    if (!expanded) return;
+    const close = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setExpanded(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [expanded]);
+  return (
+    <div className="task-row-actions" ref={ref}
+      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setExpanded(false); }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && expanded) {
+          event.stopPropagation();
+          setExpanded(false);
+          trigger.current?.focus();
+        }
+      }}>
+      <button type="button" aria-label={`打开：${todo.title}`} title="打开" onClick={onOpen}><ExternalLink size={14} /></button>
+      <button type="button" aria-label={`编辑：${todo.title}`} title="编辑" disabled={busy} onClick={onEdit}><PenLine size={14} /></button>
+      <button ref={trigger} type="button" aria-label={`更多：${todo.title}`} title="更多" aria-expanded={expanded} aria-controls={popoverId}
+        onClick={() => setExpanded(!expanded)}><MoreHorizontal size={16} /></button>
+      {expanded && <div id={popoverId} className="task-row-action-menu" role="group" aria-label="任务操作">
+        <button type="button" disabled={busy} onClick={() => { setExpanded(false); onToggle(); }}>{isClosedTodo(todo) ? "重新打开任务" : "标记为已完成"}</button>
+        {todo.status !== "abandoned" && <button type="button" disabled={busy} onClick={() => { setExpanded(false); onAbandon(); }}>放弃任务</button>}
+      </div>}
+    </div>
+  );
+}
+
 export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) {
   const [state, setState] = useState<TodoState>({ version: 1, items: [] });
   const [query, setQuery] = useState("");
@@ -726,7 +771,13 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
   const [openMultiFilter, setOpenMultiFilter] = useState<"topic" | "tag" | null>(null);
   const [zoom, setZoom] = useState(1);
   const [collapsed, setCollapsed] = useState(new Set<string>());
+  const [editFromRow, setEditFromRow] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    todoId: string;
+    title: string;
+    entryId?: string;
+  } | null>(null);
   const [creating, setCreating] = useState<Partial<CreateTodoInput> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -787,6 +838,12 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
     label: topic,
     count: topicCounts.get(topic.toLocaleLowerCase()) ?? 0,
   }));
+  const openCreateTodo = (seed: Partial<CreateTodoInput> = {}) => {
+    const filteredTopic = selectedTopics.size === 1
+      ? topics.find((topic) => selectedTopics.has(topic.toLocaleLowerCase()))
+      : undefined;
+    setCreating({ ...seed, topic: seed.topic ?? filteredTopic });
+  };
   const topicKeys = topics.map((topic) => topic.toLocaleLowerCase()).join("\u0000");
   useEffect(() => {
     const available = new Set(topicKeys ? topicKeys.split("\u0000") : []);
@@ -862,7 +919,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
         </div>
         <div className="task-header-actions">
           <div className="task-today-card"><CalendarDays size={16} /><span>{new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}<small>今天还有 {state.items.filter((todo) => !isClosedTodo(todo) && todo.dueAt?.slice(0, 10) === today).length} 个到期任务</small></span></div>
-          {state.items.length > 0 && <button className="todo-primary-button" disabled={busy || loading} onClick={() => setCreating({})}>
+          {state.items.length > 0 && <button className="todo-primary-button" disabled={busy || loading} onClick={() => openCreateTodo()}>
             <Plus size={16} />新建任务
           </button>}
         </div>
@@ -943,6 +1000,24 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           {tagOptions.length > 0 && (
             <TaskMultiFilter label="标签" icon={<Tag size={14} aria-hidden="true" />} options={tagOptions} selected={selectedTags} onChange={setSelectedTags} open={openMultiFilter === "tag"} setOpen={(open) => setOpenMultiFilter(open ? "tag" : null)} />
           )}
+          {topicOptions.filter((topic) => selectedTopics.has(topic.key)).map((topic) => (
+            <span className="task-selected-topic" key={topic.key}>
+              <FolderKanban size={12} aria-hidden="true" />
+              <span title={topic.label}>{topic.label}</span>
+              <button
+                type="button"
+                aria-label={`取消主题筛选：${topic.label}`}
+                title={`取消主题筛选：${topic.label}`}
+                onClick={() => setSelectedTopics((previous) => {
+                  const next = new Set(previous);
+                  next.delete(topic.key);
+                  return next;
+                })}
+              >
+                <X size={11} aria-hidden="true" />
+              </button>
+            </span>
+          ))}
         </div>
       )}
       {loading ? (
@@ -964,8 +1039,8 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
               return next;
             })
           }
-          onOpen={setSelectedId}
-          onCreate={setCreating}
+          onOpen={(id) => { setEditFromRow(false); setSelectedId(id); }}
+          onCreate={openCreateTodo}
           onToggle={toggleTodo}
           busy={busy}
         />
@@ -981,7 +1056,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                         type="button"
                         className="task-list-row-open"
                         aria-label={`查看${todo.title}详情`}
-                        onClick={() => setSelectedId(todo.id)}
+                        onClick={() => { setEditFromRow(false); setSelectedId(todo.id); }}
                       />
                       <button
                         className={`task-status task-status-${taskState(todo)}`}
@@ -1006,6 +1081,11 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                       </div>
                       {progressPercent(todo) !== undefined && <div className="task-list-progress"><span>{progressPercent(todo)}%</span><i><b style={{ width: `${progressPercent(todo)}%` }} /></i></div>}
                       <div className="task-list-deadline"><TodoDeadline dueAt={todo.dueAt} closed={isClosedTodo(todo)} list /></div>
+                      <TaskRowActions todo={todo} busy={busy}
+                        onOpen={() => { setEditFromRow(false); setSelectedId(todo.id); }}
+                        onEdit={() => { setEditFromRow(true); setSelectedId(todo.id); }}
+                        onToggle={() => toggleTodo(todo)}
+                        onAbandon={() => { void mutate(() => updateTodo({ id: todo.id, status: "abandoned" })); }} />
                     </article>
                 ))}
               </div>
@@ -1073,6 +1153,8 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           }}
         >
           <TodoDetail
+            key={selected.id}
+            initiallyEditing={editFromRow}
             panelRef={detailRef}
             todo={selected}
             items={state.items}
@@ -1089,14 +1171,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
                 return next;
               })
             }
-            onDelete={() => {
-              if (window.confirm(`删除“${selected.title}”？`))
-                void mutate(async () => {
-                  const next = await deleteTodo(selected.id);
-                  setSelectedId(null);
-                  return next;
-                });
-            }}
+            onDelete={() => setPendingDelete({ todoId: selected.id, title: selected.title })}
             onRun={(input) => {
               // Persist the draft first so Nova always starts from what the panel shows,
               // instead of the last saved snapshot.
@@ -1115,10 +1190,29 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
               mutate(async () => editTodoProgress({ id: selected.id, entryId, content, percent }))
             }
             onDeleteProgress={(entryId) => {
-              void mutate(async () => deleteTodoProgress({ id: selected.id, entryId }));
+              setPendingDelete({ todoId: selected.id, title: selected.title, entryId });
             }}
           />
         </div>
+      )}
+      {pendingDelete && (
+        <DeleteConfirmation
+          title={pendingDelete.entryId ? "删除这条进展？" : "删除这个待办？"}
+          description={pendingDelete.entryId
+            ? `将删除“${pendingDelete.title}”中的这条进展记录，此操作无法撤销。`
+            : `将删除“${pendingDelete.title}”及其全部进展记录，此操作无法撤销。`}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const target = pendingDelete;
+            setPendingDelete(null);
+            void mutate(async () => {
+              if (target.entryId) return deleteTodoProgress({ id: target.todoId, entryId: target.entryId });
+              const next = await deleteTodo(target.todoId);
+              setSelectedId(null);
+              return next;
+            });
+          }}
+        />
       )}
       {error && (
         <div className="todo-error" role="alert">
@@ -1158,23 +1252,64 @@ function TopicField({
   onChange: (topic: string) => void;
 }) {
   const listId = useId();
+  const inputId = useId();
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const names = [...new Set(items.map(topicOf))];
+  const matches = names.filter((name) => name.toLocaleLowerCase().includes(topic.trim().toLocaleLowerCase()));
+  const { triggerRef, popoverRef, position } = usePropertyPopover<HTMLInputElement>(open, setOpen, [topic, matches.length]);
+  const select = (name: string) => {
+    onChange(name);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  useEffect(() => {
+    if (active >= 0) popoverRef.current?.querySelector(`#${CSS.escape(`${listId}-${active}`)}`)?.scrollIntoView({ block: "nearest" });
+  }, [active, listId, popoverRef]);
   return (
-    <label>
-      <span>主题</span>
-      <input
-        aria-label="主题名称"
-        list={listId}
-        maxLength={24}
-        value={topic}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="默认使用第一个标签，无标签则归入未分类"
-      />
-      <datalist id={listId}>
-        {[...new Set(items.map(topicOf))].map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
-    </label>
+    <div className="todo-topic-field">
+      <label htmlFor={inputId}>主题</label>
+      <div className="todo-topic-input-wrap">
+        <FolderKanban size={15} aria-hidden="true" />
+        <input id={inputId} ref={triggerRef} role="combobox" aria-label="主题名称"
+          aria-expanded={open} aria-controls={open ? listId : undefined} aria-autocomplete="list"
+          aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
+          autoComplete="off" maxLength={24} value={topic}
+          onClick={() => { setOpen(true); setActive(-1); }}
+          onChange={(event) => { onChange(event.target.value); setActive(-1); setOpen(true); }}
+          onBlur={() => setOpen(false)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(true);
+              if (matches.length) setActive((index) => event.key === "ArrowDown" ? (index + 1) % matches.length : index <= 0 ? matches.length - 1 : index - 1);
+            } else if (event.key === "Enter" && open) {
+              event.preventDefault();
+              if (active >= 0 && matches[active]) select(matches[active]);
+              else setOpen(false);
+            }
+          }} placeholder="选择已有主题，或输入新主题" />
+        <ChevronDown size={14} aria-hidden="true" />
+      </div>
+      <small>留空时使用第一个标签，无标签则归入未分类</small>
+      {open && position && createPortal(
+        <div ref={popoverRef} className="todo-date-popover todo-select-popover todo-topic-popover"
+          style={{ top: position.top, left: position.left, width: position.width }}
+          onMouseDown={(event) => event.preventDefault()}>
+          <div className="todo-topic-menu-heading">{topic.trim() ? "匹配的主题" : "已有主题"}<span>{matches.length}</span></div>
+          <div id={listId} role="listbox" aria-label="主题建议" className="todo-topic-options">
+            {matches.map((name, index) => <button key={name} id={`${listId}-${index}`} type="button" role="option" tabIndex={-1}
+              aria-selected={name === topic}
+              className={`todo-select-option${active === index ? " todo-select-option-active" : ""}${name === topic ? " todo-select-option-selected" : ""}`}
+              onMouseEnter={() => setActive(index)} onClick={() => select(name)}>
+              <span className="todo-select-option-label"><FolderKanban size={14} />{name}</span>
+              {name === topic && <Check size={14} />}
+            </button>)}
+          </div>
+          {matches.length === 0 && <div className="todo-topic-empty">{topic.trim() ? `将使用新主题「${topic.trim()}」` : "暂无主题，输入名称即可新建"}</div>}
+        </div>, themedPortalRoot())}
+    </div>
   );
 }
 
@@ -1351,7 +1486,7 @@ function CreateTodoModal({
           </label>
           <label>
             <span>
-              描述 <small>{form.description.length}/50000</small>
+              完成目标 <small>{form.description.length}/50000</small>
             </span>
             <textarea
               value={form.description}
@@ -1438,6 +1573,7 @@ interface TodoDraft {
 }
 
 function TodoDetail({
+  initiallyEditing = false,
   panelRef,
   todo,
   items,
@@ -1455,6 +1591,7 @@ function TodoDetail({
   onEditProgress,
   onDeleteProgress,
 }: {
+  initiallyEditing?: boolean;
   panelRef: RefObject<HTMLElement | null>;
   todo: TodoItem;
   items: TodoItem[];
@@ -1476,12 +1613,18 @@ function TodoDetail({
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(todo.description);
   const [status, setStatus] = useState(todo.status);
+  const persistedStatus = useRef(todo.status);
+  useEffect(() => {
+    const previous = persistedStatus.current;
+    persistedStatus.current = todo.status;
+    setStatus((draft) => draft === previous ? todo.status : draft);
+  }, [todo.status]);
   const priority = todo.priority;
   const [topic, setTopic] = useState(topicOf(todo));
   const [tags, setTags] = useState<string[]>(todo.tags ?? []);
   const [projectPath, setProjectPath] = useState(todo.projectPath ?? "");
   const [dueAt, setDueAt] = useState(todo.dueAt?.slice(0, 10) ?? "");
-  const [editingDescription, setEditingDescription] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(initiallyEditing);
 
   // Only re-seed the draft when the panel switches to another task. Depending on the
   // whole object also re-ran this on every background refresh (window focus, agent
@@ -1609,7 +1752,7 @@ function TodoDetail({
           </label>
           <div className="todo-description-field">
             <div className="todo-description-heading">
-              <span>描述</span>
+              <span>完成目标</span>
               <div>
                 <small>{description.length}/50000 · Markdown</small>
                 <button type="button" onClick={() => setEditingDescription((value) => !value)}>
@@ -1632,10 +1775,6 @@ function TodoDetail({
               </div>
             ) : description ? (
               <div className="todo-description-preview">
-                <span className="todo-description-preview-tag">
-                  <FileText size={11} aria-hidden="true" />
-                  Markdown 描述
-                </span>
                 <Markdown content={description} />
               </div>
             ) : (
@@ -1643,7 +1782,7 @@ function TodoDetail({
                 <span className="todo-description-empty-icon" aria-hidden="true">
                   <FileText size={18} />
                 </span>
-                <strong>还没有描述</strong>
+                <strong>还没有完成目标</strong>
                 <p>用 Markdown 记录目标、验收标准或参考资料。</p>
                 <button
                   type="button"
@@ -1651,7 +1790,7 @@ function TodoDetail({
                   onClick={() => setEditingDescription(true)}
                 >
                   <PenLine size={12} aria-hidden="true" />
-                  添加描述
+                  添加完成目标
                 </button>
               </div>
             )}

@@ -493,8 +493,8 @@ fn normalize_progress_content(value: &str) -> Result<String, String> {
     if content.is_empty() {
         return Err("Progress content is required".to_string());
     }
-    if content.chars().count() > 5_000 {
-        return Err("Progress content must not exceed 5000 characters".to_string());
+    if content.chars().count() > 50_000 {
+        return Err("Progress content must not exceed 50000 characters".to_string());
     }
     Ok(content)
 }
@@ -526,6 +526,12 @@ pub async fn append_todo_progress(input: AppendTodoProgressInput) -> Result<Todo
         .iter_mut()
         .find(|todo| todo.id == input.id)
         .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    append_progress_to_todo(todo, input)?;
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+fn append_progress_to_todo(todo: &mut TodoItem, input: AppendTodoProgressInput) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     todo.progress.push(ProgressEntry {
         id: format!("progress_{}", uuid::Uuid::new_v4()),
@@ -535,9 +541,13 @@ pub async fn append_todo_progress(input: AppendTodoProgressInput) -> Result<Todo
         percent: normalize_progress_percent(input.percent)?,
         edited_at: None,
     });
+    if input.percent == Some(100) {
+        change_todo_status(todo, "completed", &now)?;
+    } else if todo.status == "pending" {
+        change_todo_status(todo, "in_progress", &now)?;
+    }
     todo.updated_at = now;
-    write_todo_state(&state)?;
-    Ok(state)
+    Ok(())
 }
 
 #[tauri::command]
@@ -562,6 +572,9 @@ pub async fn edit_todo_progress(input: EditTodoProgressInput) -> Result<TodoStat
         entry.percent = normalize_progress_percent(input.percent)?;
     }
     entry.edited_at = Some(now.clone());
+    if input.percent == Some(100) {
+        change_todo_status(todo, "completed", &now)?;
+    }
     todo.updated_at = now;
     write_todo_state(&state)?;
     Ok(state)
@@ -750,6 +763,503 @@ pub async fn set_user_memory_enabled(enabled: bool) -> Result<UserMemoryState, S
     state.enabled = enabled;
     write_user_memory_state(&state)?;
     Ok(state)
+}
+
+// ─── Fact memory (v2.1) ───
+//
+// The fact and suggestion stores belong to nova (`core/memory`). Studio only
+// reads them for display and delegates every mutation to `nova memory ...`,
+// so locking, atomic writes and archive semantics stay in one implementation.
+
+/// Mirrors `MemoryFactsStats` in nova's `core/memory/memory-rpc.ts`, plus the
+/// settings flag the UI needs to explain why facts are not being injected.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactMemoryStats {
+    active: usize,
+    archived: usize,
+    pending_suggestions: usize,
+    /// `memory.enabled` and `memory.facts.enabled` from the agent settings.
+    facts_enabled: bool,
+    /// `memory.facts.retrievalInterval`: user messages between retrieval calls.
+    retrieval_interval: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactMemoryState {
+    /// Raw fact records as nova wrote them: the UI renders the payload without
+    /// a second schema that would drift from `fact-schema.ts`.
+    facts: Vec<serde_json::Value>,
+    stats: FactMemoryStats,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactMemoryPatch {
+    text: Option<String>,
+    kind: Option<String>,
+    importance: Option<i64>,
+    applicability: Option<String>,
+    topics: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFactMemoryInput {
+    id: String,
+    action: String,
+    /// Required for `edit`; ignored by pin/unpin/archive/delete.
+    patch: Option<FactMemoryPatch>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveMemorySuggestionInput {
+    id: String,
+    action: String,
+}
+
+fn memory_file_path(name: &str) -> Result<PathBuf, String> {
+    Ok(nova_agent_dir()?.join("memory").join(name))
+}
+
+/// Read one array out of a memory store file.
+///
+/// Missing files are an empty list and are never created here — the CLI owns
+/// creation. A present but malformed file is an error, which the UI shows as an
+/// error bar instead of silently pretending the store is empty.
+fn read_memory_array(path: &Path, root_key: &str) -> Result<Vec<serde_json::Value>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("Unable to parse {}: {error}", path.display()))?;
+    match value.get(root_key) {
+        None => Ok(Vec::new()),
+        Some(serde_json::Value::Array(items)) => Ok(items.clone()),
+        Some(_) => Err(format!(
+            "{} must contain a {root_key} array",
+            path.display()
+        )),
+    }
+}
+
+/// Read a string field from a raw memory record.
+fn json_string_field<'a>(record: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    record.get(key).and_then(serde_json::Value::as_str)
+}
+
+/// Same rule as nova: archived or superseded facts are no longer active.
+fn fact_is_active(fact: &serde_json::Value) -> bool {
+    json_string_field(fact, "archivedAt").is_none()
+        && json_string_field(fact, "supersededBy").is_none()
+}
+
+fn memory_time_value(value: Option<&str>) -> i64 {
+    value
+        .and_then(|iso| chrono::DateTime::parse_from_rfc3339(iso).ok())
+        .map(|parsed| parsed.timestamp_millis())
+        .unwrap_or(0)
+}
+
+/// Pinned first, then newest, then id — matches `nova memory list`.
+fn compare_facts(left: &serde_json::Value, right: &serde_json::Value) -> std::cmp::Ordering {
+    let left_pinned = left.get("pinned").and_then(serde_json::Value::as_bool) == Some(true);
+    let right_pinned = right.get("pinned").and_then(serde_json::Value::as_bool) == Some(true);
+    if left_pinned != right_pinned {
+        return if left_pinned {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Greater
+        };
+    }
+    let left_created = memory_time_value(json_string_field(left, "createdAt"));
+    let right_created = memory_time_value(json_string_field(right, "createdAt"));
+    right_created.cmp(&left_created).then_with(|| {
+        json_string_field(left, "id")
+            .unwrap_or("")
+            .cmp(json_string_field(right, "id").unwrap_or(""))
+    })
+}
+
+fn suggestion_is_pending(suggestion: &serde_json::Value) -> bool {
+    json_string_field(suggestion, "status") == Some("pending")
+}
+
+/// Newest first, then id — matches `nova memory suggestions`.
+fn compare_suggestions(left: &serde_json::Value, right: &serde_json::Value) -> std::cmp::Ordering {
+    let left_created = memory_time_value(json_string_field(left, "createdAt"));
+    let right_created = memory_time_value(json_string_field(right, "createdAt"));
+    right_created.cmp(&left_created).then_with(|| {
+        json_string_field(left, "id")
+            .unwrap_or("")
+            .cmp(json_string_field(right, "id").unwrap_or(""))
+    })
+}
+
+fn pending_suggestions(mut suggestions: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    suggestions.retain(suggestion_is_pending);
+    suggestions.sort_by(compare_suggestions);
+    suggestions
+}
+
+/// Drop entries without an id: the UI keys cards by id and cannot act on them.
+fn drop_unidentified(mut records: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    records.retain(|record| {
+        json_string_field(record, "id")
+            .map(|id| !id.trim().is_empty())
+            .unwrap_or(false)
+    });
+    records
+}
+
+fn build_fact_memory_state(
+    facts: Vec<serde_json::Value>,
+    pending_suggestions: usize,
+    facts_enabled: bool,
+    retrieval_interval: u32,
+) -> FactMemoryState {
+    let mut facts = drop_unidentified(facts);
+    let archived = facts.iter().filter(|fact| !fact_is_active(fact)).count();
+    let stats = FactMemoryStats {
+        active: facts.len() - archived,
+        archived,
+        pending_suggestions,
+        facts_enabled,
+        retrieval_interval,
+    };
+    facts.sort_by(compare_facts);
+    FactMemoryState { facts, stats }
+}
+
+/// Nova's default when `memory.facts.retrievalInterval` is absent or invalid.
+const DEFAULT_RETRIEVAL_INTERVAL: u32 = 1;
+/// Upper bound nova clamps `memory.facts.retrievalInterval` to.
+const MAX_RETRIEVAL_INTERVAL: u32 = 50;
+
+/// Facts are off when either `memory.enabled` or `memory.facts.enabled` is
+/// false. Only the agent-level settings.json is read (no project overrides);
+/// a missing or malformed file means "enabled", like nova's defaults.
+fn read_facts_enabled(agent_dir: &Path) -> bool {
+    let settings_path = agent_dir.join("settings.json");
+    let Ok(content) = std::fs::read_to_string(&settings_path) else {
+        return true;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return true;
+    };
+    let flag = |pointer: &str| {
+        value
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+    };
+    flag("/memory/enabled") && flag("/memory/facts/enabled")
+}
+
+/// `memory.facts.retrievalInterval` from the agent settings.json, mirroring
+/// nova's resolver: positive numbers are floored and clamped to 1..=50, and a
+/// missing, malformed or non-positive value falls back to the default of 1.
+fn read_retrieval_interval(agent_dir: &Path) -> u32 {
+    let settings_path = agent_dir.join("settings.json");
+    let Ok(content) = std::fs::read_to_string(&settings_path) else {
+        return DEFAULT_RETRIEVAL_INTERVAL;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return DEFAULT_RETRIEVAL_INTERVAL;
+    };
+    let Some(raw) = value
+        .pointer("/memory/facts/retrievalInterval")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && *number > 0.0)
+    else {
+        return DEFAULT_RETRIEVAL_INTERVAL;
+    };
+    (raw.floor() as i64).clamp(1, MAX_RETRIEVAL_INTERVAL as i64) as u32
+}
+
+/// Merge the interval into an existing settings object, creating the
+/// `memory.facts` objects on the way and refusing to overwrite a non-object
+/// value. Kept pure so the merge rules are testable without touching disk.
+fn apply_retrieval_interval(settings: &mut serde_json::Value, interval: u32) -> Result<(), String> {
+    if !(1..=MAX_RETRIEVAL_INTERVAL).contains(&interval) {
+        return Err(format!(
+            "retrievalInterval must be between 1 and {MAX_RETRIEVAL_INTERVAL}"
+        ));
+    }
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings.json must contain a JSON object")?;
+    let memory = root
+        .entry("memory")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("settings.json memory must be an object")?;
+    let facts = memory
+        .entry("facts")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("settings.json memory.facts must be an object")?;
+    facts.insert("retrievalInterval".into(), serde_json::json!(interval));
+    Ok(())
+}
+
+/// Persist the interval into the agent-level settings.json, preserving every
+/// other key. Written through `write_private_json` so the file keeps mode 0600
+/// and is replaced atomically, like nova's own settings writes.
+fn persist_retrieval_interval(agent_dir: &Path, interval: u32) -> Result<(), String> {
+    if !(1..=MAX_RETRIEVAL_INTERVAL).contains(&interval) {
+        return Err(format!(
+            "retrievalInterval must be between 1 and {MAX_RETRIEVAL_INTERVAL}"
+        ));
+    }
+    let settings_path = agent_dir.join("settings.json");
+    let mut settings = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|error| format!("Unable to read {}: {error}", settings_path.display()))?;
+        serde_json::from_str::<serde_json::Value>(&content)
+            .map_err(|error| format!("Unable to parse {}: {error}", settings_path.display()))?
+    } else {
+        serde_json::json!({})
+    };
+    apply_retrieval_interval(&mut settings, interval)?;
+    write_private_json(&settings_path, &settings)
+}
+
+/// Ids arrive from the frontend and become subprocess arguments, so accept only
+/// the exact shape nova writes: `fact_<uuidv7>` / `sug_<uuidv7>`.
+fn validate_memory_id(id: &str, prefix: &str) -> Result<String, String> {
+    let trimmed = id.trim();
+    if !trimmed.starts_with(prefix) {
+        return Err(format!("Invalid memory id: {id}"));
+    }
+    if trimmed.len() > 64 {
+        return Err(format!("Invalid memory id: {id}"));
+    }
+    if !trimmed
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+    {
+        return Err(format!("Invalid memory id: {id}"));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// `update_fact_memory` action → the `nova memory` subcommand that applies it.
+fn memory_fact_cli_action(action: &str) -> Result<&'static str, String> {
+    match action.trim() {
+        "pin" => Ok("pin"),
+        "unpin" => Ok("unpin"),
+        "archive" => Ok("archive"),
+        "delete" => Ok("delete"),
+        "edit" => Ok("edit"),
+        other => Err(format!("Unsupported fact action: {other}")),
+    }
+}
+
+/// Same limits as nova's `fact-schema.ts`: a single sentence of at most 200
+/// characters and up to three concept labels.
+const MAX_FACT_TEXT_CHARS: usize = 200;
+const MAX_FACT_TOPICS: usize = 3;
+const FACT_KINDS: [&str; 6] = [
+    "decision",
+    "preference",
+    "constraint",
+    "project",
+    "commitment",
+    "event",
+];
+const FACT_APPLICABILITIES: [&str; 3] = ["universal", "transferable", "project"];
+
+/// A value that starts with `-` would be read as a flag by nova's argument
+/// parser, so such values never reach the CLI.
+fn reject_option_like(value: &str, field: &str) -> Result<(), String> {
+    if value.starts_with('-') {
+        return Err(format!("{field} cannot start with '-'"));
+    }
+    Ok(())
+}
+
+/// Build `nova memory edit <id> [--text ...] [--kind ...] ...` from a patch.
+///
+/// Pure so the argument layout is unit-tested without spawning the CLI. Values
+/// are validated here as a first line of defence: nova validates again and its
+/// `Error: ...` line is what the UI shows.
+fn build_fact_edit_args(id: &str, patch: &FactMemoryPatch) -> Result<Vec<String>, String> {
+    let mut args = vec!["edit".to_string(), id.to_string()];
+    let mut touched = false;
+
+    if let Some(text) = patch.text.as_deref() {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("Fact text cannot be empty".to_string());
+        }
+        if text.chars().count() > MAX_FACT_TEXT_CHARS {
+            return Err(format!(
+                "Fact text must be at most {MAX_FACT_TEXT_CHARS} characters"
+            ));
+        }
+        reject_option_like(text, "Fact text")?;
+        args.push("--text".to_string());
+        args.push(text.to_string());
+        touched = true;
+    }
+
+    if let Some(kind) = patch.kind.as_deref() {
+        let kind = kind.trim();
+        if !FACT_KINDS.contains(&kind) {
+            return Err(format!("Unsupported fact kind: {kind}"));
+        }
+        args.push("--kind".to_string());
+        args.push(kind.to_string());
+        touched = true;
+    }
+
+    if let Some(importance) = patch.importance {
+        if !(1..=5).contains(&importance) {
+            return Err(format!("Importance must be between 1 and 5: {importance}"));
+        }
+        args.push("--importance".to_string());
+        args.push(importance.to_string());
+        touched = true;
+    }
+
+    if let Some(applicability) = patch.applicability.as_deref() {
+        let applicability = applicability.trim();
+        if !FACT_APPLICABILITIES.contains(&applicability) {
+            return Err(format!("Unsupported applicability: {applicability}"));
+        }
+        args.push("--applicability".to_string());
+        args.push(applicability.to_string());
+        touched = true;
+    }
+
+    if let Some(topics) = patch.topics.as_deref() {
+        if topics.len() > MAX_FACT_TOPICS {
+            return Err(format!("At most {MAX_FACT_TOPICS} topics are allowed"));
+        }
+        let mut cleaned: Vec<String> = Vec::new();
+        for topic in topics {
+            let topic = topic.trim();
+            if topic.is_empty() {
+                continue;
+            }
+            if topic.contains(',') {
+                return Err("A topic cannot contain a comma".to_string());
+            }
+            reject_option_like(topic, "A topic")?;
+            if !cleaned.iter().any(|kept| kept == topic) {
+                cleaned.push(topic.to_string());
+            }
+        }
+        // An empty list clears the labels, so `--topics ""` is intentional.
+        args.push("--topics".to_string());
+        args.push(cleaned.join(","));
+        touched = true;
+    }
+
+    if !touched {
+        return Err(
+            "No fields to update: provide at least one of text, kind, importance, applicability or topics"
+                .to_string(),
+        );
+    }
+    Ok(args)
+}
+
+/// Full `nova memory` argument vector for one fact mutation.
+fn fact_memory_cli_args(
+    action: &str,
+    id: &str,
+    patch: Option<&FactMemoryPatch>,
+) -> Result<Vec<String>, String> {
+    let action = memory_fact_cli_action(action)?;
+    // Ids arrive from the frontend and become subprocess arguments, so validate
+    // before they can be paired with a patch.
+    let id = validate_memory_id(id, "fact_")?;
+    if action != "edit" {
+        return Ok(vec![action.to_string(), id]);
+    }
+    let patch = patch.ok_or_else(|| "Edit action requires a patch".to_string())?;
+    build_fact_edit_args(&id, patch)
+}
+
+/// `resolve_memory_suggestion` action → `promote` (accept) or `reject`.
+fn memory_suggestion_cli_action(action: &str) -> Result<&'static str, String> {
+    match action.trim() {
+        "accept" => Ok("promote"),
+        "reject" => Ok("reject"),
+        other => Err(format!("Unsupported suggestion action: {other}")),
+    }
+}
+
+/// Read the fact store for one agent directory. Kept separate from the Tauri
+/// command so the parsing/aggregation path is testable with a temp directory.
+fn load_fact_memory(agent_dir: &Path) -> Result<FactMemoryState, String> {
+    let facts = read_memory_array(&agent_dir.join("memory").join("facts.json"), "facts")?;
+    // A broken suggestion store must not blank the facts page: count degrades to
+    // zero, mirroring nova's `countPendingSuggestions`.
+    let pending = match read_memory_array(
+        &agent_dir.join("memory").join("suggestions.json"),
+        "suggestions",
+    ) {
+        Ok(suggestions) => pending_suggestions(suggestions).len(),
+        Err(error) => {
+            log::warn!("Unable to read memory suggestions: {}", error);
+            0
+        }
+    };
+    Ok(build_fact_memory_state(
+        facts,
+        pending,
+        read_facts_enabled(agent_dir),
+        read_retrieval_interval(agent_dir),
+    ))
+}
+
+#[tauri::command]
+pub async fn get_fact_memory() -> Result<FactMemoryState, String> {
+    load_fact_memory(&nova_agent_dir()?)
+}
+
+/// Set `memory.facts.retrievalInterval` for every new session. The agent reads
+/// settings.json when it starts a session, so a running conversation keeps the
+/// interval it started with.
+#[tauri::command]
+pub async fn set_memory_retrieval_interval(interval: u32) -> Result<(), String> {
+    let agent_dir = nova_agent_dir()?;
+    persist_retrieval_interval(&agent_dir, interval)
+}
+
+#[tauri::command]
+pub async fn get_memory_suggestions() -> Result<Vec<serde_json::Value>, String> {
+    let path = memory_file_path("suggestions.json")?;
+    let suggestions = read_memory_array(&path, "suggestions")?;
+    Ok(pending_suggestions(suggestions))
+}
+
+#[tauri::command]
+pub async fn update_fact_memory(
+    state: State<'_, AgentManagerState>,
+    input: UpdateFactMemoryInput,
+) -> Result<(), String> {
+    let args = fact_memory_cli_args(&input.action, &input.id, input.patch.as_ref())?;
+    state.0.run_memory_cli(&args).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resolve_memory_suggestion(
+    state: State<'_, AgentManagerState>,
+    input: ResolveMemorySuggestionInput,
+) -> Result<(), String> {
+    let action = memory_suggestion_cli_action(&input.action)?;
+    let id = validate_memory_id(&input.id, "sug_")?;
+    state.0.run_memory_cli(&[action.to_string(), id]).await?;
+    Ok(())
 }
 
 fn read_json_object(path: &Path, root_key: &str) -> Result<serde_json::Value, String> {
@@ -1608,9 +2118,268 @@ pub async fn respond_tool_permission(
         .await
 }
 
+/// Providers supported by nova's built-in `web_search` tool
+/// (`packages/nova/src/core/search/config.ts`).
+const SEARCH_PROVIDERS: [&str; 7] = [
+    "so",
+    "duckduckgo",
+    "bing",
+    "brave",
+    "tavily",
+    "deepseek",
+    "searxng",
+];
+/// Nova's defaults when the `search` section is absent or invalid.
+const DEFAULT_SEARCH_PROVIDER: &str = "so";
+const DEFAULT_SEARCH_MAX_RESULTS: u32 = 5;
+const DEFAULT_SEARCH_TIMEOUT_MS: u32 = 20_000;
+/// Bounds nova clamps `search.maxResults` / `search.timeoutMs` to.
+const MAX_SEARCH_RESULTS: u32 = 10;
+const MIN_SEARCH_TIMEOUT_MS: u32 = 1_000;
+const MAX_SEARCH_TIMEOUT_MS: u32 = 60_000;
+
+/// The `search` section of the agent-level settings.json, resolved the same way
+/// nova's `resolveWebSearchConfig` does. `deepseekAuthKeyAvailable` lets the
+/// settings page show that the DeepSeek login already provides a search key.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSettingsState {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub max_results: u32,
+    pub timeout_ms: u32,
+    /// True when auth.json holds a DeepSeek api_key credential.
+    pub deepseek_auth_key_available: bool,
+}
+
+/// Payload of `saveSearchSettings` from the settings page.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSearchSettingsInput {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub max_results: u32,
+    pub timeout_ms: u32,
+}
+
+/// Trim + lowercase a provider id and resolve it to the canonical spelling.
+/// Unknown ids are rejected so a typo cannot silently switch the provider.
+fn normalize_search_provider(value: &str) -> Option<&'static str> {
+    let provider = value.trim().to_ascii_lowercase();
+    SEARCH_PROVIDERS
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == provider.as_str())
+}
+
+fn clamp_search_max_results(value: u32) -> u32 {
+    value.clamp(1, MAX_SEARCH_RESULTS)
+}
+
+fn clamp_search_timeout_ms(value: u32) -> u32 {
+    value.clamp(MIN_SEARCH_TIMEOUT_MS, MAX_SEARCH_TIMEOUT_MS)
+}
+
+/// Trimmed non-empty string from a settings entry; whitespace-only means unset.
+fn trimmed_search_string(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+/// One numeric entry of the `search` section: JSON numbers and numeric strings
+/// (nova's resolver parses `"7"` too, so the page shows what nova would use),
+/// floored and clamped by `clamp`; anything else keeps the default.
+fn read_search_number(
+    value: Option<&serde_json::Value>,
+    default: u32,
+    clamp: fn(u32) -> u32,
+) -> u32 {
+    let parsed = value.and_then(|value| match value {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(text) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    });
+    parsed
+        .filter(|number| number.is_finite())
+        // `as u32` saturates, so huge or negative numbers clamp safely.
+        .map(|number| clamp(number.floor() as u32))
+        .unwrap_or(default)
+}
+
+/// `search` from the agent-level settings.json. A missing or malformed file
+/// means defaults, like nova's own fallback.
+fn read_search_settings(agent_dir: &Path) -> SearchSettingsState {
+    let settings_path = agent_dir.join("settings.json");
+    let settings = std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    SearchSettingsState {
+        provider: settings
+            .pointer("/search/provider")
+            .and_then(serde_json::Value::as_str)
+            .and_then(normalize_search_provider)
+            .unwrap_or(DEFAULT_SEARCH_PROVIDER)
+            .to_string(),
+        api_key: trimmed_search_string(settings.pointer("/search/apiKey")),
+        base_url: trimmed_search_string(settings.pointer("/search/baseUrl")),
+        max_results: read_search_number(
+            settings.pointer("/search/maxResults"),
+            DEFAULT_SEARCH_MAX_RESULTS,
+            clamp_search_max_results,
+        ),
+        timeout_ms: read_search_number(
+            settings.pointer("/search/timeoutMs"),
+            DEFAULT_SEARCH_TIMEOUT_MS,
+            clamp_search_timeout_ms,
+        ),
+        deepseek_auth_key_available: has_deepseek_auth_key(agent_dir),
+    }
+}
+
+/// `deepseek` search reuses the API key `/login` stored in auth.json, so the
+/// settings page needs to know whether that credential is already available.
+fn has_deepseek_auth_key(agent_dir: &Path) -> bool {
+    read_auth_object(agent_dir)
+        .get("deepseek")
+        .filter(|credential| {
+            credential.get("type").and_then(serde_json::Value::as_str) == Some("api_key")
+        })
+        .and_then(|credential| credential.get("key"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
+}
+
+/// Merge the settings page payload into an existing settings object, creating
+/// the `search` object on the way and refusing to overwrite a non-object value.
+/// Kept pure so the merge rules are testable without touching disk; every
+/// unrelated key (top level and inside `search`) is preserved.
+fn apply_search_settings(
+    settings: &mut serde_json::Value,
+    input: &SaveSearchSettingsInput,
+) -> Result<(), String> {
+    let provider = normalize_search_provider(&input.provider)
+        .ok_or_else(|| format!("Unsupported search provider: {}", input.provider.trim()))?;
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings.json must contain a JSON object")?;
+    let search = root
+        .entry("search")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("settings.json search must be an object")?;
+
+    search.insert(
+        "provider".to_string(),
+        serde_json::Value::String(provider.to_string()),
+    );
+    for (key, value) in [
+        ("apiKey", input.api_key.as_deref()),
+        ("baseUrl", input.base_url.as_deref()),
+    ] {
+        match value.map(str::trim).filter(|text| !text.is_empty()) {
+            Some(text) => {
+                search.insert(key.to_string(), serde_json::Value::String(text.to_string()));
+            }
+            None => {
+                // Blank means "unset", so nova falls back to its env vars and
+                // defaults instead of sending an empty credential.
+                search.remove(key);
+            }
+        }
+    }
+    search.insert(
+        "maxResults".to_string(),
+        serde_json::json!(clamp_search_max_results(input.max_results)),
+    );
+    search.insert(
+        "timeoutMs".to_string(),
+        serde_json::json!(clamp_search_timeout_ms(input.timeout_ms)),
+    );
+    Ok(())
+}
+
+/// Persist the search settings into the agent-level settings.json, preserving
+/// every other key, then re-read so the caller sees the effective values
+/// (normalized provider, clamped numbers).
+fn persist_search_settings(
+    agent_dir: &Path,
+    input: &SaveSearchSettingsInput,
+) -> Result<SearchSettingsState, String> {
+    let settings_path = agent_dir.join("settings.json");
+    let mut settings = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|error| format!("Unable to read {}: {error}", settings_path.display()))?;
+        serde_json::from_str::<serde_json::Value>(&content)
+            .map_err(|error| format!("Unable to parse {}: {error}", settings_path.display()))?
+    } else {
+        serde_json::json!({})
+    };
+    apply_search_settings(&mut settings, input)?;
+    std::fs::create_dir_all(agent_dir)
+        .map_err(|error| format!("Unable to create {}: {error}", agent_dir.display()))?;
+    write_private_json(&settings_path, &settings)?;
+    Ok(read_search_settings(agent_dir))
+}
+
+#[tauri::command]
+pub async fn get_search_settings() -> Result<SearchSettingsState, String> {
+    let agent_dir = nova_agent_dir()?;
+    Ok(read_search_settings(&agent_dir))
+}
+
+#[tauri::command]
+pub async fn save_search_settings(
+    input: SaveSearchSettingsInput,
+) -> Result<SearchSettingsState, String> {
+    let agent_dir = nova_agent_dir()?;
+    persist_search_settings(&agent_dir, &input)
+}
+
 #[cfg(test)]
 mod todo_tests {
     use super::*;
+
+    #[test]
+    fn progress_starts_pending_tasks_and_preserves_other_statuses() {
+        for status in ["pending", "in_progress", "completed", "abandoned"] {
+            let mut todo: TodoItem = serde_json::from_value(serde_json::json!({
+                "id": "progress-test", "title": "Test", "description": "",
+                "status": status, "priority": "medium", "source": "user",
+                "createdAt": "2026-11-03T00:00:00Z", "updatedAt": "2026-11-03T00:00:00Z",
+                "completedAt": if status == "completed" { Some("2026-11-03T00:00:00Z") } else { None },
+                "order": 0
+            })).unwrap();
+            let original_completed_at = todo.completed_at.clone();
+            for index in 0..2 {
+                append_progress_to_todo(&mut todo, AppendTodoProgressInput {
+                    id: "progress-test".to_string(), content: format!("Checkpoint {index}"),
+                    percent: None, source: Some("user".to_string()),
+                }).unwrap();
+            }
+            assert_eq!(todo.status, if status == "pending" { "in_progress" } else { status });
+            assert_eq!(todo.completed_at, original_completed_at);
+            assert_eq!(todo.progress.len(), 2);
+            assert_eq!(todo.history.len(), if status == "pending" { 1 } else { 0 });
+            if status == "pending" {
+                assert_eq!(todo.history[0].kind, "status_changed");
+                assert_eq!(todo.history[0].from.as_deref(), Some("pending"));
+                assert_eq!(todo.history[0].to.as_deref(), Some("in_progress"));
+                assert_eq!(todo.history[0].changed_at, todo.progress[0].at);
+            }
+            let before = serde_json::to_value(&todo).unwrap();
+            assert!(append_progress_to_todo(&mut todo, AppendTodoProgressInput {
+                id: "progress-test".to_string(), content: " ".to_string(), percent: None, source: None,
+            }).is_err());
+            assert_eq!(serde_json::to_value(&todo).unwrap(), before);
+        }
+    }
 
     #[test]
     fn normalizes_todo_title_and_description() {
@@ -1762,5 +2531,1012 @@ mod todo_tests {
         assert_eq!(todo.history.last().unwrap().to.as_deref(), Some("abandoned"));
         assert!(item.get("dueAt").is_some());
         assert!(item.get("completedAt").is_some());
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    /// Shape written by nova's `FactStore` (`core/memory/fact-store.ts`).
+    /// Project + transferable + universal facts, one pinned, one archived and
+    /// one superseded, so the active/archived split and ordering are pinned.
+    const FACTS_FIXTURE: &str = r#"{
+        "version": 1,
+        "facts": [
+            {
+                "id": "fact_0192f0c4-1111-7222-8333-444455556661",
+                "text": "项目用 npm workspaces 管理依赖",
+                "kind": "project",
+                "applicability": "project",
+                "projects": ["/Users/dongzj1102/Desktop/Pi-Agent/nova"],
+                "topics": ["npm"],
+                "importance": 4,
+                "confidence": 0.9,
+                "createdAt": "2026-10-18T08:00:00Z",
+                "updatedAt": "2026-10-18T08:00:00Z",
+                "retrievalCount": 7,
+                "pinned": false,
+                "reviewState": "kept",
+                "source": {
+                    "sessionFile": "/Users/dongzj1102/.nova/agent/sessions/nova/2026-10-18.jsonl",
+                    "sessionId": "0192f0c4",
+                    "entryIds": ["entry-1"],
+                    "extractedAt": "2026-10-18T08:00:00Z",
+                    "model": "explicit"
+                }
+            },
+            {
+                "id": "fact_0192f0c4-1111-7222-8333-444455556662",
+                "text": "用户偏好中文回复",
+                "kind": "preference",
+                "applicability": "universal",
+                "topics": ["language"],
+                "importance": 5,
+                "confidence": 0.8,
+                "createdAt": "2026-10-17T08:00:00Z",
+                "updatedAt": "2026-10-17T08:00:00Z",
+                "retrievalCount": 3,
+                "pinned": true,
+                "reviewState": "unreviewed",
+                "source": {
+                    "sessionFile": "/Users/dongzj1102/.nova/agent/sessions/nova/2026-10-17.jsonl",
+                    "sessionId": "0192f0c5",
+                    "entryIds": [],
+                    "extractedAt": "2026-10-17T08:00:00Z",
+                    "model": "explicit"
+                }
+            },
+            {
+                "id": "fact_0192f0c4-1111-7222-8333-444455556663",
+                "text": "旧的决定已被替代",
+                "kind": "decision",
+                "applicability": "universal",
+                "topics": [],
+                "importance": 3,
+                "confidence": 0.5,
+                "createdAt": "2026-10-16T08:00:00Z",
+                "updatedAt": "2026-10-19T08:00:00Z",
+                "retrievalCount": 0,
+                "pinned": false,
+                "supersededBy": "fact_0192f0c4-1111-7222-8333-444455556662",
+                "reviewState": "kept",
+                "source": {
+                    "sessionFile": "/Users/dongzj1102/.nova/agent/sessions/nova/2026-10-16.jsonl",
+                    "sessionId": "0192f0c6",
+                    "entryIds": [],
+                    "extractedAt": "2026-10-16T08:00:00Z",
+                    "model": "explicit"
+                }
+            },
+            {
+                "id": "fact_0192f0c4-1111-7222-8333-444455556664",
+                "text": "手工归档的事实",
+                "kind": "event",
+                "applicability": "project",
+                "projects": ["/Users/dongzj1102/Desktop/Pi-Agent/nova-studio"],
+                "topics": [],
+                "importance": 1,
+                "confidence": 0.5,
+                "createdAt": "2026-10-15T08:00:00Z",
+                "updatedAt": "2026-10-15T08:00:00Z",
+                "retrievalCount": 1,
+                "pinned": false,
+                "archivedAt": "2026-10-19T09:00:00Z",
+                "archiveReason": "manual",
+                "reviewState": "kept",
+                "source": {
+                    "sessionFile": "/Users/dongzj1102/.nova/agent/sessions/nova/2026-10-15.jsonl",
+                    "sessionId": "0192f0c7",
+                    "entryIds": [],
+                    "extractedAt": "2026-10-15T08:00:00Z",
+                    "model": "explicit"
+                }
+            }
+        ]
+    }"#;
+
+    const SUGGESTIONS_FIXTURE: &str = r#"{
+        "version": 1,
+        "suggestions": [
+            {
+                "id": "sug_0192f0c4-1111-7222-8333-444455556671",
+                "factIds": ["fact_0192f0c4-1111-7222-8333-444455556662"],
+                "action": "create",
+                "title": "协作偏好",
+                "proposedContent": "用户偏好中文回复，代码注释也用中文。",
+                "reason": "多条事实指向同一稳定偏好。",
+                "createdAt": "2026-10-18T08:00:00Z",
+                "status": "pending"
+            },
+            {
+                "id": "sug_0192f0c4-1111-7222-8333-444455556672",
+                "factIds": ["fact_0192f0c4-1111-7222-8333-444455556661"],
+                "action": "append",
+                "targetSectionId": "section_1",
+                "title": "工程约定",
+                "proposedContent": "依赖统一用 npm workspaces 管理。",
+                "createdAt": "2026-10-17T08:00:00Z",
+                "status": "pending"
+            },
+            {
+                "id": "sug_0192f0c4-1111-7222-8333-444455556673",
+                "factIds": ["fact_0192f0c4-1111-7222-8333-444455556663"],
+                "action": "update",
+                "targetSectionId": "section_1",
+                "title": "过期的建议",
+                "proposedContent": "不该出现在待确认列表里。",
+                "createdAt": "2026-10-19T08:00:00Z",
+                "status": "accepted"
+            }
+        ]
+    }"#;
+
+    #[test]
+    fn parses_fact_memory_written_by_nova() {
+        let facts: Vec<serde_json::Value> =
+            serde_json::from_str::<serde_json::Value>(FACTS_FIXTURE)
+                .unwrap()
+                .get("facts")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap();
+
+        let state = build_fact_memory_state(facts, 2, true, 1);
+
+        assert_eq!(state.stats.active, 2);
+        assert_eq!(state.stats.archived, 2);
+        assert_eq!(state.stats.pending_suggestions, 2);
+        assert!(state.stats.facts_enabled);
+        assert_eq!(state.facts.len(), 4);
+        // Pinned first, then newest unpinned.
+        assert_eq!(
+            json_string_field(&state.facts[0], "id"),
+            Some("fact_0192f0c4-1111-7222-8333-444455556662")
+        );
+        assert_eq!(
+            json_string_field(&state.facts[1], "id"),
+            Some("fact_0192f0c4-1111-7222-8333-444455556661")
+        );
+        // The payload keeps the fields the UI renders.
+        assert_eq!(
+            json_string_field(&state.facts[1], "applicability"),
+            Some("project")
+        );
+        assert_eq!(json_string_field(&state.facts[1], "kind"), Some("project"));
+        assert_eq!(
+            state.facts[1]
+                .get("importance")
+                .and_then(serde_json::Value::as_u64),
+            Some(4)
+        );
+        assert_eq!(
+            state.facts[1]
+                .get("retrievalCount")
+                .and_then(serde_json::Value::as_u64),
+            Some(7)
+        );
+        assert_eq!(
+            state.facts[1]
+                .get("projects")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| items.len()),
+            Some(1)
+        );
+        assert_eq!(
+            state.facts[0]
+                .pointer("/source/sessionFile")
+                .and_then(serde_json::Value::as_str),
+            Some("/Users/dongzj1102/.nova/agent/sessions/nova/2026-10-17.jsonl")
+        );
+    }
+
+    #[test]
+    fn drops_records_without_an_id() {
+        let records = serde_json::json!([
+            { "id": "fact_ok", "text": "kept" },
+            { "id": "  ", "text": "blank id" },
+            { "text": "no id at all" }
+        ]);
+        let facts = records.as_array().cloned().unwrap();
+        let state = build_fact_memory_state(facts, 0, true, 1);
+        assert_eq!(state.facts.len(), 1);
+        assert_eq!(json_string_field(&state.facts[0], "id"), Some("fact_ok"));
+        assert_eq!(state.stats.active, 1);
+    }
+
+    /// A missing store is an empty list and must not be created by reading it.
+    #[test]
+    fn missing_memory_files_read_as_empty_lists() {
+        let directory = std::env::temp_dir().join(format!(
+            "nova-studio-memory-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let path = directory.join("facts.json");
+
+        let facts = read_memory_array(&path, "facts").unwrap();
+
+        assert!(facts.is_empty());
+        assert!(!path.exists());
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn only_pending_suggestions_are_listed() {
+        let value: serde_json::Value = serde_json::from_str(SUGGESTIONS_FIXTURE).unwrap();
+        let suggestions = value
+            .get("suggestions")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap();
+
+        let pending = pending_suggestions(suggestions);
+
+        assert_eq!(pending.len(), 2);
+        // Newest first.
+        assert_eq!(
+            json_string_field(&pending[0], "id"),
+            Some("sug_0192f0c4-1111-7222-8333-444455556671")
+        );
+        assert_eq!(json_string_field(&pending[0], "action"), Some("create"));
+        assert_eq!(
+            json_string_field(&pending[0], "proposedContent"),
+            Some("用户偏好中文回复，代码注释也用中文。")
+        );
+        assert_eq!(
+            json_string_field(&pending[0], "reason"),
+            Some("多条事实指向同一稳定偏好。")
+        );
+        assert_eq!(
+            pending[0]
+                .get("factIds")
+                .and_then(serde_json::Value::as_array)
+                .map(|ids| ids.len()),
+            Some(1)
+        );
+        assert_eq!(
+            json_string_field(&pending[1], "id"),
+            Some("sug_0192f0c4-1111-7222-8333-444455556672")
+        );
+        assert!(pending
+            .iter()
+            .all(|suggestion| json_string_field(suggestion, "status") == Some("pending")));
+    }
+
+    #[test]
+    fn rejects_unknown_actions_and_foreign_ids() {
+        assert_eq!(memory_fact_cli_action("pin").unwrap(), "pin");
+        assert_eq!(memory_fact_cli_action(" archive ").unwrap(), "archive");
+        assert!(memory_fact_cli_action("explode").is_err());
+        assert!(memory_fact_cli_action("promote").is_err());
+
+        assert_eq!(memory_suggestion_cli_action("accept").unwrap(), "promote");
+        assert_eq!(memory_suggestion_cli_action("reject").unwrap(), "reject");
+        assert!(memory_suggestion_cli_action("promote").is_err());
+
+        assert_eq!(
+            validate_memory_id("fact_0192f0c4-1111-7222-8333-444455556662", "fact_").unwrap(),
+            "fact_0192f0c4-1111-7222-8333-444455556662"
+        );
+        // Unknown / malformed ids never reach the CLI as arguments.
+        assert!(validate_memory_id("fact_nope; rm -rf /", "fact_").is_err());
+        assert!(validate_memory_id("--all", "fact_").is_err());
+        assert!(validate_memory_id("sug_0192f0c4", "fact_").is_err());
+        assert!(validate_memory_id("", "fact_").is_err());
+        assert!(validate_memory_id("sug_0192f0c4", "sug_").is_ok());
+    }
+
+    /// Every patch field becomes its own flag, in the order nova documents:
+    /// `nova memory edit <id> [--text] [--kind] [--importance] [...]`.
+    #[test]
+    fn builds_edit_args_for_every_patch_field() {
+        let patch = FactMemoryPatch {
+            text: Some("  依赖统一用 npm workspaces  ".to_string()),
+            kind: Some("decision".to_string()),
+            importance: Some(4),
+            applicability: Some("project".to_string()),
+            topics: Some(vec!["依赖".to_string(), " monorepo ".to_string()]),
+        };
+
+        let args = build_fact_edit_args("fact_0192f0c4", &patch).unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "edit",
+                "fact_0192f0c4",
+                "--text",
+                "依赖统一用 npm workspaces",
+                "--kind",
+                "decision",
+                "--importance",
+                "4",
+                "--applicability",
+                "project",
+                "--topics",
+                "依赖,monorepo",
+            ]
+        );
+    }
+
+    /// Only changed fields travel to the CLI; an empty list clears the topics.
+    #[test]
+    fn builds_edit_args_for_a_partial_patch() {
+        let patch = FactMemoryPatch {
+            text: None,
+            kind: None,
+            importance: None,
+            applicability: None,
+            topics: Some(Vec::new()),
+        };
+
+        assert_eq!(
+            build_fact_edit_args("fact_0192f0c4", &patch).unwrap(),
+            vec!["edit", "fact_0192f0c4", "--topics", ""]
+        );
+        // Blank / duplicate entries are dropped so the CSV stays canonical.
+        let topics = FactMemoryPatch {
+            topics: Some(vec!["a".to_string(), " ".to_string(), "a".to_string()]),
+            ..patch
+        };
+        assert_eq!(
+            build_fact_edit_args("fact_0192f0c4", &topics).unwrap(),
+            vec!["edit", "fact_0192f0c4", "--topics", "a"]
+        );
+    }
+
+    #[test]
+    fn edit_requires_a_patch_and_at_least_one_field() {
+        let error = fact_memory_cli_args("edit", "fact_0192f0c4", None).unwrap_err();
+        assert!(error.contains("requires a patch"));
+
+        let empty = FactMemoryPatch {
+            text: None,
+            kind: None,
+            importance: None,
+            applicability: None,
+            topics: None,
+        };
+        let error = fact_memory_cli_args("edit", "fact_0192f0c4", Some(&empty)).unwrap_err();
+        assert!(error.contains("No fields to update"));
+
+        // pin/archive still build the two-argument form and ignore a patch.
+        assert_eq!(
+            fact_memory_cli_args("archive", "fact_0192f0c4", None).unwrap(),
+            vec!["archive", "fact_0192f0c4"]
+        );
+        assert_eq!(
+            fact_memory_cli_args(" pin ", "fact_0192f0c4", Some(&empty)).unwrap(),
+            vec!["pin", "fact_0192f0c4"]
+        );
+        // Ids are validated even when a patch is present.
+        assert!(fact_memory_cli_args("edit", "--all", Some(&empty)).is_err());
+    }
+
+    #[test]
+    fn edit_patch_values_are_validated_before_reaching_the_cli() {
+        let base = FactMemoryPatch {
+            text: None,
+            kind: None,
+            importance: None,
+            applicability: None,
+            topics: None,
+        };
+        let long = "字".repeat(MAX_FACT_TEXT_CHARS + 1);
+        let cases = [
+            FactMemoryPatch {
+                text: Some("   ".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                text: Some("--json".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                text: Some(long),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                kind: Some("gossip".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                importance: Some(0),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                importance: Some(6),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                applicability: Some("global".to_string()),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                topics: Some(vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string(),
+                ]),
+                ..base.clone()
+            },
+            FactMemoryPatch {
+                topics: Some(vec!["a,b".to_string()]),
+                ..base.clone()
+            },
+        ];
+        for patch in cases {
+            assert!(
+                build_fact_edit_args("fact_0192f0c4", &patch).is_err(),
+                "expected a validation error for {patch:?}"
+            );
+        }
+
+        // Exactly 200 characters is still accepted.
+        let patch = FactMemoryPatch {
+            text: Some("字".repeat(MAX_FACT_TEXT_CHARS)),
+            ..base
+        };
+        assert!(build_fact_edit_args("fact_0192f0c4", &patch).is_ok());
+    }
+
+    /// The payload `updateFactMemory` sends from tauri-bridge.ts must deserialize
+    /// as-is, including a legacy pin call without a patch.
+    #[test]
+    fn update_fact_memory_input_accepts_the_frontend_payload() {
+        let edit: UpdateFactMemoryInput = serde_json::from_value(serde_json::json!({
+            "id": "fact_0192f0c4",
+            "action": "edit",
+            "patch": {
+                "text": "依赖统一用 npm workspaces",
+                "kind": "decision",
+                "importance": 4,
+                "applicability": "project",
+                "topics": ["依赖", "构建"]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            fact_memory_cli_args(&edit.action, &edit.id, edit.patch.as_ref()).unwrap(),
+            vec![
+                "edit",
+                "fact_0192f0c4",
+                "--text",
+                "依赖统一用 npm workspaces",
+                "--kind",
+                "decision",
+                "--importance",
+                "4",
+                "--applicability",
+                "project",
+                "--topics",
+                "依赖,构建",
+            ]
+        );
+
+        let pin: UpdateFactMemoryInput = serde_json::from_value(serde_json::json!({
+            "id": "fact_0192f0c4",
+            "action": "pin"
+        }))
+        .unwrap();
+        assert_eq!(
+            fact_memory_cli_args(&pin.action, &pin.id, pin.patch.as_ref()).unwrap(),
+            vec!["pin", "fact_0192f0c4"]
+        );
+    }
+
+    /// End-to-end read path over a preseeded agent directory: the same layout
+    /// `NOVA_CODING_AGENT_DIR` points at in production.
+    #[test]
+    fn loads_fact_memory_from_a_preseeded_agent_directory() {
+        let agent_dir = std::env::temp_dir().join(format!(
+            "nova-studio-memory-store-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let memory_dir = agent_dir.join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("facts.json"), FACTS_FIXTURE).unwrap();
+        std::fs::write(memory_dir.join("suggestions.json"), SUGGESTIONS_FIXTURE).unwrap();
+        std::fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"memory":{"enabled":true,"facts":{"enabled":false}}}"#,
+        )
+        .unwrap();
+        let before_facts = std::fs::read(memory_dir.join("facts.json")).unwrap();
+
+        let state = load_fact_memory(&agent_dir).unwrap();
+
+        assert_eq!(state.stats.active, 2);
+        assert_eq!(state.stats.archived, 2);
+        assert_eq!(state.stats.pending_suggestions, 2);
+        assert!(!state.stats.facts_enabled);
+        // Reading never rewrites or creates store files.
+        assert_eq!(
+            std::fs::read(memory_dir.join("facts.json")).unwrap(),
+            before_facts
+        );
+        assert!(memory_dir.join("suggestions.json").exists());
+
+        std::fs::remove_dir_all(&agent_dir).unwrap();
+    }
+
+    /// No store yet: empty lists and no files created, pending count zero even
+    /// though suggestions.json is absent.
+    #[test]
+    fn empty_agent_directory_has_no_facts_and_creates_nothing() {
+        let agent_dir = std::env::temp_dir().join(format!(
+            "nova-studio-memory-empty-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&agent_dir).unwrap();
+
+        let state = load_fact_memory(&agent_dir).unwrap();
+
+        assert!(state.facts.is_empty());
+        assert_eq!(
+            state.stats,
+            FactMemoryStats {
+                active: 0,
+                archived: 0,
+                pending_suggestions: 0,
+                facts_enabled: true,
+                retrieval_interval: 1,
+            }
+        );
+        assert!(!agent_dir.join("memory").exists());
+
+        std::fs::remove_dir_all(&agent_dir).unwrap();
+    }
+
+    #[test]
+    fn broken_fact_file_is_an_error_not_an_empty_list() {
+        let agent_dir = std::env::temp_dir().join(format!(
+            "nova-studio-memory-broken-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let memory_dir = agent_dir.join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("facts.json"), "not json").unwrap();
+
+        let error = load_fact_memory(&agent_dir).expect_err("malformed facts must surface");
+        assert!(error.contains("Unable to parse"));
+
+        // A broken suggestion store only degrades the pending count.
+        std::fs::write(memory_dir.join("facts.json"), FACTS_FIXTURE).unwrap();
+        std::fs::write(memory_dir.join("suggestions.json"), "{").unwrap();
+        let state = load_fact_memory(&agent_dir).unwrap();
+        assert_eq!(state.stats.pending_suggestions, 0);
+        assert_eq!(state.stats.active, 2);
+
+        std::fs::remove_dir_all(&agent_dir).unwrap();
+    }
+
+    /// Facts are disabled when either flag is false; a broken settings file
+    /// means "enabled" so a corrupt config cannot hide the page.
+    #[test]
+    fn reads_facts_enabled_from_agent_settings() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-memory-settings-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("settings.json");
+
+        assert!(read_facts_enabled(&base), "missing settings means enabled");
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"enabled":false}}}"#).unwrap();
+        assert!(!read_facts_enabled(&base));
+
+        std::fs::write(&path, r#"{"memory":{"enabled":false}}"#).unwrap();
+        assert!(!read_facts_enabled(&base));
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"enabled":true}}}"#).unwrap();
+        assert!(read_facts_enabled(&base));
+
+        std::fs::write(&path, "not json").unwrap();
+        assert!(read_facts_enabled(&base));
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The interval mirrors nova's resolver: missing or malformed means 1,
+    /// fractional values are floored, and everything is clamped to 1..=50.
+    #[test]
+    fn reads_retrieval_interval_from_agent_settings() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-memory-interval-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("settings.json");
+
+        assert_eq!(read_retrieval_interval(&base), 1, "missing settings");
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":3}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 3);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":2.7}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 2);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":0}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":-4}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":500}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 50);
+
+        std::fs::write(&path, r#"{"memory":{"facts":{"retrievalInterval":"3"}}}"#).unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1, "strings are ignored");
+
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(read_retrieval_interval(&base), 1);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Writing preserves unrelated keys, creates missing objects, and rejects
+    /// a non-object `memory` section instead of dropping the user's settings.
+    #[test]
+    fn applies_retrieval_interval_to_settings_object() {
+        let mut settings = serde_json::json!({
+            "defaultModel": "provider/model",
+            "memory": { "enabled": true, "facts": { "enabled": true, "maxPromptFacts": 9 } }
+        });
+        apply_retrieval_interval(&mut settings, 4).unwrap();
+        assert_eq!(
+            settings.pointer("/memory/facts/retrievalInterval").unwrap(),
+            4
+        );
+        assert_eq!(settings.pointer("/memory/facts/maxPromptFacts").unwrap(), 9);
+        assert_eq!(settings.pointer("/memory/enabled").unwrap(), true);
+        assert_eq!(settings.pointer("/defaultModel").unwrap(), "provider/model");
+
+        let mut empty = serde_json::json!({});
+        apply_retrieval_interval(&mut empty, 1).unwrap();
+        assert_eq!(empty.pointer("/memory/facts/retrievalInterval").unwrap(), 1);
+
+        let mut broken = serde_json::json!({ "memory": "oops" });
+        assert!(apply_retrieval_interval(&mut broken, 2).is_err());
+
+        let mut out_of_range = serde_json::json!({});
+        assert!(apply_retrieval_interval(&mut out_of_range, 0).is_err());
+        assert!(apply_retrieval_interval(&mut out_of_range, 51).is_err());
+    }
+
+    #[test]
+    fn persists_retrieval_interval_and_round_trips_through_the_reader() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-memory-interval-write-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("settings.json"),
+            r#"{"memory":{"facts":{"enabled":true}}}"#,
+        )
+        .unwrap();
+
+        persist_retrieval_interval(&base, 5).unwrap();
+
+        assert_eq!(read_retrieval_interval(&base), 5);
+        let content = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(value.pointer("/memory/facts/enabled").unwrap(), true);
+        assert!(!base.join("settings.json.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(base.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        assert!(persist_retrieval_interval(&base, 0).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The 网络搜索 page must render nova's defaults before anything is saved,
+    /// and degrade to them when settings.json is malformed.
+    #[test]
+    fn search_settings_default_to_nova_values_when_file_is_missing() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-defaults-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, DEFAULT_SEARCH_PROVIDER);
+        assert_eq!(state.api_key, None);
+        assert_eq!(state.base_url, None);
+        assert_eq!(state.max_results, DEFAULT_SEARCH_MAX_RESULTS);
+        assert_eq!(state.timeout_ms, DEFAULT_SEARCH_TIMEOUT_MS);
+        assert!(!state.deepseek_auth_key_available);
+
+        std::fs::write(base.join("settings.json"), "not json").unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, DEFAULT_SEARCH_PROVIDER);
+        assert_eq!(state.max_results, DEFAULT_SEARCH_MAX_RESULTS);
+        assert_eq!(state.timeout_ms, DEFAULT_SEARCH_TIMEOUT_MS);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Read path mirrors nova's resolver: trimmed/lowercased providers, unknown
+    /// providers fall back to `so`, numbers are floored and clamped, strings are
+    /// ignored, and blank credentials read as unset.
+    #[test]
+    fn reads_search_settings_from_agent_settings() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-read-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("settings.json");
+
+        std::fs::write(
+            &path,
+            r#"{"defaultModel":"provider/model","search":{"provider":"  Brave ","apiKey":"  sk-brave  ","baseUrl":" https://api.example.com ","maxResults":42,"timeoutMs":999,"customFlag":true}}"#,
+        )
+        .unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, "brave");
+        assert_eq!(state.api_key.as_deref(), Some("sk-brave"));
+        assert_eq!(state.base_url.as_deref(), Some("https://api.example.com"));
+        assert_eq!(state.max_results, MAX_SEARCH_RESULTS);
+        assert_eq!(state.timeout_ms, MIN_SEARCH_TIMEOUT_MS);
+
+        // Unknown providers fall back to the default; fractions are floored.
+        std::fs::write(
+            &path,
+            r#"{"search":{"provider":"google","maxResults":3.9,"timeoutMs":2500.8}}"#,
+        )
+        .unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.provider, DEFAULT_SEARCH_PROVIDER);
+        assert_eq!(state.max_results, 3);
+        assert_eq!(state.timeout_ms, 2_500);
+
+        // Numeric strings are accepted (nova parses them too); booleans and
+        // other types fall back to the defaults.
+        std::fs::write(&path, r#"{"search":{"maxResults":"7","timeoutMs":true}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, 7);
+        assert_eq!(state.timeout_ms, DEFAULT_SEARCH_TIMEOUT_MS);
+
+        std::fs::write(
+            &path,
+            r#"{"search":{"maxResults":" 3 ","timeoutMs":"2500"}}"#,
+        )
+        .unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, 3);
+        assert_eq!(state.timeout_ms, 2_500);
+
+        // Zero / negative values clamp up, huge values clamp down.
+        std::fs::write(&path, r#"{"search":{"maxResults":0,"timeoutMs":-500}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, 1);
+        assert_eq!(state.timeout_ms, MIN_SEARCH_TIMEOUT_MS);
+
+        std::fs::write(&path, r#"{"search":{"maxResults":1e9,"timeoutMs":1e9}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.max_results, MAX_SEARCH_RESULTS);
+        assert_eq!(state.timeout_ms, MAX_SEARCH_TIMEOUT_MS);
+
+        // Whitespace-only credentials read as unset.
+        std::fs::write(&path, r#"{"search":{"apiKey":"   ","baseUrl":""}}"#).unwrap();
+        let state = read_search_settings(&base);
+        assert_eq!(state.api_key, None);
+        assert_eq!(state.base_url, None);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// `deepseek` search reuses the `/login` credential, so the page needs to
+    /// know whether auth.json already holds an `api_key` (oauth does not count).
+    #[test]
+    fn search_settings_detect_deepseek_api_key_credential() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-auth-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let auth_path = base.join("auth.json");
+
+        assert!(
+            !read_search_settings(&base).deepseek_auth_key_available,
+            "missing auth.json"
+        );
+
+        std::fs::write(
+            &auth_path,
+            r#"{"deepseek":{"type":"api_key","key":"sk-deepseek"}}"#,
+        )
+        .unwrap();
+        assert!(read_search_settings(&base).deepseek_auth_key_available);
+
+        // OAuth tokens are not an API key.
+        std::fs::write(&auth_path, r#"{"deepseek":{"type":"oauth","key":"token"}}"#).unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        // Empty / whitespace keys are not usable.
+        std::fs::write(&auth_path, r#"{"deepseek":{"type":"api_key","key":"  "}}"#).unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        // Other providers do not leak into the DeepSeek check.
+        std::fs::write(
+            &auth_path,
+            r#"{"brave":{"type":"api_key","key":"sk-brave"}}"#,
+        )
+        .unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        // Malformed auth.json reads as absent.
+        std::fs::write(&auth_path, "not json").unwrap();
+        assert!(!read_search_settings(&base).deepseek_auth_key_available);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Saving merges into the page's own section: unrelated settings and unknown
+    /// keys inside `search` survive, blank credentials are removed, numbers are
+    /// clamped, and a broken `search` section is an error rather than data loss.
+    #[test]
+    fn applies_search_settings_to_settings_object() {
+        let mut settings = serde_json::json!({
+            "defaultModel": "provider/model",
+            "search": { "provider": "bing", "apiKey": "old-key", "customFlag": true },
+            "memory": { "enabled": true }
+        });
+        let input = SaveSearchSettingsInput {
+            provider: "  DEEPSEEK ".to_string(),
+            api_key: Some("  sk-deepseek  ".to_string()),
+            base_url: Some("   ".to_string()),
+            max_results: 25,
+            timeout_ms: 10,
+        };
+        apply_search_settings(&mut settings, &input).unwrap();
+        assert_eq!(settings.pointer("/search/provider").unwrap(), "deepseek");
+        assert_eq!(settings.pointer("/search/apiKey").unwrap(), "sk-deepseek");
+        assert!(
+            settings.pointer("/search/baseUrl").is_none(),
+            "blank baseUrl must be removed"
+        );
+        assert_eq!(settings.pointer("/search/maxResults").unwrap(), 10);
+        assert_eq!(settings.pointer("/search/timeoutMs").unwrap(), 1_000);
+        assert_eq!(settings.pointer("/search/customFlag").unwrap(), true);
+        assert_eq!(settings.pointer("/defaultModel").unwrap(), "provider/model");
+        assert_eq!(settings.pointer("/memory/enabled").unwrap(), true);
+
+        // Omitting the credentials removes them from the section.
+        let cleared = SaveSearchSettingsInput {
+            provider: "so".to_string(),
+            api_key: None,
+            base_url: None,
+            max_results: 0,
+            timeout_ms: 120_000,
+        };
+        apply_search_settings(&mut settings, &cleared).unwrap();
+        assert_eq!(settings.pointer("/search/provider").unwrap(), "so");
+        assert!(settings.pointer("/search/apiKey").is_none());
+        assert!(settings.pointer("/search/baseUrl").is_none());
+        assert_eq!(settings.pointer("/search/maxResults").unwrap(), 1);
+        assert_eq!(settings.pointer("/search/timeoutMs").unwrap(), 60_000);
+
+        // A settings.json without a `search` section gets one created.
+        let mut bare = serde_json::json!({ "theme": "dark" });
+        apply_search_settings(&mut bare, &cleared).unwrap();
+        assert_eq!(bare.pointer("/search/provider").unwrap(), "so");
+        assert_eq!(bare.pointer("/theme").unwrap(), "dark");
+
+        // A non-object `search` section is refused instead of overwritten.
+        let mut broken = serde_json::json!({ "search": "oops" });
+        let error = apply_search_settings(&mut broken, &cleared).unwrap_err();
+        assert!(error.contains("search"));
+
+        // Unknown providers are rejected and leave the object untouched.
+        let mut untouched = serde_json::json!({ "search": { "provider": "so" } });
+        let unknown = SaveSearchSettingsInput {
+            provider: "google".to_string(),
+            ..cleared
+        };
+        let error = apply_search_settings(&mut untouched, &unknown).unwrap_err();
+        assert!(error.contains("Unsupported search provider"));
+        assert_eq!(untouched.pointer("/search/provider").unwrap(), "so");
+    }
+
+    /// Persist round-trips through the reader while preserving unrelated keys,
+    /// removes cleared credentials, leaves no `.tmp` behind and keeps 0600.
+    #[test]
+    fn persists_search_settings_and_round_trips_through_the_reader() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-studio-search-write-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("settings.json"),
+            r#"{"defaultModel":"provider/model","search":{"keep":1},"memory":{"enabled":true}}"#,
+        )
+        .unwrap();
+
+        let input = SaveSearchSettingsInput {
+            provider: "  Tavily ".to_string(),
+            api_key: Some("  tvly-1  ".to_string()),
+            base_url: Some("  https://searx.example  ".to_string()),
+            max_results: 7,
+            timeout_ms: 12_000,
+        };
+        let state = persist_search_settings(&base, &input).unwrap();
+        assert_eq!(state.provider, "tavily");
+        assert_eq!(state.api_key.as_deref(), Some("tvly-1"));
+        assert_eq!(state.base_url.as_deref(), Some("https://searx.example"));
+        assert_eq!(state.max_results, 7);
+        assert_eq!(state.timeout_ms, 12_000);
+
+        let content = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(value.pointer("/defaultModel").unwrap(), "provider/model");
+        assert_eq!(value.pointer("/memory/enabled").unwrap(), true);
+        assert_eq!(value.pointer("/search/keep").unwrap(), 1);
+        assert_eq!(value.pointer("/search/apiKey").unwrap(), "tvly-1");
+        assert!(!base.join("settings.json.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(base.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // Clearing a credential removes the key from disk.
+        let cleared = SaveSearchSettingsInput {
+            provider: "so".to_string(),
+            api_key: None,
+            base_url: None,
+            max_results: 5,
+            timeout_ms: 20_000,
+        };
+        let state = persist_search_settings(&base, &cleared).unwrap();
+        assert_eq!(state.api_key, None);
+        assert_eq!(state.base_url, None);
+        let content = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(value.pointer("/search/apiKey").is_none());
+        assert!(value.pointer("/search/baseUrl").is_none());
+        assert_eq!(value.pointer("/search/keep").unwrap(), 1);
+
+        // Rejecting an unknown provider leaves the file byte-for-byte intact.
+        let before = std::fs::read_to_string(base.join("settings.json")).unwrap();
+        let unknown = SaveSearchSettingsInput {
+            provider: "google".to_string(),
+            ..cleared
+        };
+        assert!(persist_search_settings(&base, &unknown).is_err());
+        assert_eq!(
+            std::fs::read_to_string(base.join("settings.json")).unwrap(),
+            before
+        );
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
