@@ -693,6 +693,14 @@ body {
 ::selection {
   background: rgba(129, 140, 248, 0.32);
   color: #eceef6;
+  text-shadow: none;
+}
+
+/* Light glass needs dark selected text instead of the dark theme's white. */
+:root[data-theme="arctic-dawn"] [data-custom-background="false"] ::selection,
+:root[data-theme="glacier-glass"] ::selection {
+  background: rgba(91, 148, 225, 0.25);
+  color: #193957;
 }
 
 .glass-panel {
