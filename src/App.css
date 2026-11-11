@@ -2835,11 +2835,17 @@ body {
   border-radius: 5px;
 }
 
-.md-body table {
-  margin: 10px 0;  width: 100%;
-  font-size: 12.5px;
-  display: block;
+.md-table-scroll {
+  max-width: 100%;
   overflow-x: auto;
+  margin: 10px 0;
+}
+
+.md-body table {
+  margin: 0;
+  width: max-content;
+  font-size: 12.5px;
+  display: table;
 }
 
 .md-body th,
@@ -7706,7 +7712,6 @@ body {
   position: relative;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--todo-border) 62%, transparent);
-  border-left-color: color-mix(in srgb, var(--color-accent-start) 30%, var(--todo-border));
   border-radius: 14px;
   outline: none;
   color: var(--color-text-secondary);
@@ -7717,14 +7722,15 @@ body {
   cursor: text;
 }
 
-/* Accent rail + paper sheen keep the read-only block reading as a document. */
+/* A quiet inset rule gives the description a document margin. */
 .todo-description-preview::before {
   position: absolute;
-  inset: 20px auto 20px 0;
-  width: 3px;
-  border-radius: 0 999px 999px 0;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent-start) 84%, transparent), transparent 88%);
+  inset: 22px auto 24px 12px;
+  width: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-muted) 22%, transparent);
   content: "";
+  pointer-events: none;
 }
 
 .todo-description-preview::after {
@@ -7733,24 +7739,9 @@ body {
   right: 0;
   width: 72px;
   height: 72px;
-  background: linear-gradient(225deg, color-mix(in srgb, var(--color-accent-start) 13%, transparent), transparent 64%);
+  background: linear-gradient(225deg, color-mix(in srgb, var(--color-text-muted) 5%, transparent), transparent 64%);
   content: "";
   pointer-events: none;
-}
-
-.todo-description-preview-tag {
-  display: inline-flex;
-  margin-bottom: 14px;
-  padding: 3px 9px;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid color-mix(in srgb, var(--todo-border) 68%, transparent);
-  border-radius: 999px;
-  color: var(--color-text-muted);
-  background: color-mix(in srgb, var(--surface-control) 44%, transparent);
-  font-size: 9.5px;
-  font-weight: 650;
-  letter-spacing: 0.03em;
 }
 
 .todo-description-preview .md-body {
@@ -11553,15 +11544,15 @@ body {
 
 :root[data-theme="arctic-dawn"] .conversation-view-switcher {
   border-color: rgba(110, 139, 179, 0.2);
-  background: rgba(239, 247, 255, 0.3);
+  background: rgba(239, 247, 255, 0.12);
   box-shadow: 0 10px 30px rgba(48, 72, 108, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(26px) saturate(138%);
-  -webkit-backdrop-filter: blur(26px) saturate(138%);
+  backdrop-filter: blur(12px) saturate(165%);
+  -webkit-backdrop-filter: blur(12px) saturate(165%);
 }
 
 :root[data-theme="arctic-dawn"] .conversation-view-switcher::before {
   border-color: rgba(255, 255, 255, 0.82);
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.28);
   box-shadow: 0 4px 14px rgba(48, 72, 108, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
@@ -12072,15 +12063,15 @@ body {
 .conversation-view-switcher {
   border-color: rgba(255, 255, 255, 0.14);
   border-radius: 12px;
-  background: rgba(20, 26, 38, 0.42);
+  background: rgba(20, 26, 38, 0.24);
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(28px) saturate(145%);
-  -webkit-backdrop-filter: blur(28px) saturate(145%);
+  backdrop-filter: blur(12px) saturate(165%);
+  -webkit-backdrop-filter: blur(12px) saturate(165%);
 }
 
 .conversation-view-switcher::before {
   border-color: rgba(255, 255, 255, 0.22);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent), rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent), rgba(255, 255, 255, 0.06);
   box-shadow: 0 3px 10px rgba(5, 10, 22, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
@@ -12207,7 +12198,7 @@ body {
 }
 
 .md-body table {
-  overflow: hidden auto;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
   border-collapse: separate;
@@ -12351,15 +12342,15 @@ body {
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher {
   border-color: rgba(255, 255, 255, 0.15);
-  background: rgba(23, 29, 41, 0.46);
+  background: rgba(23, 29, 41, 0.24);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.11);
-  backdrop-filter: blur(28px) saturate(148%);
-  -webkit-backdrop-filter: blur(28px) saturate(148%);
+  backdrop-filter: blur(12px) saturate(165%);
+  -webkit-backdrop-filter: blur(12px) saturate(165%);
 }
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-view-switcher::before {
   border-color: rgba(255, 255, 255, 0.22);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent), rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent), rgba(255, 255, 255, 0.06);
   box-shadow: 0 3px 10px rgba(5, 10, 22, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
@@ -16074,7 +16065,7 @@ body {
   --c-text: #eef1f7;
   --c-placeholder: #e1e6f0;
   --c-scrollbar: rgba(255, 255, 255, 0.16);
-  --c-glass-bg: var(--nova-floating-surface);
+  --c-glass-bg: rgba(23, 29, 41, 0.24);
   --c-glass-shadow: var(--nova-floating-shadow);
   --c-edge: var(--nova-floating-edge);
   --c-edge-focus: rgba(203, 213, 255, 0.34);
@@ -16122,7 +16113,7 @@ body {
   --c-text: #172642;
   --c-placeholder: #73849c;
   --c-scrollbar: rgba(60, 92, 138, 0.22);
-  --c-glass-bg: var(--nova-floating-surface);
+  --c-glass-bg: rgba(239, 247, 255, 0.12);
   --c-glass-shadow: var(--nova-floating-shadow);
   --c-edge: var(--nova-floating-edge);
   --c-edge-focus: rgba(79, 125, 243, 0.42);
@@ -16166,7 +16157,7 @@ body {
   --c-text: #eceef6;
   --c-placeholder: #767d92;
   --c-scrollbar: rgba(255, 255, 255, 0.16);
-  --c-glass-bg: var(--nova-floating-surface);
+  --c-glass-bg: rgba(20, 26, 38, 0.24);
   --c-glass-shadow: var(--nova-floating-shadow);
   --c-edge: var(--nova-floating-edge);
   --c-edge-focus: rgba(150, 160, 255, 0.34);
@@ -16229,8 +16220,8 @@ body {
   border: 1px solid var(--c-edge) !important;
   background: var(--c-glass-bg) !important;
   box-shadow: var(--c-glass-shadow) !important;
-  backdrop-filter: var(--nova-filter-floating) !important;
-  -webkit-backdrop-filter: var(--nova-filter-floating) !important;
+  backdrop-filter: blur(12px) saturate(165%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(165%) !important;
   transition:
     border-color 220ms var(--nova-ease-fluid),
     box-shadow 260ms var(--nova-ease-fluid),
@@ -17224,3 +17215,12 @@ body {
 }
 .fact-memory-action:hover .fact-memory-action-tooltip,
 .fact-memory-action:focus-within .fact-memory-action-tooltip { opacity: 1; visibility: visible; }
+
+.md-body .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 6px 0;
+}
+.md-body .katex { font-size: 1.15em; }
+.md-body h6 { margin: 12px 0 6px; font-size: 0.95em; font-weight: 700; line-height: 1.3; }

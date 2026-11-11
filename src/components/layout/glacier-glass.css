@@ -1,0 +1,35 @@
+/* This layer lives inside the clipped chat pane, below the existing content. */
+.studio-main > .glacier-glass-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    url("./glacier-horizon.svg") center / 100% 100% no-repeat,
+    radial-gradient(ellipse 52% 57% at 49% 39%, #fbfcff 20%, transparent 100%),
+    radial-gradient(ellipse 53% 48% at 0% 0%, #eae5fa, transparent 100%),
+    radial-gradient(ellipse 57% 53% at 100% 4%, #ccdef7, transparent 100%),
+    radial-gradient(ellipse 100% 63% at 51% 100%, #cfdef5, transparent 100%),
+    #f5f8fe;
+}
+
+.glacier-glass-scene::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  opacity: 0.16;
+  background: url("./glacier-grain.svg") repeat;
+}
+
+:root .theme-switcher[data-active-theme]::before {
+  width: calc((100% - 14px) / 3);
+}
+
+:root .theme-switcher[data-active-theme="glacier-glass"]::before {
+  transform: translateX(calc(200% + 6px));
+}
+
+:root .theme-switcher .theme-switcher-option {
+  flex: 1 0 0;
+  white-space: nowrap;
+}

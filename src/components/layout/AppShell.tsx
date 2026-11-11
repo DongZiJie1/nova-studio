@@ -1,5 +1,6 @@
 import { memo, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import "./glacier-glass.css";
 import { Background } from "./Background";
 import { resizeComposerTextarea } from "./composer-resize";
 import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
@@ -2010,6 +2011,7 @@ export function AppShell() {
   const setDefaultToolPermissionMode = useSettingsStore((s) => s.setDefaultToolPermissionMode);
   const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
   const theme = useUiStore((s) => s.theme);
+  const isGlacierGlass = theme === "glacier-glass";
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
   const setCustomBgUrl = useUiStore((s) => s.setCustomBgUrl);
@@ -3450,7 +3452,7 @@ export function AppShell() {
   return (
     <div
       className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}${!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen ? " studio-root-dock-open" : ""}`}
-      data-custom-background={customBgUrl ? "true" : "false"}
+      data-custom-background={!isGlacierGlass && customBgUrl ? "true" : "false"}
       style={{ "--conversation-sidebar-width": `${workbenchPanelWidth}px` } as CSSProperties}
     >
       <Background />
@@ -3836,6 +3838,9 @@ export function AppShell() {
 
         {/* Main */}
         <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${todosOpen || schedulesOpen || settingsOpen ? "studio-main-glass-page" : ""} relative w-full flex flex-col overflow-hidden`}>
+          {isGlacierGlass && !hasMessages && !todosOpen && !schedulesOpen && !settingsOpen && (
+            <div className="glacier-glass-scene" aria-hidden="true" />
+          )}
           {todosOpen && <TodoPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onRunTodo={handleRunTodo} onOpenSession={(todo) => { if (todo.agentId) handleSelectAgent(todo.agentId); }} />}
           {schedulesOpen && (
             <SchedulePage
@@ -3856,7 +3861,7 @@ export function AppShell() {
                   <div className="settings-card">
                     <div className="settings-card-copy">
                       <h2>主题</h2>
-                      <p>选择界面的明暗风格。</p>
+                      <p>选择界面的主题风格。</p>
                     </div>
                     <div className="theme-switcher" data-active-theme={theme} role="group" aria-label="主题风格">
                       <button
@@ -3875,10 +3880,25 @@ export function AppShell() {
                       >
                         <Moon size={16} /><span>暗黑</span>
                       </button>
+                      <button
+                        type="button"
+                        className={`theme-switcher-option ${isGlacierGlass ? "theme-switcher-option-active" : ""}`}
+                        onClick={() => setTheme("glacier-glass")}
+                        aria-pressed={isGlacierGlass}
+                      >
+                        <span>冰川玻璃</span>
+                      </button>
                     </div>
                   </div>
 
-                  <div className="settings-card settings-background-card">
+                  {isGlacierGlass ? (
+                    <div className="settings-card">
+                      <div className="settings-card-copy">
+                        <h2>桌面背景</h2>
+                        <p>冰川玻璃使用内置背景。切回明亮或暗黑即可恢复已保存的壁纸。</p>
+                      </div>
+                    </div>
+                  ) : <div className="settings-card settings-background-card">
                     <div className="settings-background-main">
                       <div className="settings-card-copy">
                         <h2>桌面背景</h2>
@@ -3929,7 +3949,7 @@ export function AppShell() {
                       />
                       <span className="settings-blur-scale"><span>明亮</span><span>深色</span></span>
                     </label>
-                  </div>
+                  </div>}
                   </>
                 ) : settingsSection === "models" ? (
                   <ModelSettings

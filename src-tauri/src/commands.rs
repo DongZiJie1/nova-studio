@@ -493,8 +493,8 @@ fn normalize_progress_content(value: &str) -> Result<String, String> {
     if content.is_empty() {
         return Err("Progress content is required".to_string());
     }
-    if content.chars().count() > 5_000 {
-        return Err("Progress content must not exceed 5000 characters".to_string());
+    if content.chars().count() > 50_000 {
+        return Err("Progress content must not exceed 50000 characters".to_string());
     }
     Ok(content)
 }
@@ -526,6 +526,12 @@ pub async fn append_todo_progress(input: AppendTodoProgressInput) -> Result<Todo
         .iter_mut()
         .find(|todo| todo.id == input.id)
         .ok_or_else(|| format!("Todo not found: {}", input.id))?;
+    append_progress_to_todo(todo, input)?;
+    write_todo_state(&state)?;
+    Ok(state)
+}
+
+fn append_progress_to_todo(todo: &mut TodoItem, input: AppendTodoProgressInput) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     todo.progress.push(ProgressEntry {
         id: format!("progress_{}", uuid::Uuid::new_v4()),
@@ -535,9 +541,13 @@ pub async fn append_todo_progress(input: AppendTodoProgressInput) -> Result<Todo
         percent: normalize_progress_percent(input.percent)?,
         edited_at: None,
     });
+    if input.percent == Some(100) {
+        change_todo_status(todo, "completed", &now)?;
+    } else if todo.status == "pending" {
+        change_todo_status(todo, "in_progress", &now)?;
+    }
     todo.updated_at = now;
-    write_todo_state(&state)?;
-    Ok(state)
+    Ok(())
 }
 
 #[tauri::command]
@@ -562,6 +572,9 @@ pub async fn edit_todo_progress(input: EditTodoProgressInput) -> Result<TodoStat
         entry.percent = normalize_progress_percent(input.percent)?;
     }
     entry.edited_at = Some(now.clone());
+    if input.percent == Some(100) {
+        change_todo_status(todo, "completed", &now)?;
+    }
     todo.updated_at = now;
     write_todo_state(&state)?;
     Ok(state)
@@ -2332,6 +2345,41 @@ pub async fn save_search_settings(
 #[cfg(test)]
 mod todo_tests {
     use super::*;
+
+    #[test]
+    fn progress_starts_pending_tasks_and_preserves_other_statuses() {
+        for status in ["pending", "in_progress", "completed", "abandoned"] {
+            let mut todo: TodoItem = serde_json::from_value(serde_json::json!({
+                "id": "progress-test", "title": "Test", "description": "",
+                "status": status, "priority": "medium", "source": "user",
+                "createdAt": "2026-11-03T00:00:00Z", "updatedAt": "2026-11-03T00:00:00Z",
+                "completedAt": if status == "completed" { Some("2026-11-03T00:00:00Z") } else { None },
+                "order": 0
+            })).unwrap();
+            let original_completed_at = todo.completed_at.clone();
+            for index in 0..2 {
+                append_progress_to_todo(&mut todo, AppendTodoProgressInput {
+                    id: "progress-test".to_string(), content: format!("Checkpoint {index}"),
+                    percent: None, source: Some("user".to_string()),
+                }).unwrap();
+            }
+            assert_eq!(todo.status, if status == "pending" { "in_progress" } else { status });
+            assert_eq!(todo.completed_at, original_completed_at);
+            assert_eq!(todo.progress.len(), 2);
+            assert_eq!(todo.history.len(), if status == "pending" { 1 } else { 0 });
+            if status == "pending" {
+                assert_eq!(todo.history[0].kind, "status_changed");
+                assert_eq!(todo.history[0].from.as_deref(), Some("pending"));
+                assert_eq!(todo.history[0].to.as_deref(), Some("in_progress"));
+                assert_eq!(todo.history[0].changed_at, todo.progress[0].at);
+            }
+            let before = serde_json::to_value(&todo).unwrap();
+            assert!(append_progress_to_todo(&mut todo, AppendTodoProgressInput {
+                id: "progress-test".to_string(), content: " ".to_string(), percent: None, source: None,
+            }).is_err());
+            assert_eq!(serde_json::to_value(&todo).unwrap(), before);
+        }
+    }
 
     #[test]
     fn normalizes_todo_title_and_description() {
