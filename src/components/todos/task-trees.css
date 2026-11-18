@@ -400,6 +400,7 @@
   box-shadow: -20px 0 60px #0716291a;
 }
 .task-detail-backdrop .todo-detail-fields {
+  grid-template-columns: minmax(0, 1fr);
   padding: 28px;
 }
 /* Status / due date / project / tags belong on one line so the focus panel
@@ -893,11 +894,11 @@
 .todo-progress-markdown-editor > :last-child { margin-bottom: 0; }
 .todo-progress-markdown-editor table {
   border-collapse: collapse;
-  min-width: 100%;
+  width: 100%;
+  table-layout: fixed;
 }
 .todo-progress-markdown-editor :is(th, td) {
   position: relative;
-  min-width: 90px;
   border: 1px solid var(--todo-border);
   vertical-align: top;
 }
@@ -1067,6 +1068,32 @@
   color: inherit;
   font-size: inherit;
   line-height: inherit;
+}
+.todo-progress-entry-content .md-table-scroll {
+  container-type: inline-size;
+}
+.todo-progress-section .todo-progress-entry-content .md-body .md-table-scroll table {
+  width: 100%;
+  min-width: 0;
+}
+.todo-progress-section .todo-progress-entry-content .md-body .md-table-scroll :is(th, td) {
+  min-width: min(9rem, 18cqw);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+.todo-progress-entry-content .md-body .md-table-scroll code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+:root[data-theme] [data-custom-background] .todo-progress-entry-content .md-body .md-table-scroll code.md-file-path {
+  display: inline;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+:root[data-theme] [data-custom-background] .todo-progress-entry-content .md-body .md-table-scroll code.md-file-path::before {
+  display: none;
 }
 .todo-progress-expand {
   display: inline-flex;
