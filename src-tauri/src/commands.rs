@@ -1198,7 +1198,7 @@ fn memory_suggestion_cli_action(action: &str) -> Result<&'static str, String> {
 
 /// Read the fact store for one agent directory. Kept separate from the Tauri
 /// command so the parsing/aggregation path is testable with a temp directory.
-fn load_fact_memory(agent_dir: &Path) -> Result<FactMemoryState, String> {
+pub(crate) fn load_fact_memory(agent_dir: &Path) -> Result<FactMemoryState, String> {
     let facts = read_memory_array(&agent_dir.join("memory").join("facts.json"), "facts")?;
     // A broken suggestion store must not blank the facts page: count degrades to
     // zero, mirroring nova's `countPendingSuggestions`.

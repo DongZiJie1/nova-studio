@@ -1,0 +1,322 @@
+.studio-main > .glass-walkers-background {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	overflow: hidden;
+	pointer-events: none;
+	background: #f8f8f8;
+	container-type: size;
+}
+.glass-walkers-background[data-active="false"] {
+	visibility: hidden;
+}
+.glass-walkers-poster {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: max(calc(100cqw + 48px), calc((100cqh + 48px) * 16 / 9));
+	height: max(calc(100cqh + 48px), calc((100cqw + 48px) * 9 / 16));
+	max-width: none;
+	transform: translate(-50%, -50%);
+	object-fit: cover;
+}
+.glass-walkers-player-host {
+	opacity: 0;
+	transition: opacity 350ms ease;
+}
+.glass-walkers-background[data-status="ready"] .glass-walkers-player-host {
+	opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+	.glass-walkers-player-host {
+		transition: none;
+	}
+}
+.glass-walkers-player-host {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+	pointer-events: none;
+}
+.glass-walkers-player-host canvas {
+	/* Keep the local canvas and poster identically cropped at 16:9. */
+	width: max(calc(100cqw + 48px), calc((100cqh + 48px) * 16 / 9));
+	height: max(calc(100cqh + 48px), calc((100cqw + 48px) * 9 / 16));
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	max-width: none;
+	max-height: none;
+	flex: none;
+	pointer-events: none;
+}
+.glass-walkers-background::after {
+	position: absolute;
+	inset: 0;
+	content: "";
+	pointer-events: none;
+	background: radial-gradient(
+		ellipse at 50% 44%,
+		rgb(248 248 248 / 28%),
+		transparent 72%
+	);
+}
+.glass-walkers-fallback {
+	position: absolute;
+	bottom: 16px;
+	right: 20px;
+	color: var(--color-text-muted);
+	font-size: 11px;
+}
+
+/* Only Glass Walkers: soften the sidebar tint without fading its controls. */
+:root[data-theme]
+	[data-app-theme="glass-walkers"][data-custom-background]
+	.studio-sidebar {
+	background: rgba(248, 248, 248, 0.38);
+	border-right-color: rgba(180, 190, 205, 0.14);
+	box-shadow: inset -1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* Theme materials apply to work pages and body-portaled dialogs as well.
+   Keep Nova's accents/status colors while removing the dawn scene's blue wash. */
+:root[data-app-theme="glass-walkers"][data-theme],
+:root[data-app-theme="glass-walkers"][data-theme] [data-custom-background] {
+	--color-accent-start: #5a5a63;
+	--color-accent-end: #87878f;
+	--accent-soft: #62626b;
+	--accent-shadow: rgba(40, 40, 48, 0.18);
+	--color-text-primary: #28282f;
+	--color-text-secondary: #62626b;
+	--color-text-muted: #81818a;
+	--text-heading: #303038;
+	--text-placeholder: #81818a;
+	--color-bg-primary: #f8f8f8;
+	--color-bg-secondary: #fcfcfc;
+	--color-bg-glass: rgba(255, 255, 255, 0.58);
+	--color-border-glass: rgba(80, 88, 102, 0.14);
+	--surface-raised: rgba(252, 252, 252, 0.88);
+	--surface-control: rgba(255, 255, 255, 0.66);
+	--surface-control-hover: rgba(100, 112, 132, 0.07);
+	--nova-foundation-surface: linear-gradient(155deg, #fafafa, #f4f4f5);
+	--nova-foundation-edge: rgba(80, 88, 102, 0.13);
+	--nova-foundation-shadow:
+		0 12px 32px rgba(30, 35, 45, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	--nova-floating-surface: linear-gradient(
+		155deg,
+		rgba(255, 255, 255, 0.92),
+		rgba(245, 245, 246, 0.86)
+	);
+	--nova-floating-edge: rgba(80, 88, 102, 0.15);
+	--nova-floating-shadow:
+		0 16px 44px -20px rgba(30, 35, 45, 0.18), inset 0 1px 0 #fff;
+	--nova-elevated-surface: linear-gradient(155deg, #fefefe, #f4f4f5);
+	--nova-elevated-edge: rgba(80, 88, 102, 0.14);
+	--nova-elevated-drop: rgba(30, 35, 45, 0.12);
+	--scene-panel-film: rgba(246, 246, 247, 0.64);
+	--scene-panel-highlight: rgba(255, 255, 255, 0.7);
+	--scene-local-film: rgba(255, 255, 255, 0.52);
+	--scene-local-border: rgba(80, 88, 102, 0.13);
+	--model-picker-film: rgba(249, 249, 250, 0.94);
+	--model-picker-item-film: rgba(255, 255, 255, 0.58);
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	.task-page {
+	--task-glass-bg: linear-gradient(
+		155deg,
+		rgba(255, 255, 255, 0.86),
+		rgba(245, 245, 246, 0.54)
+	);
+	--task-glass-hover: linear-gradient(155deg, #fff, rgba(242, 243, 245, 0.8));
+	--task-glass-edge: rgba(90, 98, 112, 0.14);
+	--task-glass-hover-edge: rgba(90, 98, 112, 0.24);
+	--task-glass-shadow: 0 4px 14px rgba(30, 35, 45, 0.04), inset 0 1px 0 #fff;
+	--task-glass-hover-shadow:
+		0 6px 18px rgba(30, 35, 45, 0.07), inset 0 1px 0 #fff;
+	--task-glass-selected-bg: rgba(255, 255, 255, 0.84);
+	--task-glass-selected-edge: rgba(110, 120, 138, 0.22);
+	--task-detail-glass: rgba(249, 249, 250, 0.94);
+	--task-detail-section: rgba(255, 255, 255, 0.64);
+	--task-detail-control: rgba(255, 255, 255, 0.72);
+	--task-detail-edge: rgba(90, 98, 112, 0.14);
+	--task-detail-glow: rgba(255, 255, 255, 0.8);
+	--task-list-panel: rgba(242, 242, 244, 0.6);
+	--task-list-row: rgba(255, 255, 255, 0.62);
+	--task-list-row-hover: rgba(255, 255, 255, 0.94);
+	--task-row-edge: rgba(90, 98, 112, 0.12);
+	--task-row-edge-hover: rgba(90, 98, 112, 0.22);
+	--task-list-rim: rgba(255, 255, 255, 0.85);
+	--task-row-glass: rgba(250, 250, 251, 0.82);
+	--task-row-glint: rgba(255, 255, 255, 0.9);
+	--task-row-shadow: rgba(30, 35, 45, 0.08);
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	:is(.settings-card, .theme-switcher, .settings-blur-control) {
+	border-color: var(--nova-foundation-edge);
+	background: var(--nova-floating-surface);
+	box-shadow: var(--nova-foundation-shadow);
+}
+
+html:root[data-app-theme="glass-walkers"][data-theme]
+	:is(body, [data-custom-background])
+	:is(
+		.todo-modal,
+		.todo-date-popover,
+		.task-multi-filter-menu,
+		.task-row-action-menu
+	) {
+	--task-filter-menu-edge: rgba(90, 98, 112, 0.16);
+	--task-filter-menu-wash: rgba(255, 255, 255, 0.62);
+	border-color: var(--nova-elevated-edge);
+	background: var(--nova-elevated-surface);
+	box-shadow:
+		0 16px 44px rgba(30, 35, 45, 0.12),
+		inset 0 1px 0 #fff;
+}
+
+/* Clear interaction states on the pale glass, scoped to this theme. */
+:root[data-app-theme="glass-walkers"][data-theme],
+:root[data-app-theme="glass-walkers"][data-theme] [data-custom-background] {
+	--gw-hover-fill: rgba(70, 70, 80, 0.075);
+	--gw-selected-fill: rgba(70, 70, 80, 0.14);
+	--gw-state-edge: rgba(70, 70, 80, 0.46);
+	--surface-control-hover: var(--gw-hover-fill);
+	--nova-state-hover: var(--gw-hover-fill);
+	--nova-state-active: var(--gw-selected-fill);
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	.task-page {
+	--task-glass-hover: linear-gradient(
+		155deg,
+		rgba(255, 255, 255, 0.7),
+		rgba(70, 70, 80, 0.09)
+	);
+	--task-glass-hover-edge: var(--gw-state-edge);
+	--task-glass-selected-bg: var(--gw-selected-fill);
+	--task-glass-selected-edge: var(--gw-state-edge);
+	--task-list-row-hover: var(--gw-hover-fill);
+	--task-row-edge-hover: var(--gw-state-edge);
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	:is(.task-list-row, .schedule-row, .agent-profile-card):is(
+		:hover,
+		:focus-within
+	) {
+	border-color: var(--gw-state-edge);
+	background: var(--gw-hover-fill);
+	box-shadow: 0 4px 14px rgba(30, 30, 38, 0.06);
+	transform: none;
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	:is(
+		.agent-profile-card.selected,
+		.agent-tabs button[aria-pressed="true"],
+		.sidebar-nav-row-active,
+		.sidebar-settings-button-active,
+		.settings-category-button-active,
+		.agent-card-active,
+		.todo-select-option-selected,
+		.task-multi-filter-option[aria-pressed="true"]
+	) {
+	border-color: var(--gw-state-edge);
+	color: var(--text-heading);
+	background: var(--gw-selected-fill);
+	box-shadow: none;
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	:is(
+		.task-row-actions button,
+		.schedule-row-actions button,
+		.agent-icon-button,
+		.agent-secondary-button,
+		.todo-select-option,
+		.settings-category-button,
+		.sidebar-nav-row
+	):hover:not(:disabled) {
+	color: var(--color-accent-start);
+	border-color: var(--gw-state-edge);
+	background: var(--gw-hover-fill);
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	:is(
+		.task-page,
+		.settings-page,
+		.studio-sidebar,
+		.todo-modal,
+		.todo-date-popover
+	)
+	:is(
+		button,
+		input,
+		textarea,
+		select,
+		[role="button"],
+		[role="switch"]
+	):focus-visible {
+	outline: 2px solid var(--color-accent-start);
+	outline-offset: 2px;
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	:is(.task-view-slider, .theme-switcher)::before {
+	border-color: var(--gw-state-edge);
+	background: rgba(70, 70, 80, 0.14);
+	box-shadow:
+		0 2px 7px rgba(30, 30, 38, 0.1),
+		inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	:is(.schedule-rule-fields .task-view-switch, .schedule-weekday-row)
+	button[aria-pressed="true"] {
+	color: var(--color-accent-start);
+	border-color: var(--gw-state-edge);
+	background: var(--gw-selected-fill);
+	box-shadow: inset 0 0 0 1px var(--gw-state-edge);
+}
+
+/* A single clean outline: avoid layered strips at rounded corners. */
+:root[data-app-theme="glass-walkers"][data-theme]
+	.studio-sidebar
+	:is(
+		.sidebar-nav-row-active,
+		.sidebar-settings-button-active,
+		.settings-category-button-active,
+		.agent-card-active
+	)::before {
+	content: none;
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	[data-custom-background]
+	.todo-task-page
+	.task-quick-filters
+	> button.task-filter-active {
+	border-color: var(--gw-state-edge);
+	background: var(--gw-selected-fill);
+	box-shadow: none;
+}
+
+:root[data-app-theme="glass-walkers"][data-theme]
+	.todo-task-page
+	.task-quick-filters
+	> button.task-filter-active::after {
+	content: none;
+}

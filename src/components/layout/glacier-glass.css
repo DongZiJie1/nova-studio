@@ -22,7 +22,7 @@
 }
 
 :root .theme-switcher[data-active-theme]::before {
-  width: calc((100% - 14px) / 3);
+  width: calc((100% - 16px) / 4);
 }
 
 :root .theme-switcher[data-active-theme="glacier-glass"]::before {
@@ -32,4 +32,8 @@
 :root .theme-switcher .theme-switcher-option {
   flex: 1 0 0;
   white-space: nowrap;
+}
+
+:root .theme-switcher[data-active-theme="glass-walkers"]::before {
+  transform: translateX(calc(300% + 9px));
 }

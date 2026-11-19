@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type AppTheme = "midnight" | "arctic-dawn" | "glacier-glass";
+export type AppTheme = "midnight" | "arctic-dawn" | "glacier-glass" | "glass-walkers";
 const DEFAULT_BACKGROUND_URL = "/images/arctic-dawn-journey.jpg";
 
 interface UiState {
@@ -11,6 +11,7 @@ interface UiState {
   backgroundBlur: number;
   backgroundDim: number;
   sidebarCollapsed: boolean;
+  desktopPetVisible: boolean;
 
   setTheme: (theme: AppTheme) => void;
   toggleTheme: () => void;
@@ -19,6 +20,7 @@ interface UiState {
   setBackgroundBlur: (blur: number) => void;
   setBackgroundDim: (dim: number) => void;
   toggleSidebar: () => void;
+  setDesktopPetVisible: (visible: boolean) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -30,6 +32,7 @@ export const useUiStore = create<UiState>()(
       backgroundBlur: 0,
       backgroundDim: 30,
       sidebarCollapsed: true,
+      desktopPetVisible: true,
 
       setTheme: (theme) => set({ theme }),
       toggleTheme: () => set((state) => ({
@@ -40,6 +43,7 @@ export const useUiStore = create<UiState>()(
       setBackgroundBlur: (blur) => set({ backgroundBlur: Math.min(18, Math.max(0, blur)) }),
       setBackgroundDim: (dim) => set({ backgroundDim: Math.min(70, Math.max(0, dim)) }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      setDesktopPetVisible: (visible) => set({ desktopPetVisible: visible }),
     }),
     {
       name: "nova-ui",

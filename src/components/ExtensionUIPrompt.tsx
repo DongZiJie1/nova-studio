@@ -17,7 +17,7 @@ const DIALOG_METHODS = new Set(["select", "confirm", "input"]);
  * means "let the user type a custom answer" (ask-user-question.ts). */
 const TYPE_SOMETHING = "Type something";
 
-export function ExtensionUIPrompt() {
+export function ExtensionUIPrompt({ onPendingAgentChange }: { onPendingAgentChange: (agentId: string | null) => void }) {
   const [queue, setQueue] = useState<PendingDialog[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [customValue, setCustomValue] = useState("");
@@ -37,6 +37,11 @@ export function ExtensionUIPrompt() {
   }, []);
 
   const current = queue[0];
+  const pendingAgentId = current?.agentId ?? null;
+
+  useEffect(() => {
+    onPendingAgentChange(pendingAgentId);
+  }, [onPendingAgentChange, pendingAgentId]);
 
   useEffect(() => {
     if (current?.request.method === "input") {

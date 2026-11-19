@@ -1,9 +1,10 @@
 import { memo, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import "./glacier-glass.css";
+import { GlassWalkersBackground } from "./GlassWalkersBackground";
 import { Background } from "./Background";
 import { resizeComposerTextarea } from "./composer-resize";
-import { useAgentStore, type AgentState, type AvailableModel } from "../../stores/agent-store";
+import { useAgentStore, agentStateFromInfo, type AgentState, type AvailableModel } from "../../stores/agent-store";
 import { useNotificationStore } from "../../stores/notification-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useUiStore } from "../../stores/ui-store";
@@ -45,6 +46,8 @@ import {
 import { common, createLowlight } from "lowlight";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@tauri-apps/api/core";
+import { DesktopPetSettings } from "../pet/DesktopPetSettings";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
@@ -73,6 +76,7 @@ import { SearchSettings } from "../settings/SearchSettings";
 import { useTodoWarningCount } from "../todos/useTodoWarningCount";
 import { useScheduleCount } from "../schedules/useScheduleCount";
 import { TodoPage } from "../todos/TodoPage";
+import { AgentTeamsPage } from "../agents/AgentTeamsPage";
 import { SchedulePage } from "../schedules/SchedulePage";
 import { useScheduleStore } from "../../stores/schedule-store";
 import { StreamingText } from "../chat/StreamingText";
@@ -2012,6 +2016,7 @@ export function AppShell() {
   const worktreeEnabled = useSettingsStore((s) => s.worktreeEnabled);
   const theme = useUiStore((s) => s.theme);
   const isGlacierGlass = theme === "glacier-glass";
+  const isGlassWalkers = theme === "glass-walkers";
   const setTheme = useUiStore((s) => s.setTheme);
   const customBgUrl = useUiStore((s) => s.customBgUrl);
   const setCustomBgUrl = useUiStore((s) => s.setCustomBgUrl);
@@ -2080,6 +2085,7 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [teamsOpen, setTeamsOpen] = useState(false);
   const todoWarningCount = useTodoWarningCount();
   const todoWarningBadge = todoWarningCount > 0 ? (
     <span className="sidebar-todo-warning-badge" role="status" aria-label={`${todoWarningCount} 个逾期或临近截止待办`} title={`${todoWarningCount} 个未完成待办已逾期或将在 10 天内截止`}>
@@ -3272,7 +3278,7 @@ export function AppShell() {
     addUserMessage(info.id, prompt);
     await sendPrompt(info.id, prompt);
     setTodosOpen(false);
-    setSchedulesOpen(false);
+    setSchedulesOpen(false); setTeamsOpen(false);
     setConversationView("chat");
     return { agentId: info.id, sessionId: info.id };
   };
@@ -3359,7 +3365,7 @@ export function AppShell() {
 
   const handleSelectAgent = useCallback((agentId: string) => {
     setTodosOpen(false);
-    setSchedulesOpen(false);
+    setSchedulesOpen(false); setTeamsOpen(false);
     setSettingsOpen(false);
     setConversationView("chat");
     setActiveAgent(agentId);
@@ -3410,7 +3416,7 @@ export function AppShell() {
     setActiveAgent(null);
     setSettingsOpen(false);
     setTodosOpen(false);
-    setSchedulesOpen(false);
+    setSchedulesOpen(false); setTeamsOpen(false);
     setConversationView("chat");
   }, [setActiveAgent]);
 
@@ -3422,7 +3428,7 @@ export function AppShell() {
    */
   const openSettings = useCallback(() => {
     setTodosOpen(false);
-    setSchedulesOpen(false);
+    setSchedulesOpen(false); setTeamsOpen(false);
     setSettingsOpen(true);
     setSidebarCollapsed(false);
   }, []);
@@ -3452,7 +3458,8 @@ export function AppShell() {
   return (
     <div
       className={`relative h-screen w-screen overflow-hidden bg-bg-primary ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}${!settingsOpen && conversationView === "chat" && showAgentWorkbench && agentWorkbenchOpen ? " studio-root-dock-open" : ""}`}
-      data-custom-background={!isGlacierGlass && customBgUrl ? "true" : "false"}
+      data-app-theme={theme}
+      data-custom-background={!isGlacierGlass && !isGlassWalkers && customBgUrl ? "true" : "false"}
       style={{ "--conversation-sidebar-width": `${workbenchPanelWidth}px` } as CSSProperties}
     >
       <Background />
@@ -3583,8 +3590,9 @@ export function AppShell() {
                   >
                     <Plus size={20} />
                   </button>
-                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTodosOpen(true); }} aria-label="待办" aria-current={todosOpen ? "page" : undefined} data-tooltip="待办"><ListTodo size={19} />{todoWarningBadge}</button>
-                  <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }} aria-label="定时任务" aria-current={schedulesOpen ? "page" : undefined} data-tooltip="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
+                  <button type="button" className={`sidebar-collapsed-action ${todosOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTeamsOpen(false); setTodosOpen(true); }} aria-label="待办" aria-current={todosOpen ? "page" : undefined} data-tooltip="待办"><ListTodo size={19} />{todoWarningBadge}</button>
+                  <button type="button" className={`sidebar-collapsed-action ${schedulesOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); setTeamsOpen(false); }} aria-label="定时任务" aria-current={schedulesOpen ? "page" : undefined} data-tooltip="定时任务"><CalendarClock size={19} />{scheduleBadge}</button>
+                  <button type="button" className={`sidebar-collapsed-action ${teamsOpen ? "sidebar-settings-button-active" : ""}`} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(false); setTeamsOpen(true); }} aria-label="Agent Teams" aria-current={teamsOpen ? "page" : undefined} data-tooltip="Agent Teams"><Bot size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action" onClick={() => setSidebarCollapsed(false)} aria-label="查看工作区" data-tooltip="查看工作区"><FolderOpen size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-github" onClick={() => void openUrl("https://github.com/DongZiJie1/nova-agent")} aria-label="打开 Nova Agent GitHub" data-tooltip="Nova Agent GitHub"><GithubMark size={19} /></button>
                   <button type="button" className="sidebar-collapsed-action sidebar-collapsed-settings" onClick={openSettings} aria-label="设置" data-tooltip="设置"><Settings size={19} /></button>
@@ -3673,7 +3681,7 @@ export function AppShell() {
                     type="button"
                     className={`sidebar-nav-row ${todosOpen ? "sidebar-nav-row-active" : ""}`}
                     aria-current={todosOpen ? "page" : undefined}
-                    onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTodosOpen(true); }}
+                    onClick={() => { setSettingsOpen(false); setSchedulesOpen(false); setTeamsOpen(false); setTodosOpen(true); }}
                   >
                     <span className="sidebar-nav-icon">
                       <ListTodo size={15} />
@@ -3685,7 +3693,7 @@ export function AppShell() {
                     type="button"
                     className={`sidebar-nav-row sidebar-nav-row-child ${schedulesOpen ? "sidebar-nav-row-active" : ""}`}
                     aria-current={schedulesOpen ? "page" : undefined}
-                    onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); }}
+                    onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(true); setTeamsOpen(false); }}
                   >
                     <span className="sidebar-nav-icon">
                       <CalendarClock size={14} />
@@ -3693,6 +3701,7 @@ export function AppShell() {
                     <span className="sidebar-nav-label">定时任务</span>
                     {scheduleBadge}
                   </button>
+                  <button type="button" className={`sidebar-nav-row sidebar-nav-row-child ${teamsOpen ? "sidebar-nav-row-active" : ""}`} aria-current={teamsOpen ? "page" : undefined} onClick={() => { setSettingsOpen(false); setTodosOpen(false); setSchedulesOpen(false); setTeamsOpen(true); }}><span className="sidebar-nav-icon"><Bot size={14} /></span><span className="sidebar-nav-label">Agent Teams</span></button>
                 </nav>
               </header>
 
@@ -3837,10 +3846,21 @@ export function AppShell() {
         </aside>
 
         {/* Main */}
-        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${todosOpen || schedulesOpen || settingsOpen ? "studio-main-glass-page" : ""} relative w-full flex flex-col overflow-hidden`}>
-          {isGlacierGlass && !hasMessages && !todosOpen && !schedulesOpen && !settingsOpen && (
+        <main className={`studio-main ${hasMessages ? "studio-main-has-messages" : ""} ${todosOpen || schedulesOpen || teamsOpen || settingsOpen ? "studio-main-glass-page" : ""} relative w-full flex flex-col overflow-hidden`}>
+          {isGlassWalkers && (
+            <GlassWalkersBackground active={!hasMessages && !(conversationView === "trajectory" && activeAgent) && !todosOpen && !schedulesOpen && !teamsOpen && !settingsOpen} />
+          )}
+          {isGlacierGlass && !hasMessages && !todosOpen && !schedulesOpen && !teamsOpen && !settingsOpen && (
             <div className="glacier-glass-scene" aria-hidden="true" />
           )}
+          {teamsOpen && <AgentTeamsPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onOpenSession={handleSelectAgent} onStarted={async (info, prompt, name) => {
+            addAgent({ ...agentStateFromInfo(info), name });
+            addUserMessage(info.id, prompt);
+            await setToolPermissionMode(info.id, defaultToolPermissionMode);
+            await setSessionName(info.id, name);
+            await sendPrompt(info.id, prompt);
+            handleSelectAgent(info.id);
+          }} />}
           {todosOpen && <TodoPage projects={Array.from(rootsByProject.keys()).map((path) => ({ path, name: projectNames[path] ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path }))} onRunTodo={handleRunTodo} onOpenSession={(todo) => { if (todo.agentId) handleSelectAgent(todo.agentId); }} />}
           {schedulesOpen && (
             <SchedulePage
@@ -3888,14 +3908,24 @@ export function AppShell() {
                       >
                         <span>冰川玻璃</span>
                       </button>
+                      <button
+                        type="button"
+                        className={`theme-switcher-option ${isGlassWalkers ? "theme-switcher-option-active" : ""}`}
+                        onClick={() => setTheme("glass-walkers")}
+                        aria-pressed={isGlassWalkers}
+                      >
+                        <span>玻璃漫步</span>
+                      </button>
                     </div>
                   </div>
 
-                  {isGlacierGlass ? (
+                  {isTauri() && <DesktopPetSettings />}
+
+                  {isGlacierGlass || isGlassWalkers ? (
                     <div className="settings-card">
                       <div className="settings-card-copy">
                         <h2>桌面背景</h2>
-                        <p>冰川玻璃使用内置背景。切回明亮或暗黑即可恢复已保存的壁纸。</p>
+                        <p>{isGlassWalkers ? "玻璃漫步" : "冰川玻璃"}使用内置背景。切回明亮或暗黑即可恢复已保存的壁纸。</p>
                       </div>
                     </div>
                   ) : <div className="settings-card settings-background-card">
@@ -4380,6 +4410,7 @@ export function AppShell() {
               <div
                 className={`nova-input${isDragOver ? " nova-input-dragover" : ""}`}
               >
+                <img className="nova-input-lulu" src="/images/composer-lulu.webp" alt="" draggable={false} />
                 {/* Attachment previews */}
                 {pendingAttachments.length > 0 && (() => {
                   const MAX_VISIBLE = 6; // ~2 rows of 3

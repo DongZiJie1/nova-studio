@@ -5,6 +5,7 @@ mod commands;
 mod nova_host_process;
 mod rpc_types;
 mod scheduled_tasks;
+mod persistent_agents;
 mod scheduler;
 mod worktree;
 
@@ -65,9 +66,33 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(pet) = window.get_webview_window("desktop-pet") {
+                    let _ = pet.destroy();
+                }
+            }
+        })
         .setup(|app| {
             #[cfg(desktop)]
             setup_tray(app)?;
+
+            if let (Some(main), Some(pet)) = (
+                app.get_webview_window("main"),
+                app.get_webview_window("desktop-pet"),
+            ) {
+                if let (Ok(Some(monitor)), Ok(size)) = (main.current_monitor(), pet.outer_size()) {
+                    let area = monitor.work_area();
+                    let margin = (24.0 * monitor.scale_factor()) as i32;
+                    let position = tauri::PhysicalPosition::new(
+                        area.position.x + (area.size.width as i32 - size.width as i32 - margin).max(0),
+                        area.position.y + (area.size.height as i32 - size.height as i32 - margin).max(0),
+                    );
+                    if let Err(error) = pet.set_position(position) {
+                        log::warn!("Failed to position desktop pet: {error}");
+                    }
+                }
+            }
 
             // Determine the path to the nova CLI
             // Priority: env var > bundled sidecar (prod) > global npm > dev paths
@@ -186,6 +211,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            persistent_agents::list_persistent_agents,
+            persistent_agents::list_installed_agent_skills,
+            persistent_agents::list_agent_tools,
+            persistent_agents::save_persistent_agent,
+            persistent_agents::delete_persistent_agent,
+            persistent_agents::run_persistent_agent,
+            persistent_agents::get_persistent_agent_memory,
+            persistent_agents::archive_persistent_agent_memory,
             commands::spawn_agent,
             commands::stop_agent,
             commands::list_agents,

@@ -11,6 +11,12 @@ export default defineConfig(() => ({
   // under Tauri's custom protocol in production.
   base: "",
 
+  build: {
+    rollupOptions: {
+      input: { main: "index.html", desktopPet: "desktop-pet.html" },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

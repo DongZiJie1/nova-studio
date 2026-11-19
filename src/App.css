@@ -4558,7 +4558,6 @@ body {
 }
 
 :root[data-theme="arctic-dawn"] .nova-input {
-  overflow: hidden;
   border-color: rgba(255, 255, 255, 0.52);
   background: linear-gradient(
     145deg,
@@ -12650,7 +12649,7 @@ body {
 
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .studio-sidebar > *,
 :root[data-theme="arctic-dawn"] [data-custom-background="true"] .conversation-task-summary > *,
-:root[data-theme="arctic-dawn"] [data-custom-background="true"] .nova-input > * {
+:root[data-theme="arctic-dawn"] [data-custom-background="true"] .nova-input > :not(.nova-input-lulu) {
   position: relative;
   z-index: 1;
 }
@@ -15672,9 +15671,21 @@ body {
 }
 
 /* Controls live above the two decorative layers. */
-.nova-input > * {
+.nova-input > :not(.nova-input-lulu) {
   position: relative;
   z-index: 1;
+}
+
+.nova-input > .nova-input-lulu {
+  position: absolute;
+  z-index: 1;
+  right: clamp(24px, 6%, 48px);
+  bottom: 100%;
+  width: min(118px, 23%);
+  height: auto;
+  /* Align the shoulders with the rim so only the paws cross it. */
+  transform: translateY(8.3%);
+  pointer-events: none;
 }
 
 .nova-input-textarea {

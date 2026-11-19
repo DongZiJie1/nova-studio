@@ -5,6 +5,7 @@ import "./App.css";
 import { AppShell } from "./components/layout/AppShell";
 import { NovaIntro } from "./components/layout/NovaIntro";
 import { ExtensionUIPrompt } from "./components/ExtensionUIPrompt";
+import { DesktopPetController } from "./components/pet/DesktopPetController";
 import { listAgents, onAgentEvent, requestMessages } from "./lib/tauri-bridge";
 import type { AgentEventPayload } from "./lib/rpc-types";
 import { useAgentStore } from "./stores/agent-store";
@@ -64,6 +65,7 @@ function isSuccessfulNovaSessionDeletion(payload: AgentEventPayload): boolean {
 }
 
 function App() {
+  const [promptAgentId, setPromptAgentId] = useState<string | null>(null);
   const [showIntro, setShowIntro] = useState(true);
   const [introExiting, setIntroExiting] = useState(false);
   const handleAgentEvent = useAgentStore((s) => s.handleAgentEvent);
@@ -77,13 +79,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Glacier Glass shares the existing light palette outside its welcome scene.
+    // Scene themes reuse the light palette; appTheme scopes their own materials.
+    document.documentElement.dataset.appTheme = theme;
     document.documentElement.dataset.theme = theme === "midnight" ? "midnight" : "arctic-dawn";
     document.documentElement.style.colorScheme = theme !== "midnight" ? "light" : "dark";
     if (isTauri()) {
       const appWindow = getCurrentWindow();
       void appWindow.setTheme(theme !== "midnight" ? "light" : "dark");
-      void appWindow.setBackgroundColor(theme !== "midnight" ? "#edf4fd" : "#05060e");
+      void appWindow.setBackgroundColor(theme === "glass-walkers" ? "#f8f8f8" : theme !== "midnight" ? "#edf4fd" : "#05060e");
     }
   }, [theme]);
 
@@ -173,7 +176,8 @@ function App() {
       <div className={`nova-app-stage${showIntro && !introExiting ? " nova-app-stage-intro" : ""}`}>
         <AppShell />
       </div>
-      <ExtensionUIPrompt />
+      <ExtensionUIPrompt onPendingAgentChange={setPromptAgentId} />
+      <DesktopPetController promptAgentId={promptAgentId} />
       {showIntro && <NovaIntro onComplete={finishIntro} onExitStart={beginIntroExit} />}
     </>
   );

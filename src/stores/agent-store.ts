@@ -218,7 +218,7 @@ function lastActivityFromInfo(info: AgentInfo): string {
   return info.last_activity_at || info.created_at;
 }
 
-function agentStateFromInfo(info: AgentInfo): AgentState {
+export function agentStateFromInfo(info: AgentInfo): AgentState {
   return {
     id: info.id,
     parentAgentId: info.parent_agent_id,

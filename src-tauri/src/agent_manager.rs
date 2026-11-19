@@ -295,20 +295,21 @@ impl AgentManager {
     /// as `Error: ...` on stdout while still exiting 0, so both streams and the
     /// exit status are inspected.
     pub async fn run_memory_cli(&self, args: &[String]) -> Result<String, String> {
-        let is_js_file = self.cli_path.ends_with(".js");
-        let mut command = if is_js_file {
+        self.run_memory_cli_at(args, crate::commands::nova_agent_dir()?).await
+    }
+
+    pub async fn run_memory_cli_at(&self, args: &[String], agent_dir: PathBuf) -> Result<String, String> {
+        let mut command = if self.cli_path.ends_with(".js") {
             let mut command = tokio::process::Command::new("node");
             command.arg(&self.cli_path);
             command
         } else {
             tokio::process::Command::new(&self.cli_path)
         };
+        // Keep reads and CLI writes bound to the same identity.
+        command.env("NOVA_CODING_AGENT_DIR", &agent_dir);
         command.arg("memory").args(args);
-        // Pin the CLI to the same directory the read commands parse, otherwise a
-        // custom NOVA_CODING_AGENT_DIR in the parent process could diverge.
-        if let Ok(agent_dir) = crate::commands::nova_agent_dir() {
-            command.env("NOVA_CODING_AGENT_DIR", agent_dir);
-        }
+
         let output = command
             .output()
             .await
@@ -636,6 +637,7 @@ impl AgentManager {
             "agentId": agent_id,
             "cwd": record.cwd,
             "sessionId": record.session_id,
+            "persistentAgentId": extra_args.windows(2).find(|pair| pair[0] == "--persistent-agent").map(|pair| pair[1].clone()),
             "sessionPath": session_path,
             "parentSession": extra_args
                 .windows(2)
@@ -675,6 +677,12 @@ impl AgentManager {
         .await
         .map_err(|_| "Timed out waiting for Nova host to create agent".to_string())?;
         let ready_event = ready_event?;
+        if let Some(expected) = extra_args.windows(2).find(|pair| pair[0] == "--persistent-agent").map(|pair| pair[1].as_str()) {
+            if ready_event.get("data").and_then(|data| data.get("persistentAgentId")).and_then(serde_json::Value::as_str) != Some(expected) {
+                let _ = process.stop().await;
+                return Err("当前 Nova CLI 不支持持久化 Agent，请使用匹配的 2.2 源码构建产物".into());
+            }
+        }
 
         // Nova answers with the session it actually opened. Adopt it so a
         // continued conversation keeps a truthful id/file even when the spawn
@@ -1294,6 +1302,45 @@ impl AgentManager {
             .get("handled")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false))
+    }
+
+    /// Use Nova's resource discovery for selectable global skills, including configured packages.
+    pub async fn list_installed_agent_skills(&self) -> Result<serde_json::Value, String> {
+        self.request_runtime_catalog("list_installed_agent_skills", "skills").await
+    }
+
+    pub async fn list_agent_tools(&self) -> Result<serde_json::Value, String> {
+        self.request_runtime_catalog("list_agent_tools", "tools").await
+    }
+
+    async fn request_runtime_catalog(&self, command: &str, field: &str) -> Result<serde_json::Value, String> {
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+        let host = self.ensure_host(&cwd.to_string_lossy()).await?;
+        let request_id = format!("runtime-catalog-{}", Uuid::new_v4());
+        let channel = host.register_agent(&request_id).await;
+        let mut events = channel.subscribe();
+        let result = async {
+            host.send_host_command(serde_json::json!({
+                "type": command, "agentId": request_id, "id": request_id
+            }))?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                loop {
+                    match events.recv().await {
+                        Ok(event) if event.get("id").and_then(serde_json::Value::as_str) == Some(request_id.as_str()) => {
+                            if event.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                                return Err(event.get("error").and_then(serde_json::Value::as_str).unwrap_or("Unable to read Agent capability catalog").to_string());
+                            }
+                            return event.get("data").and_then(|data| data.get(field)).filter(|items| items.is_array()).cloned().ok_or_else(|| "Invalid capability catalog returned by Nova".to_string());
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(error) => return Err(error.to_string()),
+                        _ => {}
+                    }
+                }
+            }).await.map_err(|_| "Timed out reading Agent capabilities".to_string())?
+        }.await;
+        host.unregister_agent(&request_id).await;
+        result
     }
 
     /// Read the provider/model directory from the nova CLI as structured JSON.
