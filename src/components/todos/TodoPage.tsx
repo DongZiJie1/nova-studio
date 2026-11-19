@@ -15,7 +15,6 @@ import {
   MoreHorizontal,
   Minus,
   Ban,
-  Network,
   Maximize2,
   CalendarDays,
   Check,
@@ -29,7 +28,6 @@ import {
   Clock3,
   FileText,
   FolderKanban,
-  ListTodo,
   LoaderCircle,
   PenLine,
   Plus,
@@ -58,6 +56,8 @@ import { TodoTreeCanvas, TaskStatusIcon, TodoDeadline } from "./TodoTreeCanvas";
 import { compareTodoDeadline, deadlineTone, isClosedTodo, STATE_LABEL, taskState, topicOf } from "./task-graph";
 import { latestProgress, ProgressTimeline, progressPercent } from "./ProgressTimeline";
 import "./task-trees.css";
+import { TodoFolderView } from "./TodoFolderView";
+import "./todo-detail-glass.css";
 import { Markdown } from "../chat/Markdown";
 
 const TODO_TAG_MAX = 24;
@@ -764,7 +764,8 @@ function TaskRowActions({ todo, busy, onOpen, onEdit, onToggle, onAbandon }: {
 export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) {
   const [state, setState] = useState<TodoState>({ version: 1, items: [] });
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<"tree" | "list">("list");
+  const [mode] = useState<"tree" | "list" | "folder">("folder");
+  const [folderTopic, setFolderTopic] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [selectedTopics, setSelectedTopics] = useState<Set<string>>(() => new Set());
   const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
@@ -943,18 +944,6 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           {openCount} 项待处理 · {completed} 项已完成 · {abandoned} 项已放弃
         </span>
         <div className="task-toolbar-actions">
-          <button
-            type="button"
-            className="task-view-slider"
-            data-mode={mode}
-            role="switch"
-            aria-checked={mode === "tree"}
-            aria-label="分栏视图"
-            onClick={() => setMode(mode === "list" ? "tree" : "list")}
-          >
-            <span className="task-view-slider-option"><ListTodo size={15} aria-hidden="true" />列表</span>
-            <span className="task-view-slider-option"><Network size={15} aria-hidden="true" />分栏</span>
-          </button>
           {mode === "tree" ? (
             <button
               className="task-toolbar-button"
@@ -981,7 +970,7 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           )}
         </div>
       </div>
-      {mode === "list" && (
+      {mode !== "tree" && (
         <div className="task-quick-filters" aria-label="快捷筛选">
           {[
             { key: "all", label: "全部", count: state.items.length },
@@ -1025,6 +1014,11 @@ export function TodoPage({ projects, onRunTodo, onOpenSession }: TodoPageProps) 
           <LoaderCircle className="todo-spinner" />
           正在读取待办…
         </div>
+      ) : mode === "folder" ? (
+        <TodoFolderView items={visible} topic={folderTopic} onTopic={setFolderTopic}
+          suspended={!!selected || !!creating || !!pendingDelete} busy={busy}
+          onOpen={(id) => { setEditFromRow(false); setSelectedId(id); }}
+          onCreate={openCreateTodo} onToggle={toggleTodo} />
       ) : mode === "tree" ? (
         <TodoTreeCanvas
           items={state.items}
@@ -1657,7 +1651,7 @@ function TodoDetail({
   return (
     <aside
       ref={panelRef}
-      className={`todo-detail ${open ? "todo-detail-open" : ""} ${closing ? "todo-detail-closing" : ""}`}
+      className={`todo-detail todo-detail-liquid ${open ? "todo-detail-open" : ""} ${closing ? "todo-detail-closing" : ""}`}
       aria-hidden={!open}
       role="dialog"
       aria-modal="true"

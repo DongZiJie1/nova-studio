@@ -1,0 +1,204 @@
+/* Detail materials share the folder cards' clear rim and quiet state tint. */
+.todo-task-page .task-detail-backdrop .todo-detail.todo-detail-liquid {
+	--detail-edge: #b7c1d34d;
+	--detail-rim: #ffffff32;
+	--detail-film: #ffffff07;
+	--detail-wash: #9aafce12;
+	--detail-control: #ffffff08;
+	--detail-control-edge: #ffffff26;
+	--detail-accent: #abc3e5;
+	border: 1px solid var(--detail-edge);
+	border-radius: 24px;
+	margin: 12px;
+	height: calc(100% - 24px);
+	background:
+		radial-gradient(ellipse at 0 0, #7899c31c, transparent 55%),
+		radial-gradient(ellipse at 100% 90%, #a0c4b912, transparent 55%),
+		linear-gradient(140deg, #ffffff08, transparent 52%), #111621ed;
+	backdrop-filter: blur(26px) saturate(140%);
+	-webkit-backdrop-filter: blur(26px) saturate(140%);
+	box-shadow:
+		inset 0 1px 0 var(--detail-rim),
+		inset 1px 0 0 #ffffff10,
+		0 24px 70px #050b2038;
+}
+:root[data-theme="arctic-dawn"]
+	.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid {
+	--detail-edge: #7e90a64d;
+	--detail-rim: #fffffff0;
+	--detail-film: #ffffff66;
+	--detail-wash: #c1d4e126;
+	--detail-control: #ffffff55;
+	--detail-control-edge: #8194ad38;
+	--detail-accent: #53728f;
+	background:
+		radial-gradient(ellipse at 0 0, #c2d5e338, transparent 55%),
+		radial-gradient(ellipse at 100% 90%, #c5ded52e, transparent 55%),
+		linear-gradient(140deg, #ffffff8c, #f5f7fad9 65%);
+	box-shadow:
+		inset 0 1px 0 #ffffffef,
+		inset 1px 0 0 #ffffffa0,
+		0 24px 70px #14243b26;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail.todo-detail-liquid
+	.todo-detail-section {
+	position: relative;
+	border: 1px solid var(--detail-edge);
+	border-radius: 24px;
+	background:
+		radial-gradient(ellipse at 0 0, var(--detail-wash), transparent 70%),
+		linear-gradient(135deg, var(--detail-film), transparent 80%);
+	backdrop-filter: blur(12px) saturate(135%);
+	-webkit-backdrop-filter: blur(12px) saturate(135%);
+	box-shadow:
+		inset 0 1px 0 var(--detail-rim),
+		inset 1px 0 0 #ffffff12,
+		0 6px 18px #18334b08;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	:is(
+		.todo-description-preview,
+		.todo-progress-entry,
+		.todo-progress-composer,
+		.todo-progress-entry-editor,
+		.todo-history-list li
+	) {
+	border: 1px solid var(--detail-control-edge);
+	border-radius: 18px;
+	background: linear-gradient(135deg, var(--detail-control), transparent 90%);
+	box-shadow:
+		inset 0 1px 0 var(--detail-rim),
+		0 3px 10px #14233c05;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	:is(
+		.todo-property-control,
+		.todo-tag-editor,
+		.todo-detail-fields input,
+		.todo-detail-fields textarea,
+		.todo-detail-fields select,
+		.todo-progress-markdown-editor
+	) {
+	border-color: var(--detail-control-edge);
+	border-radius: 13px;
+	background: var(--detail-control);
+	box-shadow:
+		inset 0 1px 0 var(--detail-rim),
+		inset 0 -1px 0 #ffffff09;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	:is(
+		.todo-property-control:hover,
+		.todo-property-control:focus-within,
+		.todo-tag-editor:focus-within,
+		.todo-detail-fields input:focus,
+		.todo-detail-fields textarea:focus
+	) {
+	border-color: var(--detail-accent);
+	box-shadow:
+		inset 0 1px 0 var(--detail-rim),
+		0 0 0 3px color-mix(in srgb, var(--detail-accent) 12%, transparent);
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	.todo-detail-fields
+	.todo-tag-editor
+	input,
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	.todo-detail-fields
+	.todo-tag-editor
+	input:focus {
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	:is(
+		.todo-detail-close,
+		.todo-description-heading button,
+		.todo-description-empty-cta,
+		.todo-progress-append-button,
+		.todo-progress-composer-actions button,
+		.todo-progress-entry-actions button,
+		.todo-progress-expand,
+		.todo-nova-button,
+		.todo-delete-button,
+		.todo-primary-button
+	) {
+	border: 1px solid var(--detail-control-edge);
+	background: linear-gradient(145deg, var(--detail-control), transparent 85%);
+	box-shadow:
+		inset 0 1px 0 var(--detail-rim),
+		0 3px 8px #14233c08;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	border-radius: 12px;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	button:hover:not(:disabled) {
+	border-color: var(--detail-accent);
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	.todo-detail-section-title {
+	color: var(--color-text-secondary);
+	letter-spacing: 1px;
+}
+.todo-task-page .task-detail-backdrop .todo-detail-liquid .todo-progress-bar {
+	border-radius: 20px;
+	background: color-mix(in srgb, var(--detail-accent) 12%, transparent);
+	box-shadow: inset 0 1px 2px #0000000a;
+}
+.todo-task-page
+	.task-detail-backdrop
+	.todo-detail-liquid
+	.todo-progress-bar
+	> i {
+	background: linear-gradient(90deg, #91b7c7, var(--detail-accent));
+	box-shadow: inset 0 1px 0 #ffffff70;
+}
+.todo-task-page .task-detail-backdrop .todo-detail.todo-detail-liquid > footer {
+	border-top: 1px solid var(--detail-edge);
+	background: linear-gradient(135deg, var(--detail-film), var(--detail-wash));
+	backdrop-filter: blur(18px) saturate(130%);
+	-webkit-backdrop-filter: blur(18px) saturate(130%);
+	box-shadow: inset 0 1px 0 var(--detail-rim);
+}
+@media (max-width: 640px) {
+	.todo-task-page .task-detail-backdrop .todo-detail.todo-detail-liquid {
+		width: calc(100% - 12px);
+		margin: 6px;
+		height: calc(100% - 12px);
+		border-radius: 18px;
+	}
+}
+@supports not (
+		(backdrop-filter: blur(1px)) or
+		(-webkit-backdrop-filter: blur(1px))
+	) {
+	.todo-task-page .task-detail-backdrop .todo-detail.todo-detail-liquid {
+		background: var(--color-bg-primary);
+	}
+}
